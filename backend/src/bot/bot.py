@@ -59,12 +59,30 @@ class VnuTourBot(commands.Bot):
         """Called when the bot is starting up"""
         await self.logger.log("Bot đang khởi động...")
         
-        # Setup Google Sheet sync as Cog
+        # Setup Google Sheet sync as Cog — only when enabled in system settings.
+        # MongoDB is the source of truth; Sheet import defaults to OFF.
         try:
-            from .sheet_cog import setup_sheet_sync
-            await setup_sheet_sync(self)
+            sheet_import_on = False
+            if self.mongo:
+                try:
+                    sheet_import_on = bool(self.mongo.get_settings().get("sheet_import_enabled"))
+                except Exception:
+                    sheet_import_on = False
+            if sheet_import_on:
+                from .sheet_cog import setup_sheet_sync
+                await setup_sheet_sync(self)
+                print("[SHEET SYNC] Đã bật theo cấu hình (sheet_import_enabled=True)")
+            else:
+                print("[SHEET SYNC] Tắt theo cấu hình (sheet_import_enabled=False)")
         except Exception as e:
             print(f"[SHEET SYNC] Không thể khởi tạo Cog: {e}")
+
+        # Setup MongoDB -> Discord team provisioning watcher
+        try:
+            from .team_cog import setup_team_sync
+            await setup_team_sync(self)
+        except Exception as e:
+            print(f"[TEAM SYNC] Không thể khởi tạo Cog: {e}")
         
         # Sync slash commands with Discord
         try:

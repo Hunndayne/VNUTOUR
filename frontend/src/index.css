@@ -9,3 +9,14 @@ html, body, #root {
 body {
   @apply bg-gradient-to-br from-indigo-500 via-purple-600 to-purple-800 text-slate-900 antialiased;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

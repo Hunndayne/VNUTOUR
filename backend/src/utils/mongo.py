@@ -11,15 +11,26 @@ from typing import Any, Dict, Optional, Tuple
 from dotenv import load_dotenv
 
 try:
-    from pymongo import MongoClient, UpdateOne
+    from pymongo import MongoClient, UpdateOne, ReturnDocument
     from pymongo.collection import Collection
     from pymongo.errors import DuplicateKeyError
 except Exception:  # pragma: no cover
     # Allow import of this file even if pymongo not installed yet
     MongoClient = None  # type: ignore
     UpdateOne = None  # type: ignore
+    ReturnDocument = None  # type: ignore
     Collection = None  # type: ignore
     DuplicateKeyError = Exception  # type: ignore
+
+
+# Default system settings used when nothing has been configured yet.
+# MongoDB is the source of truth, so Google Sheet integrations default to OFF.
+DEFAULT_SYSTEM_SETTINGS: Dict[str, Any] = {
+    "registration_open": False,
+    "sheet_import_enabled": False,
+    "sheet_checkin_export_enabled": False,
+    "team_max_members": 5,
+}
 
 
 class MongoManager:
@@ -549,3 +560,97 @@ class MongoManager:
 
     def set_meta(self, key: str, value: Any) -> None:
         self.meta.update_one({"key": key}, {"$set": {"key": key, "value": value}}, upsert=True)
+
+    # ----- System settings -----
+    def get_settings(self) -> Dict[str, Any]:
+        """Return system settings merged over safe defaults."""
+        stored = self.get_meta("system_settings")
+        settings = dict(DEFAULT_SYSTEM_SETTINGS)
+        if isinstance(stored, dict):
+            settings.update(stored)
+        return settings
+
+    def set_settings(self, patch: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge `patch` into stored settings, validating known keys, and return the result."""
+        current = self.get_settings()
+        for key, value in (patch or {}).items():
+            if key not in DEFAULT_SYSTEM_SETTINGS:
+                continue
+            default = DEFAULT_SYSTEM_SETTINGS[key]
+            if isinstance(default, bool):
+                current[key] = bool(value)
+            elif isinstance(default, int):
+                try:
+                    current[key] = int(value)
+                except (TypeError, ValueError):
+                    pass
+            else:
+                current[key] = value
+        self.set_meta("system_settings", current)
+        return current
+
+    # ----- Team id generation / creation -----
+    def next_team_id(self) -> str:
+        """Atomically generate a unique sequential team id like 'T0001'."""
+        doc = self.meta.find_one_and_update(
+            {"key": "team_seq"},
+            {"$inc": {"value": 1}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        n = int(doc.get("value", 1)) if doc else 1
+        return f"T{n:04d}"
+
+    def create_team(self, team_name: str, owner_username: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new team with an auto-generated team_id.
+
+        Marks the team as pending Discord provisioning so the bot watcher can
+        create role/channels. Returns the inserted document.
+        """
+        name = (team_name or "").strip()
+        if not name:
+            raise ValueError("Thiếu tên đội")
+
+        now = datetime.now(timezone.utc)
+        # Retry a few times in case of a rare team_id collision with legacy data
+        last_err: Optional[Exception] = None
+        for _ in range(5):
+            team_id = self.next_team_id()
+            doc = {
+                "team_id": team_id,
+                "team_name": name,
+                "owner_username": (owner_username or None),
+                "members_mssv": [],
+                # Approval workflow: draft -> pending_approval -> approved/rejected.
+                # Discord provisioning is only triggered after admin approval.
+                "approval_status": "draft",
+                "approval_note": None,
+                "submitted_at": None,
+                "reviewed_at": None,
+                "reviewed_by": None,
+                "provision_state": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            try:
+                res = self.teams.insert_one(doc)
+                doc["_id"] = res.inserted_id
+                return doc
+            except DuplicateKeyError as e:  # team_id unique index collision
+                last_err = e
+                continue
+        raise RuntimeError(f"Không thể tạo đội (team_id trùng lặp): {last_err}")
+
+    def mark_team_dirty(self, team_oid: Any) -> None:
+        """Flag a team for (re)provisioning by the Discord watcher."""
+        from bson import ObjectId
+        oid = team_oid
+        if isinstance(oid, str):
+            try:
+                oid = ObjectId(oid)
+            except Exception:
+                return
+        self.teams.update_one(
+            {"_id": oid},
+            {"$set": {"provision_state": "pending", "updated_at": datetime.now(timezone.utc)}},
+        )

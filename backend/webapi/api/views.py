@@ -136,6 +136,31 @@ def _auth_account(request: HttpRequest) -> Account | None:
         return None
 
 
+def _json_body(request: HttpRequest):
+    """Parse JSON body; return dict, or None if invalid JSON."""
+    try:
+        return json.loads(request.body.decode("utf-8")) if request.body else {}
+    except Exception:
+        return None
+
+
+def _settings() -> Dict[str, Any]:
+    try:
+        return _get_mongo().get_settings()
+    except Exception:
+        from src.utils.mongo import DEFAULT_SYSTEM_SETTINGS
+        return dict(DEFAULT_SYSTEM_SETTINGS)
+
+
+def _auth_or_401(request: HttpRequest):
+    """Return (account, None) on success or (None, JsonResponse 401)."""
+    me = _auth_account(request)
+    if not me:
+        token = _extract_token(request)
+        return None, JsonResponse({"error": "missing_token" if not token else "invalid_token"}, status=401)
+    return me, None
+
+
 def _to_public(doc: Dict[str, Any]) -> Dict[str, Any]:
     if not doc:
         return {}
@@ -639,6 +664,9 @@ def teams_list(request: HttpRequest):
             filters["team_name"] = {"$regex": q, "$options": "i"}
         except Exception:
             pass
+    approval_status = request.GET.get("approval_status")
+    if approval_status:
+        filters["approval_status"] = approval_status
     cur = m.teams.find(filters).skip(skip).limit(limit)
     items = [_to_public(d) for d in cur]
     total = m.teams.count_documents(filters)
@@ -812,7 +840,7 @@ def checkin_team(request: HttpRequest):
     try:
         sheet_id = os.getenv("GoogleSheetCheckinID")
         sheet_tab = os.getenv("GOOGLE_SHEET_Checkin_TAB")
-        if sheet_id and (os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS_BASE64")):
+        if sheet_id and _settings().get("sheet_checkin_export_enabled") and (os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS_BASE64")):
             member_ids = []
             for member in members_pub:
                 mssv = member.get("mssv")
@@ -1015,7 +1043,7 @@ def delete_checkin(request: HttpRequest, team_key: str):
     try:
         sheet_id = os.getenv("GoogleSheetCheckinID")
         sheet_tab = os.getenv("GOOGLE_SHEET_Checkin_TAB")
-        if sheet_id and (os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS_BASE64")):
+        if sheet_id and _settings().get("sheet_checkin_export_enabled") and (os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS_BASE64")):
             identifier = team_doc.get("team_id") or team_doc.get("team_name")
             if identifier:
                 remove_rows_by_first_column(sheet_id, sheet_tab, identifier)
@@ -1028,3 +1056,573 @@ def delete_checkin(request: HttpRequest, team_key: str):
         "affected_checkins": int(del_result.deleted_count),
         "unchecked": bool(unset_result.modified_count),
     })
+
+
+# =====================================================================
+# Self-service registration, member profile & team management
+# =====================================================================
+
+_PARTICIPANT_FIELDS = ("full_name", "email", "phone", "faculty", "school", "facebook", "is_captain", "team_number")
+_OWNER_EDITABLE_STATES = (None, "draft", "pending_approval", "rejected")
+
+
+def _account_for_participant(mssv, email):
+    """Return an active Account matching a participant by mssv or email (or None)."""
+    from django.db.models import Q
+    conds = []
+    if mssv:
+        conds.append(Q(mssv=str(mssv).strip()))
+    if email:
+        conds.append(Q(email__iexact=str(email).strip()))
+    if not conds:
+        return None
+    q = conds[0]
+    for c in conds[1:]:
+        q |= c
+    try:
+        return Account.objects.filter(q, is_active=True).first()
+    except Exception:
+        return None
+
+
+def _member_public(p: Dict[str, Any]) -> Dict[str, Any]:
+    pub = _to_public(p)
+    pub["has_account"] = bool(_account_for_participant(p.get("mssv"), p.get("email")))
+    return pub
+
+
+def _team_members(m, team_doc, with_account=True) -> list:
+    fields = {"_id": 1, "mssv": 1, "full_name": 1, "faculty": 1, "school": 1,
+              "email": 1, "phone": 1, "facebook": 1, "is_captain": 1, "discord_id": 1}
+    mssv_list = team_doc.get("members_mssv")
+    if isinstance(mssv_list, list) and mssv_list:
+        cur = m.participants.find({"mssv": {"$in": list(mssv_list)}}, fields)
+    else:
+        tid = team_doc.get("team_id")
+        q = {"team_id": tid} if tid else {"team_name": team_doc.get("team_name")}
+        cur = m.participants.find(q, fields)
+    if with_account:
+        return [_member_public(x) for x in cur]
+    return [_to_public(x) for x in cur]
+
+
+def _build_participant_payload(data: Dict[str, Any], team_doc: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {"mssv": str((data.get("mssv") or "").strip())}
+    for f in _PARTICIPANT_FIELDS:
+        if f in data:
+            payload[f] = data.get(f)
+    payload["team_id"] = team_doc.get("team_id")
+    payload["team_name"] = team_doc.get("team_name")
+    return payload
+
+
+def _autofill_member(m, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill known info for a member identified by mssv/email so the captain does
+    not have to retype data that already exists (account or participant profile)."""
+    merged = dict(data)
+    mssv = str((merged.get("mssv") or "").strip())
+    email = str((merged.get("email") or "").strip())
+
+    src = None
+    if mssv:
+        src = m.participants.find_one({"mssv": mssv})
+    if not src and email:
+        src = m.participants.find_one({"email": email})
+
+    acc = _account_for_participant(mssv, email)
+
+    for f in ("full_name", "email", "phone", "faculty", "school", "facebook"):
+        if not merged.get(f) and src and src.get(f):
+            merged[f] = src.get(f)
+    if acc:
+        if not merged.get("full_name") and acc.full_name:
+            merged["full_name"] = acc.full_name
+        if not merged.get("email") and acc.email:
+            merged["email"] = acc.email
+        if not merged.get("mssv") and acc.mssv:
+            merged["mssv"] = acc.mssv
+    return merged
+
+
+@csrf_exempt
+def signup(request: HttpRequest):
+    """Open self-registration for participants (members & prospective captains).
+
+    Gated by `registration_open`. Optionally captures the member's own profile
+    (mssv, full_name, ...) stored as a participant document so a captain can
+    auto-fill it later and the member can be matched by email/MSSV.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if not _settings().get("registration_open"):
+        return JsonResponse({"error": "registration_closed"}, status=403)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    username = str((data.get("username") or "").strip())
+    password = str((data.get("password") or "").strip())
+    email = str((data.get("email") or "").strip())
+    mssv = str((data.get("mssv") or "").strip()) or None
+    full_name = str((data.get("full_name") or "").strip()) or None
+    if not username or not password or not email:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    try:
+        acc = Account(
+            username=username,
+            email=email,
+            password_hash=make_password(password),
+            role=Account.ROLE_MEMBER,
+            is_active=True,
+            mssv=mssv,
+            full_name=full_name,
+        )
+        acc.token = secrets.token_urlsafe(32)
+        acc.last_login = datetime.now(timezone.utc)
+        acc.save()
+        _sync_account_to_mongo(acc)
+    except IntegrityError:
+        return JsonResponse({"error": "conflict", "detail": "username_email_or_mssv_exists"}, status=409)
+    except Exception as e:
+        return JsonResponse({"error": "server_error", "detail": str(e)}, status=500)
+
+    # Claim/create participant profile so captains can auto-fill it later
+    if mssv:
+        try:
+            m = _get_mongo()
+            profile = {"mssv": mssv, "full_name": full_name or "", "email": email}
+            for f in ("phone", "faculty", "school", "facebook"):
+                if data.get(f) is not None:
+                    profile[f] = data.get(f)
+            m.upsert_participant(profile)
+        except Exception:
+            pass
+
+    resp = JsonResponse({
+        "token": acc.token,
+        "user": {"username": acc.username, "email": acc.email, "role": acc.role, "mssv": acc.mssv},
+    }, status=201)
+    _set_auth_cookie(resp, acc.token or "", request)
+    return resp
+
+
+@csrf_exempt
+def me_profile(request: HttpRequest):
+    """GET/PUT the logged-in member's own participant profile (matched by mssv)."""
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    m = _get_mongo()
+
+    if request.method == "GET":
+        doc = m.participants.find_one({"mssv": me.mssv}) if me.mssv else None
+        return JsonResponse({"profile": _to_public(doc) if doc else None, "mssv": me.mssv})
+
+    if request.method in ("PUT", "PATCH"):
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        mssv = str((data.get("mssv") or me.mssv or "").strip())
+        if not mssv:
+            return JsonResponse({"error": "missing_mssv"}, status=400)
+        if mssv != (me.mssv or ""):
+            try:
+                me.mssv = mssv
+                me.save(update_fields=["mssv"])
+            except IntegrityError:
+                return JsonResponse({"error": "mssv_taken"}, status=409)
+        payload = {"mssv": mssv}
+        for f in ("full_name", "email", "phone", "faculty", "school", "facebook"):
+            if f in data:
+                payload[f] = data.get(f)
+        if payload.get("full_name"):
+            try:
+                me.full_name = payload["full_name"]
+                me.save(update_fields=["full_name"])
+            except Exception:
+                pass
+        doc = m.upsert_participant(payload)
+        return JsonResponse(_to_public(doc))
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def teams_collection(request: HttpRequest):
+    """GET: list teams. POST: create a team (member -> draft, admin -> approved)."""
+    if request.method != "POST":
+        return teams_list(request)
+
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    name = str((data.get("team_name") or data.get("name") or "").strip())
+    if not name:
+        return JsonResponse({"error": "missing_team_name"}, status=400)
+
+    m = _get_mongo()
+
+    if me.role == Account.ROLE_MEMBER:
+        if not _settings().get("registration_open"):
+            return JsonResponse({"error": "registration_closed"}, status=403)
+        if me.team_oid:
+            return JsonResponse({"error": "already_has_team", "team_oid": me.team_oid}, status=409)
+        team = m.create_team(name, owner_username=me.username)
+        me.team_oid = str(team["_id"])
+        me.save(update_fields=["team_oid"])
+        return JsonResponse(_to_public(team), status=201)
+
+    if me.role == Account.ROLE_ADMIN:
+        owner = str((data.get("owner_username") or "").strip()) or None
+        team = m.create_team(name, owner_username=owner)
+        # Admin-created teams are approved immediately and queued for provisioning
+        m.teams.update_one(
+            {"_id": team["_id"]},
+            {"$set": {"approval_status": "approved", "reviewed_by": me.username,
+                      "reviewed_at": datetime.now(timezone.utc), "provision_state": "pending"}},
+        )
+        return JsonResponse(_to_public(m.teams.find_one({"_id": team["_id"]})), status=201)
+
+    return JsonResponse({"error": "forbidden"}, status=403)
+
+
+def _resolve_my_team(request: HttpRequest):
+    """Return (me, team_doc, mongo, None) for the requester's own team, else error response."""
+    me, err = _auth_or_401(request)
+    if err:
+        return None, None, None, err
+    if me.role != Account.ROLE_MEMBER or not me.team_oid:
+        return None, None, None, JsonResponse({"error": "no_team"}, status=404)
+    m = _get_mongo()
+    oid = _to_object_id(me.team_oid)
+    team = m.teams.find_one({"_id": oid}) if oid else None
+    if not team:
+        return None, None, None, JsonResponse({"error": "no_team"}, status=404)
+    if team.get("owner_username") and team.get("owner_username") != me.username:
+        return None, None, None, JsonResponse({"error": "forbidden"}, status=403)
+    return me, team, m, None
+
+
+def my_team(request: HttpRequest):
+    """GET the requester's own team, members (with account status) and approval state."""
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    if me.role != Account.ROLE_MEMBER or not me.team_oid:
+        return JsonResponse({"team": None, "members": []})
+    m = _get_mongo()
+    oid = _to_object_id(me.team_oid)
+    team = m.teams.find_one({"_id": oid}) if oid else None
+    if not team:
+        return JsonResponse({"team": None, "members": []})
+    return JsonResponse({
+        "team": _to_public(team),
+        "members": _team_members(m, team),
+        "approval_status": team.get("approval_status"),
+        "approval_note": team.get("approval_note"),
+        "editable": team.get("approval_status") in _OWNER_EDITABLE_STATES,
+    })
+
+
+def _touch_after_member_edit(m, team) -> None:
+    """Bump updated_at; if the team was rejected, send it back to draft for resubmission."""
+    sets = {"updated_at": datetime.now(timezone.utc)}
+    if team.get("approval_status") == "rejected":
+        sets["approval_status"] = "draft"
+        sets["approval_note"] = None
+    m.teams.update_one({"_id": team["_id"]}, {"$set": sets})
+
+
+@csrf_exempt
+def my_team_members(request: HttpRequest):
+    """POST: add a member to the captain's own team (with auto-fill)."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    me, team, m, err = _resolve_my_team(request)
+    if err:
+        return err
+    if team.get("approval_status") not in _OWNER_EDITABLE_STATES:
+        return JsonResponse({"error": "team_locked", "detail": "Đội đã được duyệt; liên hệ admin để chỉnh sửa."}, status=409)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    data = _autofill_member(m, data)
+    mssv = str((data.get("mssv") or "").strip())
+    if not mssv:
+        return JsonResponse({"error": "missing_mssv"}, status=400)
+
+    members = team.get("members_mssv") or []
+    max_members = int(_settings().get("team_max_members") or 0)
+    if max_members and mssv not in members and len(members) >= max_members:
+        return JsonResponse({"error": "team_full", "max": max_members}, status=409)
+
+    existing = m.participants.find_one({"mssv": mssv}, {"team_id": 1})
+    if existing and existing.get("team_id") and existing.get("team_id") != team.get("team_id"):
+        return JsonResponse({"error": "mssv_in_other_team"}, status=409)
+
+    try:
+        doc = m.upsert_participant(_build_participant_payload(data, team))
+    except ValueError as e:
+        return JsonResponse({"error": "invalid_input", "detail": str(e)}, status=400)
+    m.teams.update_one({"_id": team["_id"]}, {"$addToSet": {"members_mssv": mssv}})
+    _touch_after_member_edit(m, team)
+    return JsonResponse(_member_public(doc), status=201)
+
+
+@csrf_exempt
+def my_team_member_detail(request: HttpRequest, mssv: str):
+    """PATCH/DELETE a member of the captain's own team."""
+    me, team, m, err = _resolve_my_team(request)
+    if err:
+        return err
+    if team.get("approval_status") not in _OWNER_EDITABLE_STATES:
+        return JsonResponse({"error": "team_locked"}, status=409)
+    mssv = str(mssv).strip()
+    members = team.get("members_mssv") or []
+    if mssv not in members and not m.participants.find_one({"mssv": mssv, "team_id": team.get("team_id")}):
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    if request.method in ("PATCH", "PUT"):
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        data["mssv"] = mssv
+        doc = m.upsert_participant(_build_participant_payload(data, team))
+        _touch_after_member_edit(m, team)
+        return JsonResponse(_member_public(doc))
+
+    if request.method == "DELETE":
+        m.teams.update_one({"_id": team["_id"]}, {"$pull": {"members_mssv": mssv}})
+        m.participants.delete_one({"mssv": mssv, "team_id": team.get("team_id")})
+        _touch_after_member_edit(m, team)
+        return JsonResponse({"status": "removed", "mssv": mssv})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def my_team_submit(request: HttpRequest):
+    """Captain submits the team for admin approval."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    me, team, m, err = _resolve_my_team(request)
+    if err:
+        return err
+    if team.get("approval_status") == "approved":
+        return JsonResponse({"error": "already_approved"}, status=409)
+    if not (team.get("members_mssv") or []):
+        return JsonResponse({"error": "no_members"}, status=400)
+    now = datetime.now(timezone.utc)
+    m.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"approval_status": "pending_approval", "submitted_at": now,
+                  "approval_note": None, "updated_at": now}},
+    )
+    return JsonResponse(_to_public(m.teams.find_one({"_id": team["_id"]})))
+
+
+# =====================================================================
+# Admin CRUD: participants, teams, approval
+# =====================================================================
+
+@csrf_exempt
+def participants_collection(request: HttpRequest):
+    """GET: list (existing). POST: create a participant (admin only)."""
+    if request.method != "POST":
+        return participants_list(request)
+
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    if me.role != Account.ROLE_ADMIN:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    if not str((data.get("mssv") or "").strip()):
+        return JsonResponse({"error": "missing_mssv"}, status=400)
+
+    m = _get_mongo()
+    try:
+        doc = m.upsert_participant(data)
+    except ValueError as e:
+        return JsonResponse({"error": "invalid_input", "detail": str(e)}, status=400)
+    team_id = (data.get("team_id") or "").strip() if isinstance(data.get("team_id"), str) else data.get("team_id")
+    if team_id:
+        m.teams.update_one({"team_id": str(team_id)}, {"$addToSet": {"members_mssv": doc.get("mssv")}})
+    return JsonResponse(_to_public(doc), status=201)
+
+
+@csrf_exempt
+def participant_item(request: HttpRequest, mssv: str):
+    """GET (existing). PATCH/PUT/DELETE (admin only)."""
+    if request.method == "GET":
+        return participant_detail(request, mssv)
+
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    if me.role != Account.ROLE_ADMIN:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    m = _get_mongo()
+    mssv = str(mssv).strip()
+    existing = m.participants.find_one({"mssv": mssv})
+    if not existing:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    if request.method in ("PATCH", "PUT"):
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        data["mssv"] = mssv
+        doc = m.upsert_participant(data)
+        return JsonResponse(_to_public(doc))
+
+    if request.method == "DELETE":
+        m.participants.delete_one({"mssv": mssv})
+        m.teams.update_many({"members_mssv": mssv}, {"$pull": {"members_mssv": mssv}})
+        return JsonResponse({"status": "deleted", "mssv": mssv})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def team_item(request: HttpRequest, team_key: str):
+    """GET (existing). PATCH (admin/owner while editable) / DELETE (admin)."""
+    if request.method == "GET":
+        return team_detail(request, team_key)
+
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+
+    m = _get_mongo()
+    team = _find_team_by_key(m, team_key)
+    if not team:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    is_admin = me.role == Account.ROLE_ADMIN
+    is_owner = me.role == Account.ROLE_MEMBER and team.get("owner_username") == me.username
+    if not (is_admin or is_owner):
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    if request.method in ("PATCH", "PUT"):
+        if is_owner and not is_admin and team.get("approval_status") not in _OWNER_EDITABLE_STATES:
+            return JsonResponse({"error": "team_locked"}, status=409)
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        updates: Dict[str, Any] = {}
+        new_name = data.get("team_name")
+        if new_name is not None:
+            new_name = str(new_name).strip()
+            if new_name:
+                updates["team_name"] = new_name
+        if not updates:
+            return JsonResponse({"error": "nothing_to_update"}, status=400)
+        updates["updated_at"] = datetime.now(timezone.utc)
+        # If already approved, an admin rename should re-sync Discord resources
+        if team.get("approval_status") == "approved" and "team_name" in updates:
+            updates["provision_state"] = "pending"
+        m.teams.update_one({"_id": team["_id"]}, {"$set": updates})
+        if "team_name" in updates and team.get("team_id"):
+            m.participants.update_many({"team_id": team["team_id"]}, {"$set": {"team_name": updates["team_name"]}})
+        return JsonResponse(_to_public(m.teams.find_one({"_id": team["_id"]})))
+
+    if request.method == "DELETE":
+        if not is_admin:
+            return JsonResponse({"error": "forbidden"}, status=403)
+        tid = team.get("team_id")
+        if tid:
+            m.participants.update_many({"team_id": tid}, {"$unset": {"team_id": "", "team_name": ""}})
+        m.teams.delete_one({"_id": team["_id"]})
+        m.checkins.delete_many({"team_oid": team["_id"]})
+        try:
+            Account.objects.filter(team_oid=str(team["_id"])).update(team_oid=None)
+        except Exception:
+            pass
+        return JsonResponse({"status": "deleted", "team_id": tid})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def team_approve(request: HttpRequest, team_key: str):
+    """Admin approves a team -> queue Discord provisioning."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    if me.role != Account.ROLE_ADMIN:
+        return JsonResponse({"error": "forbidden"}, status=403)
+    m = _get_mongo()
+    team = _find_team_by_key(m, team_key)
+    if not team:
+        return JsonResponse({"error": "not_found"}, status=404)
+    now = datetime.now(timezone.utc)
+    m.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"approval_status": "approved", "approval_note": None,
+                  "reviewed_by": me.username, "reviewed_at": now,
+                  "provision_state": "pending", "updated_at": now}},
+    )
+    return JsonResponse(_to_public(m.teams.find_one({"_id": team["_id"]})))
+
+
+@csrf_exempt
+def team_reject(request: HttpRequest, team_key: str):
+    """Admin rejects a team with an optional note."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    if me.role != Account.ROLE_ADMIN:
+        return JsonResponse({"error": "forbidden"}, status=403)
+    data = _json_body(request) or {}
+    note = str((data.get("note") or data.get("reason") or "").strip()) or None
+    m = _get_mongo()
+    team = _find_team_by_key(m, team_key)
+    if not team:
+        return JsonResponse({"error": "not_found"}, status=404)
+    now = datetime.now(timezone.utc)
+    m.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"approval_status": "rejected", "approval_note": note,
+                  "reviewed_by": me.username, "reviewed_at": now,
+                  "provision_state": None, "updated_at": now}},
+    )
+    return JsonResponse(_to_public(m.teams.find_one({"_id": team["_id"]})))
+
+
+@csrf_exempt
+def settings_view(request: HttpRequest):
+    """GET: read settings (admin/collab). PUT: update settings (admin)."""
+    me, err = _auth_or_401(request)
+    if err:
+        return err
+    m = _get_mongo()
+
+    if request.method == "GET":
+        return JsonResponse(m.get_settings())
+
+    if request.method in ("PUT", "PATCH", "POST"):
+        if me.role != Account.ROLE_ADMIN:
+            return JsonResponse({"error": "forbidden"}, status=403)
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        return JsonResponse(m.set_settings(data))
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
