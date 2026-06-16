@@ -9,6 +9,7 @@ urlpatterns = [
     path("auth/logout", views.logout),
     path("auth/register", views.register),
     path("auth/signup", views.signup),  # self-registration (members & captains)
+    path("auth/google", views.google_login),  # Google Identity Services sign-in
     path("admin/accounts", views.admin_accounts),
     path("admin/accounts/<str:username>", views.admin_account_detail),
     # System settings

@@ -181,8 +181,15 @@ function LandingPage() {
           <a href="#home" aria-label="VNUTour home" className="flex h-16 w-16 items-center justify-center md:h-20 md:w-20">
             <img src={logoImage} alt="VNUTour" className="h-full w-full object-contain" />
           </a>
-          <NavLinks className="hidden md:flex" />
-          <span className="hidden h-5 w-5 rounded-full border-2 border-white sm:inline-flex" aria-hidden="true" />
+          <div className="flex items-center gap-6">
+            <NavLinks className="hidden md:flex" />
+            <a
+              href="/login"
+              className="rounded-full border-2 border-white/70 px-5 py-2 text-sm font-bold uppercase text-white transition hover:border-white hover:bg-white hover:text-[#0e1218]"
+            >
+              Đăng nhập
+            </a>
+          </div>
         </header>
 
         <div className="relative z-10 mx-auto flex min-h-[660px] w-full max-w-[1680px] items-center px-6 pb-16 pt-10 md:px-10 lg:min-h-[970px] xl:px-0">

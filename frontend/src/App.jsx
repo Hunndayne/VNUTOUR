@@ -1,5 +1,6 @@
 import LandingPage from './LandingPage.jsx'
 import CheckinPage from './CheckinPage.jsx'
+import LoginPage from './LoginPage.jsx'
 
 function App() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/'
@@ -16,6 +17,10 @@ function App() {
         <CheckinPage />
       </div>
     )
+  }
+
+  if (path === '/login') {
+    return <LoginPage />
   }
 
   return <LandingPage />

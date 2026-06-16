@@ -15,6 +15,8 @@ from django.conf import settings
 from bson import ObjectId
 import requests
 from src.utils.sheets import append_rows_to_sheet, remove_rows_by_first_column
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 try:
     from zoneinfo import ZoneInfo
 except Exception:
@@ -479,6 +481,126 @@ def logout(request: HttpRequest):
         resp = JsonResponse({"status": "logged_out", "detail": str(e)})
         _clear_auth_cookie(resp)
         return resp
+
+
+@csrf_exempt
+def google_login(request: HttpRequest):
+    """Sign in / sign up with Google Identity Services credential.
+
+    Accepts a Google ID token from the frontend GIS flow, verifies it,
+    and either logs in an existing account (matched by email) or creates
+    a new member account (gated by ``registration_open``).
+
+    Request JSON: { "credential": "<google_id_token>" }
+    Returns: { "token": "...", "user": {...} }
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    credential = str((data.get("credential") or "").strip())
+    if not credential:
+        return JsonResponse({"error": "missing_credential"}, status=400)
+
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    if not client_id:
+        return JsonResponse({"error": "google_auth_not_configured"}, status=500)
+
+    # Verify the Google ID token
+    try:
+        id_info = google_id_token.verify_oauth2_token(
+            credential,
+            google_requests.Request(),
+            clock_skew_in_seconds=30,
+        )
+    except ValueError as e:
+        return JsonResponse({"error": "invalid_google_token", "detail": str(e)}, status=401)
+
+    # Validate audience matches our client ID
+    if id_info.get("aud") != client_id:
+        if client_id not in (id_info.get("azp") or ""):
+            return JsonResponse({"error": "token_audience_mismatch"}, status=401)
+
+    email = (id_info.get("email") or "").strip()
+    if not email:
+        return JsonResponse({"error": "missing_email_in_token"}, status=400)
+
+    email_verified = bool(id_info.get("email_verified"))
+    if not email_verified:
+        return JsonResponse({"error": "email_not_verified"}, status=401)
+
+    google_name = (id_info.get("name") or "").strip()
+
+    try:
+        acc = Account.objects.filter(email__iexact=email, is_active=True).first()
+
+        if acc:
+            # Existing account — log them in
+            token = secrets.token_urlsafe(32)
+            acc.token = token
+            acc.last_login = datetime.now(timezone.utc)
+            acc.save(update_fields=["token", "last_login"])
+            _sync_account_to_mongo(acc)
+
+            resp = JsonResponse({
+                "token": token,
+                "user": {
+                    "username": acc.username,
+                    "email": acc.email,
+                    "role": acc.role,
+                },
+                "is_new": False,
+            })
+            _set_auth_cookie(resp, token, request)
+            return resp
+
+        # No existing account — create one (gated by registration_open)
+        if not _settings().get("registration_open"):
+            return JsonResponse({"error": "registration_closed"}, status=403)
+
+        # Generate username from email prefix, ensure uniqueness
+        base_username = email.split("@")[0][:45]
+        username = base_username
+        suffix = 1
+        while Account.objects.filter(username__iexact=username).exists():
+            username = f"{base_username}{suffix}"
+            suffix += 1
+            if suffix > 99:
+                username = f"{base_username}_{secrets.token_hex(3)}"
+                break
+
+        acc = Account(
+            username=username,
+            email=email,
+            password_hash=make_password(secrets.token_urlsafe(32)),
+            role=Account.ROLE_MEMBER,
+            is_active=True,
+            full_name=google_name or None,
+        )
+        acc.token = secrets.token_urlsafe(32)
+        acc.last_login = datetime.now(timezone.utc)
+        acc.save()
+        _sync_account_to_mongo(acc)
+
+        resp = JsonResponse({
+            "token": acc.token,
+            "user": {
+                "username": acc.username,
+                "email": acc.email,
+                "role": acc.role,
+            },
+            "is_new": True,
+        }, status=201)
+        _set_auth_cookie(resp, acc.token or "", request)
+        return resp
+
+    except IntegrityError:
+        return JsonResponse({"error": "conflict", "detail": "username_or_email_exists"}, status=409)
+    except Exception as e:
+        return JsonResponse({"error": "server_error", "detail": str(e)}, status=500)
 
 
 @csrf_exempt
