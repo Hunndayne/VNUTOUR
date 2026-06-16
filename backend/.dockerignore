@@ -1,0 +1,25 @@
+# VCS and IDE
+.git
+.gitignore
+.idea
+.vscode
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local envs and secrets
+.env*
+.venv/
+.env_backup/
+
+# OS junk
+.DS_Store
+
+# Local caches and data
+sheet_snapshot.json
+data/
+credentials/
