@@ -104,7 +104,7 @@ function LoginPage() {
     if (role === 'admin' || role === 'collab') {
       window.location.replace('/checkin')
     } else {
-      window.location.replace('/')
+      window.location.replace('/participant')
     }
   }
 

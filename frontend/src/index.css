@@ -10,6 +10,84 @@ body {
   @apply bg-gradient-to-br from-indigo-500 via-purple-600 to-purple-800 text-slate-900 antialiased;
 }
 
+/* Field-map token fallbacks for the admin surfaces.
+   These mirror tailwind.config.js so an already-running Vite server still
+   paints the admin correctly even before Tailwind reloads its config. */
+.font-display { font-family: "Space Grotesk", system-ui, sans-serif; }
+.font-sans { font-family: Inter, system-ui, sans-serif; }
+.font-mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+.bg-paper { background-color: rgb(243 244 241 / var(--tw-bg-opacity, 1)); }
+.bg-paper\/50 { background-color: rgb(243 244 241 / 0.5); }
+.bg-paper\/60 { background-color: rgb(243 244 241 / 0.6); }
+.bg-paper\/70 { background-color: rgb(243 244 241 / 0.7); }
+.bg-paper\/85 { background-color: rgb(243 244 241 / 0.85); }
+.bg-ink { background-color: rgb(32 49 43 / var(--tw-bg-opacity, 1)); }
+.bg-ink\/10 { background-color: rgb(32 49 43 / 0.1); }
+.bg-ink\/15 { background-color: rgb(32 49 43 / 0.15); }
+.bg-ink\/20 { background-color: rgb(32 49 43 / 0.2); }
+.bg-ink\/25 { background-color: rgb(32 49 43 / 0.25); }
+.bg-ink\/30 { background-color: rgb(32 49 43 / 0.3); }
+.bg-ink\/\[0\.06\] { background-color: rgb(32 49 43 / 0.06); }
+.bg-ink\/\[0\.07\] { background-color: rgb(32 49 43 / 0.07); }
+.bg-stone { background-color: rgb(220 216 204 / var(--tw-bg-opacity, 1)); }
+.bg-gold { background-color: rgb(224 162 58 / var(--tw-bg-opacity, 1)); }
+.bg-gold\/10 { background-color: rgb(224 162 58 / 0.1); }
+.bg-gold\/15 { background-color: rgb(224 162 58 / 0.15); }
+.bg-gold\/20 { background-color: rgb(224 162 58 / 0.2); }
+.bg-trail { background-color: rgb(31 122 107 / var(--tw-bg-opacity, 1)); }
+.bg-trail\/10 { background-color: rgb(31 122 107 / 0.1); }
+.bg-trail\/12 { background-color: rgb(31 122 107 / 0.12); }
+.bg-trail\/15 { background-color: rgb(31 122 107 / 0.15); }
+.bg-trail\/\[0\.06\] { background-color: rgb(31 122 107 / 0.06); }
+.bg-clay { background-color: rgb(214 73 43 / var(--tw-bg-opacity, 1)); }
+.bg-clay\/10 { background-color: rgb(214 73 43 / 0.1); }
+.bg-clay\/12 { background-color: rgb(214 73 43 / 0.12); }
+.bg-clay\/\[0\.04\] { background-color: rgb(214 73 43 / 0.04); }
+.bg-clay\/\[0\.05\] { background-color: rgb(214 73 43 / 0.05); }
+
+.text-ink { color: rgb(32 49 43 / var(--tw-text-opacity, 1)); }
+.text-ink\/25 { color: rgb(32 49 43 / 0.25); }
+.text-ink\/30 { color: rgb(32 49 43 / 0.3); }
+.text-ink\/35 { color: rgb(32 49 43 / 0.35); }
+.text-ink\/40 { color: rgb(32 49 43 / 0.4); }
+.text-ink\/45 { color: rgb(32 49 43 / 0.45); }
+.text-ink\/50 { color: rgb(32 49 43 / 0.5); }
+.text-ink\/55 { color: rgb(32 49 43 / 0.55); }
+.text-ink\/60 { color: rgb(32 49 43 / 0.6); }
+.text-ink\/70 { color: rgb(32 49 43 / 0.7); }
+.text-ink\/80 { color: rgb(32 49 43 / 0.8); }
+.text-ink\/\[0\.05\] { color: rgb(32 49 43 / 0.05); }
+.text-gold { color: rgb(224 162 58 / var(--tw-text-opacity, 1)); }
+.text-trail { color: rgb(31 122 107 / var(--tw-text-opacity, 1)); }
+.text-clay { color: rgb(214 73 43 / var(--tw-text-opacity, 1)); }
+.text-clay\/60 { color: rgb(214 73 43 / 0.6); }
+
+.border-stone { border-color: rgb(220 216 204 / var(--tw-border-opacity, 1)); }
+.border-gold { border-color: rgb(224 162 58 / var(--tw-border-opacity, 1)); }
+.border-trail { border-color: rgb(31 122 107 / var(--tw-border-opacity, 1)); }
+.border-trail\/25 { border-color: rgb(31 122 107 / 0.25); }
+.border-trail\/30 { border-color: rgb(31 122 107 / 0.3); }
+.border-clay\/25 { border-color: rgb(214 73 43 / 0.25); }
+.border-clay\/30 { border-color: rgb(214 73 43 / 0.3); }
+.divide-stone > :not([hidden]) ~ :not([hidden]) { border-color: rgb(220 216 204 / var(--tw-divide-opacity, 1)); }
+.divide-stone\/50 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(220 216 204 / 0.5); }
+.divide-stone\/60 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(220 216 204 / 0.6); }
+
+.placeholder\:text-ink\/30::placeholder { color: rgb(32 49 43 / 0.3); }
+.hover\:bg-paper:hover { background-color: rgb(243 244 241 / var(--tw-bg-opacity, 1)); }
+.hover\:bg-paper\/70:hover { background-color: rgb(243 244 241 / 0.7); }
+.hover\:bg-trail\/15:hover { background-color: rgb(31 122 107 / 0.15); }
+.hover\:bg-clay\/\[0\.04\]:hover { background-color: rgb(214 73 43 / 0.04); }
+.hover\:text-ink:hover,
+.group:hover .group-hover\:text-ink { color: rgb(32 49 43 / var(--tw-text-opacity, 1)); }
+.focus\:border-trail\/40:focus { border-color: rgb(31 122 107 / 0.4); }
+.focus\:border-clay\/40:focus { border-color: rgb(214 73 43 / 0.4); }
+.focus\:ring-trail\/10:focus { --tw-ring-color: rgb(31 122 107 / 0.1); }
+.focus\:ring-clay\/10:focus { --tw-ring-color: rgb(214 73 43 / 0.1); }
+.disabled\:bg-paper:disabled { background-color: rgb(243 244 241 / var(--tw-bg-opacity, 1)); }
+.disabled\:text-ink\/45:disabled { color: rgb(32 49 43 / 0.45); }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
