@@ -42,11 +42,13 @@ def delete_station(station_id: int) -> None:
     Station.objects.filter(id=station_id).update(active=False)
 
 
-def get_stations_for_event(sub_event_id: int) -> list[Station]:
-    """Get active stations for a sub-event."""
-    return list(Station.objects.filter(
-        sub_event_id=sub_event_id, active=True,
-    ).order_by("order"))
+def get_stations_for_event(sub_event_id: int, include_inactive: bool = False) -> list[Station]:
+    """Get stations for a sub-event. Admin config views pass include_inactive=True
+    so deactivated (soft-deleted) stations remain visible and can be re-enabled."""
+    qs = Station.objects.filter(sub_event_id=sub_event_id)
+    if not include_inactive:
+        qs = qs.filter(active=True)
+    return list(qs.order_by("order"))
 
 
 def get_occupancy(station_id: int) -> dict:

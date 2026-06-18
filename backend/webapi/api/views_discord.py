@@ -128,8 +128,3 @@ def broadcast_create_view(request: HttpRequest):
         }, status=201)
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
-
-
-def broadcast_list_view(request: HttpRequest):
-    """GET: list broadcasts (re-exported for url routing)."""
-    return broadcast_create_view(request)

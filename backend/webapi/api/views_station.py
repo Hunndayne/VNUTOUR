@@ -24,7 +24,8 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
     if err:
         return err
 
-    stations = get_stations_for_event(event_id)
+    include_inactive = request.GET.get("include_inactive") in ("1", "true", "yes")
+    stations = get_stations_for_event(event_id, include_inactive=include_inactive)
     return JsonResponse({
         "stations": [
             {

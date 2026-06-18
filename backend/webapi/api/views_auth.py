@@ -13,7 +13,7 @@ from api.services.auth_service import (
     find_by_token, register_account, register_with_google,
 )
 from api.services.team_service import _get_setting
-from api.models import Account
+from api.models import Account, Participant
 
 from .views_shared import (
     _json_body, _extract_token, _auth_or_401,
@@ -60,6 +60,7 @@ def me_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    participant = Participant.objects.filter(mssv=acc.mssv).first() if acc.mssv else None
     return JsonResponse({
         "username": acc.username,
         "email": acc.email,
@@ -67,6 +68,7 @@ def me_view(request: HttpRequest):
         "mssv": acc.mssv,
         "full_name": acc.full_name,
         "last_login": acc.last_login.isoformat() if acc.last_login else None,
+        "profile_complete": bool(acc.mssv and participant and participant.full_name),
     })
 
 

@@ -48,9 +48,9 @@ def score_entry_create_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    phase_key = str((data.get("phase_key") or "").strip())
-    event_id = data.get("event_id")
-    team_code = str((data.get("team_code") or "").strip())
+    phase_key = str((data.get("phaseKey") or data.get("phase_key") or "").strip())
+    event_id = data.get("eventId") or data.get("event_id")
+    team_code = str((data.get("teamCode") or data.get("team_code") or "").strip())
     kind = str((data.get("kind") or "").strip())
     points = data.get("points", 0)
 
@@ -131,7 +131,7 @@ def advancement_rule_view(request: HttpRequest, phase_key: str):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    to_phase_key = str((data.get("to_phase_key") or "").strip())
+    to_phase_key = str((data.get("toPhaseKey") or data.get("to_phase_key") or "").strip())
     if not to_phase_key:
         return JsonResponse({"error": "missing_to_phase"}, status=400)
 

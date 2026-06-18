@@ -132,8 +132,17 @@ def team_item_view(request: HttpRequest, team_key: str):
 
         new_approval_status = data.get("approval_status")
         if new_approval_status:
-            team.approval_status = new_approval_status
-            team.save(update_fields=["approval_status", "updated_at"])
+            if new_approval_status not in dict(Team.APPROVAL_CHOICES):
+                return JsonResponse({"error": "invalid_approval_status"}, status=400)
+            # Route approve/reject through the service so reviewer, timestamps and
+            # Discord provisioning stay consistent with the dedicated endpoints.
+            if new_approval_status == Team.APPROVAL_APPROVED:
+                approve_team(team, acc)
+            elif new_approval_status == Team.APPROVAL_REJECTED:
+                reject_team(team, acc, data.get("approval_note") or data.get("note"))
+            else:
+                team.approval_status = new_approval_status
+                team.save(update_fields=["approval_status", "updated_at"])
 
         return JsonResponse({
             "code": team.code, "name": team.name,

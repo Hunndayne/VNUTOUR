@@ -84,7 +84,7 @@ def create_score_entry(
         sub_event=sub_event,
         team=team,
         kind=kind,
-        points=points,
+        points=_normalize_points(kind, points),
         note=note,
         created_by=created_by,
         station_session_id=station_session_id,
@@ -92,11 +92,21 @@ def create_score_entry(
     return entry
 
 
+def _normalize_points(kind: str, points: int) -> int:
+    """Penalties are always stored negative and bonuses positive so the
+    leaderboard can simply Sum(points). Manual/station keep the sign as given."""
+    if kind == ScoreEntry.KIND_PENALTY:
+        return -abs(points)
+    if kind == ScoreEntry.KIND_BONUS:
+        return abs(points)
+    return points
+
+
 def update_score_entry(entry_id: int, points: int | None = None, note: str | None = None) -> ScoreEntry:
     """Update a score entry."""
     entry = ScoreEntry.objects.get(id=entry_id)
     if points is not None:
-        entry.points = points
+        entry.points = _normalize_points(entry.kind, points)
     if note is not None:
         entry.note = note
     entry.save(update_fields=["points", "note", "updated_at"])

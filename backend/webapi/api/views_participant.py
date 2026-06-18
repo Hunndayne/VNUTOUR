@@ -10,6 +10,7 @@ from api.models import Account, Participant, Team, TeamMembership
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
+    link_account_profile,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -35,6 +36,9 @@ def me_profile_view(request: HttpRequest):
                 "discord_id": participant.discord_id,
             } if participant else None,
             "account_mssv": acc.mssv,
+            # FE (esp. the post-Google-signup page) uses this to decide whether
+            # to force the supplementary-info form before anything else.
+            "profile_complete": bool(acc.mssv and participant and participant.full_name),
         })
 
     if request.method in ("PUT", "PATCH"):
@@ -59,10 +63,12 @@ def me_profile_view(request: HttpRequest):
             acc.full_name = data["full_name"]
             acc.save(update_fields=["full_name"])
 
-        # Upsert participant profile
+        # Upsert participant profile and link it back to the account so the
+        # Account <-> Participant FK is never left dangling.
         participant, _ = Participant.objects.update_or_create(
             mssv=mssv,
             defaults={
+                "account": acc,
                 "full_name": data.get("full_name") or acc.full_name or "",
                 "email": data.get("email") or acc.email,
                 "phone": data.get("phone"),
@@ -117,6 +123,11 @@ def my_team_view(request: HttpRequest):
         })
 
     if request.method == "POST":
+        # A captain must have completed their own profile first (mssv). For
+        # Google signups this is enforced by the supplementary-info page.
+        if not acc.mssv:
+            return JsonResponse({"error": "profile_incomplete"}, status=409)
+
         data = _json_body(request)
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
@@ -133,8 +144,9 @@ def my_team_view(request: HttpRequest):
         if err:
             return JsonResponse({"error": err}, status=400)
 
-        # Add creator as member + captain
-        add_member(team, acc.mssv or "", full_name=acc.full_name, email=acc.email, is_captain=True)
+        # Add creator as member + captain, then link the profile to the account
+        add_member(team, acc.mssv, full_name=acc.full_name, email=acc.email, is_captain=True)
+        link_account_profile(acc)
 
         return JsonResponse({
             "code": team.code,

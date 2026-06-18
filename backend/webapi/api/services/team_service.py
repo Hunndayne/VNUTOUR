@@ -242,6 +242,21 @@ def get_team_members(team: Team) -> list[dict]:
     return result
 
 
+def link_account_profile(account: Account) -> Optional[Participant]:
+    """Link Account.mssv <-> Participant.account so the FK is not left dangling.
+
+    Used after a participant fills in their mssv (incl. the post-Google-signup
+    supplementary-info page) and when an owner creates their team.
+    """
+    if not account or not account.mssv:
+        return None
+    participant = Participant.objects.filter(mssv=account.mssv).first()
+    if participant and participant.account_id != account.id:
+        participant.account = account
+        participant.save(update_fields=["account", "updated_at"])
+    return participant
+
+
 def get_team_for_participant(mssv: str) -> Optional[Team]:
     """Find which team a participant belongs to."""
     membership = TeamMembership.objects.filter(
