@@ -11,3 +11,4 @@ django-cors-headers>=4.3.0
 qrcode[pil]>=7.4
 Pillow>=10.0.0
 requests>=2.31.0
+psycopg2-binary>=2.9.0

@@ -60,11 +60,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "serverapi.wsgi.application"
 
-# Using SQLite for Django internals; API reads from Mongo via existing MongoManager
+# PostgreSQL is the source of truth (plan §2.1)
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME", "vnutour"),
+        "USER": os.getenv("DB_USER", "vnutour"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "vnutour"),
+        "HOST": os.getenv("DB_HOST", "localhost"),
+        "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
 

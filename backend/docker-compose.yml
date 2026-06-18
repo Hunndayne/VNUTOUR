@@ -1,35 +1,31 @@
 version: "3.8"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vnutour-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vnutour
+      POSTGRES_PASSWORD: vnutour
+      POSTGRES_DB: vnutour
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   bot:
     build: .
     container_name: vnutour-bot
     restart: unless-stopped
-    # Load environment values without baking them into the image
     env_file:
       - .env.docker
     environment:
-      # Ensure ffmpeg path is correct inside container
       - FFMPEG_EXE=ffmpeg
-      # Persist sheet snapshot outside the container
       - SHEET_CACHE_FILE=/data/sheet_snapshot.json
-      # If using Docker secrets for Google credentials, point to the mounted file:
-      # - GOOGLE_CREDENTIALS_JSON=/run/secrets/google_credentials
-    # Mount a small data dir for cache/snapshots
     volumes:
       - ./data:/data
-    # Use either secrets OR a bind-mount for Google credentials
-    # Option A: Docker secrets (recommended)
-    # secrets:
-    #   - google_credentials
-    # Option B: Bind mount credentials folder and set GOOGLE_CREDENTIALS_JSON accordingly in .env.docker
-    # volumes:
-    #   - ./credentials:/app/credentials:ro
 
-# Define secrets if using Option A above
-#secrets:
-#  google_credentials:
-#    file: ./credentials/service_account.json
   web:
     build: .
     container_name: vnutour-web
@@ -39,9 +35,14 @@ services:
       - .env.docker
     environment:
       - DJANGO_DEBUG=1
+      - DB_HOST=postgres
     ports:
       - "8080:8080"
     volumes:
       - .:/app
     depends_on:
+      - postgres
       - bot
+
+volumes:
+  pgdata:

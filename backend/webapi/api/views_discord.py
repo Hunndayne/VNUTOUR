@@ -1,0 +1,103 @@
+"""
+Discord views — status, provisioning, broadcasts (§9.10).
+"""
+
+from django.http import JsonResponse, HttpRequest
+from django.views.decorators.csrf import csrf_exempt
+
+from api.models import Account
+from api.services.discord_service import (
+    get_provisioning_queue, retry_provision,
+    create_broadcast, list_broadcasts,
+)
+from .views_shared import _json_body, _auth_or_401, _require_role
+
+
+def discord_status_view(request: HttpRequest):
+    """GET: basic Discord bot status."""
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+
+    from api.models import Team
+    pending = Team.objects.filter(provision_state=Team.PROVISION_PENDING).count()
+    failed = Team.objects.filter(provision_state=Team.PROVISION_FAILED).count()
+    done = Team.objects.filter(provision_state=Team.PROVISION_DONE).count()
+
+    return JsonResponse({
+        "provisioning": {
+            "pending": pending,
+            "failed": failed,
+            "done": done,
+        },
+    })
+
+
+def provisioning_queue_view(request: HttpRequest):
+    """GET: teams waiting for Discord provisioning."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    return JsonResponse({"queue": get_provisioning_queue()})
+
+
+@csrf_exempt
+def retry_provision_view(request: HttpRequest, team_code: str):
+    """POST: retry Discord provisioning for a team."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    try:
+        team = retry_provision(team_code)
+        return JsonResponse({
+            "team_code": team.code,
+            "provision_state": team.provision_state,
+            "retry_count": team.provision_retry_count,
+        })
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=404)
+
+
+@csrf_exempt
+def broadcast_create_view(request: HttpRequest):
+    """GET: list broadcasts. POST: create draft broadcast."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method == "GET":
+        broadcasts = list_broadcasts()
+        return JsonResponse({"items": broadcasts})
+
+    if request.method == "POST":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+
+        title = str((data.get("title") or "").strip())
+        message = str((data.get("message") or "").strip())
+        target = str((data.get("target") or "all").strip())
+
+        if not title or not message:
+            return JsonResponse({"error": "missing_fields"}, status=400)
+
+        broadcast = create_broadcast(
+            title=title, message=message, target=target,
+            sent_by=acc, target_payload=data.get("target_payload"),
+        )
+        return JsonResponse({
+            "id": broadcast.id, "title": broadcast.title,
+            "status": broadcast.status,
+        }, status=201)
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+def broadcast_list_view(request: HttpRequest):
+    """GET: list broadcasts (re-exported for url routing)."""
+    return broadcast_create_view(request)
