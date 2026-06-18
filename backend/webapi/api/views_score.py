@@ -5,7 +5,7 @@ Score & advancement views — §9.8.
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, ScoreEntry
+from api.models import Account, ScoreEntry, ProgramPhase, SubEvent, Team
 from api.services.score_service import (
     get_phase_scoreboard, create_score_entry,
     update_score_entry, delete_score_entry,
@@ -17,15 +17,15 @@ from .views_shared import _json_body, _auth_or_401, _require_role
 
 def phase_scoreboard_view(request: HttpRequest, phase_key: str):
     """GET: full scoreboard for a phase."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
     try:
         data = get_phase_scoreboard(phase_key)
         return JsonResponse(data)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except ProgramPhase.DoesNotExist:
+        return JsonResponse({"error": "phase_not_found"}, status=404)
 
 
 @csrf_exempt
@@ -73,8 +73,14 @@ def score_entry_create_view(request: HttpRequest):
             "id": entry.id, "team_code": entry.team.code,
             "kind": entry.kind, "points": entry.points,
         }, status=201)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+    except ProgramPhase.DoesNotExist:
+        return JsonResponse({"error": "phase_not_found"}, status=404)
+    except SubEvent.DoesNotExist:
+        return JsonResponse({"error": "event_not_found"}, status=404)
+    except Team.DoesNotExist:
+        return JsonResponse({"error": "team_not_found"}, status=404)
+    except (ValueError, TypeError):
+        return JsonResponse({"error": "invalid_points"}, status=400)
 
 
 @csrf_exempt
@@ -142,8 +148,10 @@ def advancement_rule_view(request: HttpRequest, phase_key: str):
             "mode": rule.mode,
             "slots": rule.slots,
         })
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+    except ProgramPhase.DoesNotExist:
+        return JsonResponse({"error": "phase_not_found"}, status=404)
+    except (ValueError, TypeError):
+        return JsonResponse({"error": "invalid_slots"}, status=400)
 
 
 @csrf_exempt
@@ -159,7 +167,7 @@ def publish_advancement_view(request: HttpRequest, phase_key: str):
     try:
         result = publish_advancement(phase_key, acc)
         return JsonResponse(result)
+    except ProgramPhase.DoesNotExist:
+        return JsonResponse({"error": "phase_not_found"}, status=404)
     except ValueError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)

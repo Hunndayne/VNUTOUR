@@ -20,6 +20,7 @@ from .views_shared import _json_body, _auth_or_401, _require_role
 # Teams
 # =====================================================================
 
+@csrf_exempt
 def teams_collection_view(request: HttpRequest):
     """GET: list teams. POST: admin creates team."""
     acc, err = _auth_or_401(request)
@@ -197,6 +198,7 @@ def team_reject_view(request: HttpRequest, team_key: str):
 # Accounts (admin)
 # =====================================================================
 
+@csrf_exempt
 def admin_accounts_view(request: HttpRequest):
     """GET: list accounts. POST: create account."""
     acc, err = _require_role(request, Account.ROLE_ADMIN)

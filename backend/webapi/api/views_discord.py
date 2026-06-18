@@ -5,10 +5,11 @@ Discord views — status, provisioning, broadcasts (§9.10).
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account
+from api.models import Account, Team
 from api.services.discord_service import (
     get_provisioning_queue, retry_provision,
     create_broadcast, list_broadcasts,
+    list_members, sync_member,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -54,13 +55,44 @@ def retry_provision_view(request: HttpRequest, team_code: str):
 
     try:
         team = retry_provision(team_code)
-        return JsonResponse({
-            "team_code": team.code,
-            "provision_state": team.provision_state,
-            "retry_count": team.provision_retry_count,
-        })
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=404)
+    except Team.DoesNotExist:
+        return JsonResponse({"error": "team_not_found"}, status=404)
+
+    return JsonResponse({
+        "team_code": team.code,
+        "provision_state": team.provision_state,
+        "retry_count": team.provision_retry_count,
+    })
+
+
+def members_view(request: HttpRequest):
+    """GET: list the web<->Discord member mapping."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    return JsonResponse({"items": list_members()})
+
+
+@csrf_exempt
+def member_sync_view(request: HttpRequest, mssv: str):
+    """POST: (re)sync a member's Discord linkage."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    participant, err = sync_member(mssv)
+    if err:
+        return JsonResponse({"error": err}, status=404)
+
+    return JsonResponse({
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "discord_id": participant.discord_id,
+        "linked": participant.discord_id is not None,
+    })
 
 
 @csrf_exempt

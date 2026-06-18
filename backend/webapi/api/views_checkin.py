@@ -20,7 +20,7 @@ from .views_shared import _json_body, _auth_or_401, _require_role
 @csrf_exempt
 def event_checkin_scan_view(request: HttpRequest):
     """POST: scan QR for event check-in."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -71,7 +71,7 @@ def event_checkin_scan_view(request: HttpRequest):
 
 def event_checkin_list_view(request: HttpRequest):
     """GET: list event checkins."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -98,7 +98,7 @@ def event_checkin_list_view(request: HttpRequest):
 
 def event_checkin_stats_view(request: HttpRequest):
     """GET: checkin stats."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -132,6 +132,10 @@ def checkin_legacy_view(request: HttpRequest):
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
@@ -149,10 +153,6 @@ def checkin_legacy_view(request: HttpRequest):
 
     if not phase or not event:
         return JsonResponse({"error": "program_not_configured"}, status=500)
-
-    acc, err = _auth_or_401(request)
-    if err:
-        return err
 
     ip = request.META.get("REMOTE_ADDR") or request.META.get("HTTP_X_FORWARDED_FOR")
     ua = request.META.get("HTTP_USER_AGENT")
@@ -183,6 +183,10 @@ def checkin_legacy_view(request: HttpRequest):
 
 def checkins_legacy_list_view(request: HttpRequest):
     """Legacy GET /checkins."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
     event_id = request.GET.get("event_id")
     items = list_event_checkins(event_id=int(event_id) if event_id else None)
     return JsonResponse({"items": items})
@@ -190,6 +194,10 @@ def checkins_legacy_list_view(request: HttpRequest):
 
 def checkins_legacy_stats_view(request: HttpRequest):
     """Legacy GET /checkins/stats."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
     stats = get_checkin_stats()
     return JsonResponse({
         "total_teams": stats["total_teams"],

@@ -20,7 +20,7 @@ from .views_shared import _json_body, _auth_or_401, _require_role
 
 def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int):
     """GET: list stations for a sub-event."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -106,7 +106,7 @@ def station_detail_view(request: HttpRequest, station_id: int):
 
 def occupancy_view(request: HttpRequest, station_id: int):
     """GET: current station occupancy."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
     return JsonResponse(get_occupancy(station_id))
@@ -114,7 +114,7 @@ def occupancy_view(request: HttpRequest, station_id: int):
 
 def station_sessions_history_view(request: HttpRequest, station_id: int):
     """GET: recent session history for a station."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
     return JsonResponse({"sessions": get_sessions_history(station_id)})
@@ -127,7 +127,7 @@ def station_sessions_history_view(request: HttpRequest, station_id: int):
 @csrf_exempt
 def station_enter_view(request: HttpRequest):
     """POST: team enters a station."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -176,7 +176,7 @@ def station_enter_view(request: HttpRequest):
 @csrf_exempt
 def station_exit_view(request: HttpRequest):
     """POST: team exits a station."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -216,7 +216,7 @@ def station_exit_view(request: HttpRequest):
 
 def recent_sessions_view(request: HttpRequest):
     """GET: recent station sessions."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 

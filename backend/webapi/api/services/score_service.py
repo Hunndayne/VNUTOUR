@@ -142,7 +142,7 @@ def publish_advancement(from_phase_key: str, published_by: Account) -> dict:
     from_phase = ProgramPhase.objects.get(key=from_phase_key)
     rule = AdvancementRule.objects.filter(from_phase=from_phase).first()
     if not rule:
-        raise ValueError("No advancement rule configured for this phase")
+        raise ValueError("advancement_rule_not_found")
 
     # Get leaderboard
     scores = ScoreEntry.objects.filter(phase=from_phase).values(

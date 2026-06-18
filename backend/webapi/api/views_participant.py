@@ -8,7 +8,7 @@ from django.db import IntegrityError
 
 from api.models import Account, Participant, Team, TeamMembership
 from api.services.team_service import (
-    create_team, add_member, remove_member, submit_team,
+    create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
@@ -143,6 +143,33 @@ def my_team_view(request: HttpRequest):
             "qr_token": team.qr_token,
         }, status=201)
 
+    if request.method == "PATCH":
+        membership = TeamMembership.objects.filter(
+            participant__mssv=acc.mssv, is_captain=True,
+        ).select_related("team").first()
+        if not membership:
+            return JsonResponse({"error": "not_team_owner"}, status=403)
+
+        team = membership.team
+        if not team_is_editable(team):
+            return JsonResponse({"error": "team_locked"}, status=409)
+
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+
+        new_name = str((data.get("team_name") or data.get("name") or "").strip())
+        if not new_name:
+            return JsonResponse({"error": "missing_team_name"}, status=400)
+
+        team.name = new_name
+        team.save(update_fields=["name", "updated_at"])
+        return JsonResponse({
+            "code": team.code,
+            "name": team.name,
+            "approval_status": team.approval_status,
+        })
+
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
 
@@ -232,6 +259,32 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
     team = membership.team
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
+
+    if request.method == "PATCH":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+
+        participant, err = update_member(
+            team, mssv,
+            full_name=data.get("full_name"),
+            email=data.get("email"),
+            phone=data.get("phone"),
+            faculty=data.get("faculty"),
+            school=data.get("school"),
+            facebook=data.get("facebook"),
+        )
+        if err:
+            return JsonResponse({"error": err}, status=404)
+        return JsonResponse({
+            "mssv": participant.mssv,
+            "full_name": participant.full_name,
+            "email": participant.email,
+            "phone": participant.phone,
+            "faculty": participant.faculty,
+            "school": participant.school,
+            "facebook": participant.facebook,
+        })
 
     if request.method == "DELETE":
         success, err = remove_member(team, mssv)

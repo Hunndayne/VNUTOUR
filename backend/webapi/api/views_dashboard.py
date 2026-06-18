@@ -38,7 +38,7 @@ def health(request: HttpRequest):
 
 def overview_view(request: HttpRequest):
     """GET: KPI overview for admin/collab."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -82,7 +82,7 @@ def overview_view(request: HttpRequest):
 
 def activity_view(request: HttpRequest):
     """GET: recent activity feed."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -128,6 +128,7 @@ def activity_view(request: HttpRequest):
 # Settings
 # =====================================================================
 
+@csrf_exempt
 def settings_view(request: HttpRequest):
     """GET: read settings. PUT/PATCH: update settings (admin)."""
     acc, err = _auth_or_401(request)
