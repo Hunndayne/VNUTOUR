@@ -11,7 +11,18 @@ from django.db import IntegrityError
 
 from api.models import (
     Account, Team, ProgramPhase, SubEvent, EventCheckIn, PhaseRoster,
+    TeamMembership,
 )
+
+
+def _resolve_team_from_scan(raw_code: str) -> Team | None:
+    """Resolve a team from QR token or a manual team code fallback."""
+    clean_token = str(raw_code or "").strip()
+    if not clean_token:
+        return None
+    if clean_token.startswith("t:") or clean_token.startswith("T:"):
+        clean_token = clean_token[2:]
+    return Team.objects.filter(qr_token=clean_token).first() or Team.objects.filter(code=clean_token).first()
 
 
 def scan_event_checkin(
@@ -26,13 +37,7 @@ def scan_event_checkin(
     Scan a team's QR for event check-in.
     Returns (checkin, None) or (None, error_code).
     """
-    # Decode QR: strip 't:' prefix
-    clean_token = qr_token.strip()
-    if clean_token.startswith("t:") or clean_token.startswith("T:"):
-        clean_token = clean_token[2:]
-
-    # Find team by QR token
-    team = Team.objects.filter(qr_token=clean_token).first()
+    team = _resolve_team_from_scan(qr_token)
     if not team:
         return None, "team_not_found"
 
@@ -89,7 +94,9 @@ def list_event_checkins(
     offset: int = 0,
 ) -> list[dict]:
     """List check-ins with optional filters."""
-    qs = EventCheckIn.objects.select_related("team", "sub_event", "phase", "scanner")
+    qs = EventCheckIn.objects.select_related(
+        "team", "sub_event", "phase", "scanner",
+    ).prefetch_related("team__memberships__participant")
 
     if event_id:
         qs = qs.filter(sub_event_id=event_id)
@@ -105,6 +112,13 @@ def list_event_checkins(
             "id": c.id,
             "team_code": c.team.code,
             "team_name": c.team.name,
+            "members_detail": [
+                {
+                    "mssv": membership.participant.mssv,
+                    "full_name": membership.participant.full_name,
+                }
+                for membership in c.team.memberships.all()
+            ],
             "phase_key": c.phase.key,
             "event_id": c.sub_event_id,
             "event_name": c.sub_event.name,
@@ -116,22 +130,38 @@ def list_event_checkins(
     ]
 
 
-def get_checkin_stats(event_id: int | None = None) -> dict:
+def get_checkin_stats(event_id: int | None = None, phase_key: str | None = None) -> dict:
     """Get check-in stats for an event or globally."""
-    total_teams = Team.objects.filter(
-        approval_status=Team.APPROVAL_APPROVED,
-    ).count()
+    phase = None
+    if phase_key:
+        phase = ProgramPhase.objects.filter(key=phase_key).first()
+    elif event_id:
+        phase = ProgramPhase.objects.filter(sub_events__id=event_id).distinct().first()
+
+    if phase and PhaseRoster.objects.filter(phase=phase).exists():
+        total_teams = PhaseRoster.objects.filter(phase=phase).count()
+    else:
+        total_teams = Team.objects.filter(
+            approval_status=Team.APPROVAL_APPROVED,
+        ).count()
 
     qs = EventCheckIn.objects.filter(status=EventCheckIn.STATUS_ACTIVE)
     if event_id:
         qs = qs.filter(sub_event_id=event_id)
+    if phase_key:
+        qs = qs.filter(phase__key=phase_key)
 
     checked_count = qs.count()
     latest = qs.order_by("-created_at").first()
+    team_ids = list(qs.values_list("team_id", flat=True).distinct())
+    checked_in_participants = TeamMembership.objects.filter(
+        team_id__in=team_ids,
+    ).values("participant_id").distinct().count()
 
     return {
         "total_teams": total_teams,
         "checked_in_teams": checked_count,
+        "checked_in_participants": checked_in_participants,
         "latest_checkin_at": latest.created_at.isoformat() if latest else None,
     }
 

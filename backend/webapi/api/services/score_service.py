@@ -7,45 +7,87 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from django.db.models import Sum, Q
+from django.db.models import Sum
 from django.db import transaction
 
 from api.models import (
     Account, Team, ProgramPhase, SubEvent, PhaseRoster,
-    ScoreEntry, AdvancementRule, StationSession,
+    ScoreEntry, AdvancementRule,
 )
+
+
+def _get_phase_roster(phase: ProgramPhase):
+    roster = list(
+        PhaseRoster.objects.filter(phase=phase).select_related("team", "qualified_from_phase"),
+    )
+    return roster
+
+
+def _team_scope_for_phase(phase: ProgramPhase) -> tuple[list[dict], list[int], bool]:
+    roster = _get_phase_roster(phase)
+    if roster:
+        items = [
+            {
+                "team_id": entry.team_id,
+                "team_code": entry.team.code,
+                "team_name": entry.team.name,
+                "origin": entry.origin,
+                "qualified_from": entry.qualified_from_phase.key if entry.qualified_from_phase else None,
+            }
+            for entry in roster
+        ]
+        return items, [entry.team_id for entry in roster], True
+
+    approved_teams = list(
+        Team.objects.filter(approval_status=Team.APPROVAL_APPROVED).order_by("code"),
+    )
+    items = [
+        {
+            "team_id": team.id,
+            "team_code": team.code,
+            "team_name": team.name,
+            "origin": None,
+            "qualified_from": None,
+        }
+        for team in approved_teams
+    ]
+    return items, [team.id for team in approved_teams], False
 
 
 def get_phase_scoreboard(phase_key: str) -> dict:
     """Return roster, leaderboard, and event breakdown for a phase."""
     phase = ProgramPhase.objects.get(key=phase_key)
-
-    # Roster
-    roster = PhaseRoster.objects.filter(phase=phase).select_related("team")
-    roster_teams = [
-        {
-            "team_code": r.team.code,
-            "team_name": r.team.name,
-            "origin": r.origin,
-            "qualified_from": r.qualified_from_phase.key if r.qualified_from_phase else None,
-        }
-        for r in roster
-    ]
+    roster_teams, team_ids, roster_is_strict = _team_scope_for_phase(phase)
 
     # Get all sub-events for this phase
     sub_events = SubEvent.objects.filter(phase=phase).order_by("order")
 
-    # Score entries grouped by team
-    scores = ScoreEntry.objects.filter(phase=phase).values("team__code", "team__name").annotate(
+    scores = ScoreEntry.objects.filter(
+        phase=phase,
+        team_id__in=team_ids,
+    ).values("team_id", "team__code", "team__name").annotate(
         total=Sum("points"),
-    ).order_by("-total")
+    )
+    totals_by_team_id = {score["team_id"]: score["total"] or 0 for score in scores}
+    leaderboard = sorted(
+        [
+            {
+                "team_code": team["team_code"],
+                "team_name": team["team_name"],
+                "total_points": totals_by_team_id.get(team["team_id"], 0),
+            }
+            for team in roster_teams
+        ],
+        key=lambda item: (-item["total_points"], item["team_code"]),
+    )
 
     # Per-event breakdown
     event_breakdown = {}
     for se in sub_events:
         event_scores = ScoreEntry.objects.filter(
             phase=phase, sub_event=se,
-        ).values("team__code").annotate(total=Sum("points")).order_by("-total")
+            team_id__in=team_ids,
+        ).values("team__code").annotate(total=Sum("points")).order_by("-total", "team__code")
         event_breakdown[se.name] = [
             {"team_code": e["team__code"], "points": e["total"]}
             for e in event_scores
@@ -56,11 +98,9 @@ def get_phase_scoreboard(phase_key: str) -> dict:
         "phase_label": phase.label,
         "roster_teams": roster_teams,
         "roster_count": len(roster_teams),
-        "leaderboard": [
-            {"team_code": s["team__code"], "team_name": s["team__name"], "total_points": s["total"]}
-            for s in scores
-        ],
+        "leaderboard": leaderboard,
         "event_breakdown": event_breakdown,
+        "uses_phase_roster": roster_is_strict,
     }
 
 
@@ -78,6 +118,12 @@ def create_score_entry(
     phase = ProgramPhase.objects.get(key=phase_key)
     sub_event = SubEvent.objects.get(id=event_id, phase=phase)
     team = Team.objects.get(code=team_code)
+
+    if PhaseRoster.objects.filter(phase=phase).exists():
+        if not PhaseRoster.objects.filter(phase=phase, team=team).exists():
+            raise ValueError("team_not_in_phase")
+    elif team.approval_status != Team.APPROVAL_APPROVED:
+        raise ValueError("team_not_in_phase")
 
     entry = ScoreEntry.objects.create(
         phase=phase,
@@ -154,15 +200,29 @@ def publish_advancement(from_phase_key: str, published_by: Account) -> dict:
     if not rule:
         raise ValueError("advancement_rule_not_found")
 
-    # Get leaderboard
-    scores = ScoreEntry.objects.filter(phase=from_phase).values(
-        "team_id", "team__code",
-    ).annotate(total=Sum("points")).order_by("-total")
+    roster_teams, team_ids, _ = _team_scope_for_phase(from_phase)
+    scores = ScoreEntry.objects.filter(
+        phase=from_phase,
+        team_id__in=team_ids,
+    ).values("team_id").annotate(total=Sum("points"))
+    totals_by_team_id = {score["team_id"]: score["total"] or 0 for score in scores}
+    ranked_teams = sorted(
+        [
+            {
+                "team_id": team["team_id"],
+                "team_code": team["team_code"],
+                "team_name": team["team_name"],
+                "total": totals_by_team_id.get(team["team_id"], 0),
+            }
+            for team in roster_teams
+        ],
+        key=lambda item: (-item["total"], item["team_code"]),
+    )
 
     if rule.mode == AdvancementRule.MODE_TOP_N and rule.slots > 0:
-        top_teams = scores[:rule.slots]
+        top_teams = ranked_teams[:rule.slots]
     else:
-        top_teams = list(scores)
+        top_teams = ranked_teams
 
     promoted = []
     now = datetime.now(timezone.utc)

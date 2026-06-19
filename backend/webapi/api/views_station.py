@@ -139,16 +139,16 @@ def station_enter_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    team_code = str((data.get("teamCode") or data.get("team_code") or "").strip())
+    team_ref = str((data.get("code") or data.get("teamCode") or data.get("team_code") or "").strip())
     station_id = data.get("stationId") or data.get("station_id")
     phase_key = str((data.get("phaseKey") or data.get("phase_key") or "").strip())
     event_id = data.get("eventId") or data.get("event_id")
 
-    if not team_code or not station_id or not phase_key or not event_id:
+    if not team_ref or not station_id or not phase_key or not event_id:
         return JsonResponse({"error": "missing_fields"}, status=400)
 
     session, err = enter_station(
-        team_code=team_code,
+        team_ref=team_ref,
         station_id=int(station_id),
         phase_key=phase_key,
         event_id=int(event_id),
@@ -162,6 +162,7 @@ def station_enter_view(request: HttpRequest):
             "station_inactive": 400, "policy_free_play": 400,
             "station_full": 409, "session_already_active": 409,
             "event_not_found": 404, "station_not_in_event": 400,
+            "team_not_in_phase": 403,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
@@ -188,14 +189,14 @@ def station_exit_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    team_code = str((data.get("teamCode") or data.get("team_code") or "").strip())
+    team_ref = str((data.get("code") or data.get("teamCode") or data.get("team_code") or "").strip())
     station_id = data.get("stationId") or data.get("station_id")
 
-    if not team_code or not station_id:
+    if not team_ref or not station_id:
         return JsonResponse({"error": "missing_fields"}, status=400)
 
     session, err = exit_station(
-        team_code=team_code,
+        team_ref=team_ref,
         station_id=int(station_id),
         operator=acc,
         score=data.get("score"),

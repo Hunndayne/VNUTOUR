@@ -103,7 +103,11 @@ def event_checkin_stats_view(request: HttpRequest):
         return err
 
     event_id = request.GET.get("event_id")
-    stats = get_checkin_stats(event_id=int(event_id) if event_id else None)
+    phase_key = request.GET.get("phase_key")
+    stats = get_checkin_stats(
+        event_id=int(event_id) if event_id else None,
+        phase_key=phase_key or None,
+    )
     return JsonResponse(stats)
 
 
@@ -140,16 +144,28 @@ def checkin_legacy_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    # Default to first event in qualifying phase for legacy compatibility
     code = str((data.get("code") or "").strip())
     if not code:
         return JsonResponse({"error": "missing_code"}, status=400)
 
-    # Legacy check-in used to be global, not per-event
-    # For backward compat: use qualifying phase + first station_run event
     from api.models import ProgramPhase, SubEvent
-    phase = ProgramPhase.objects.filter(key="qualifying").first()
-    event = SubEvent.objects.filter(phase=phase, uses_stations=True).order_by("order").first()
+    requested_phase_key = str((data.get("phaseKey") or data.get("phase_key") or "").strip())
+    requested_event_id = data.get("eventId") or data.get("event_id")
+
+    if requested_phase_key and requested_event_id:
+        phase = ProgramPhase.objects.filter(key=requested_phase_key).first()
+        event = SubEvent.objects.filter(
+            id=requested_event_id,
+            phase=phase,
+        ).first() if phase else None
+    else:
+        # Legacy check-in used to be global, not per-event. Keep a sensible
+        # fallback until the FE is fully wired to event-specific context.
+        phase = ProgramPhase.objects.filter(key="qualifying").first()
+        event = SubEvent.objects.filter(
+            phase=phase,
+            uses_stations=True,
+        ).order_by("order").first()
 
     if not phase or not event:
         return JsonResponse({"error": "program_not_configured"}, status=500)
@@ -169,10 +185,16 @@ def checkin_legacy_view(request: HttpRequest):
         status_map = {
             "team_not_found": 404, "team_not_approved": 403,
             "already_checked_in": 409, "event_not_found": 404,
+            "phase_not_found": 404, "team_not_in_phase": 403,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
     return JsonResponse({
+        "id": checkin.id,
+        "team_code": checkin.team.code,
+        "team_name": checkin.team.name,
+        "event_name": checkin.sub_event.name,
+        "status": checkin.status,
         "team": {
             "code": checkin.team.code,
             "name": checkin.team.name,
@@ -198,10 +220,16 @@ def checkins_legacy_stats_view(request: HttpRequest):
     if err:
         return err
 
-    stats = get_checkin_stats()
+    phase_key = request.GET.get("phase_key")
+    event_id = request.GET.get("event_id")
+    stats = get_checkin_stats(
+        event_id=int(event_id) if event_id else None,
+        phase_key=phase_key or None,
+    )
     return JsonResponse({
         "total_teams": stats["total_teams"],
         "checked_in_teams": stats["checked_in_teams"],
+        "checked_in_participants": stats["checked_in_participants"],
         "latest_checkin_at": stats["latest_checkin_at"],
     })
 

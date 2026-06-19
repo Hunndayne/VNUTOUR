@@ -335,10 +335,10 @@ function CheckinPage() {
 
     try {
       const [listResponse, statsResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}/checkins`, {
+        fetch(`${API_BASE_URL}/event-checkins`, {
           headers: { Authorization: `Bearer ${authToken}` },
         }),
-        fetch(`${API_BASE_URL}/checkins/stats`, {
+        fetch(`${API_BASE_URL}/event-checkins/stats`, {
           headers: { Authorization: `Bearer ${authToken}` },
         }),
       ])
@@ -350,12 +350,14 @@ function CheckinPage() {
           const team = item.team || item
           const members = item.members || item.members_detail || item.members_mssv || team?.members || []
           return {
-            id: team?.team_id || team?.id || item.team_id || item.id,
+            checkinId: item.id,
+            id: item.team_code || team?.code || team?.team_id || team?.id || item.team_id || item.id,
             name: team?.team_name || team?.name || item.team_name || item.name || 'Team khong ro',
             members: Array.isArray(members)
               ? members.map(member => member?.full_name || member?.name || member?.mssv || String(member)).join(', ')
               : '',
             scannedAt: item.checked_in_display || item.checked_in_at || item.created_at || '',
+            eventName: item.event_name || '',
           }
         }))
       }
@@ -382,6 +384,8 @@ function CheckinPage() {
   }
 
   const handleEventCheckin = useCallback(async (rawCode) => {
+    const payload = parseQrPayload(rawCode)
+    const scanCode = payload.code || payload.teamId || rawCode
     const response = await fetch(`${API_BASE_URL}/checkin`, {
       method: 'POST',
       headers: {
@@ -389,7 +393,7 @@ function CheckinPage() {
         Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        code: rawCode,
+        code: scanCode,
         scanner: user?.username || 'unknown',
       }),
     })
@@ -402,17 +406,26 @@ function CheckinPage() {
       if (data.error === 'not_found') {
         throw new Error('Khong tim thay doi voi ma QR nay')
       }
+      if (data.error === 'team_not_found') {
+        throw new Error('Khong tim thay doi voi ma QR hoac ma doi nay')
+      }
+      if (data.error === 'team_not_in_phase') {
+        throw new Error('Doi nay khong nam trong danh sach cua phase hien tai')
+      }
       throw new Error(data.error || 'Check-in su kien that bai')
     }
 
     const membersArray = Array.isArray(data.members)
       ? data.members.map(member => member?.full_name || member?.name || member)
       : []
+    const teamId = data.team_code || data.team?.code || payload.teamId || scanCode
+    const teamName = data.team_name || data.team?.name || payload.teamName || `Team ${teamId}`
     const result = {
       kind: 'event',
-      teamId: data.team?.team_id || data.team?._id || rawCode,
-      teamName: data.team?.team_name || `Team ${data.team?.team_id || rawCode}`,
-      eventName: 'Check-in su kien',
+      phaseKey: programState.currentPhase || 'qualifying',
+      teamId,
+      teamName,
+      eventName: data.event_name || 'Check-in su kien',
       timestamp: data.checked_in_display || data.checked_in_at || new Date().toISOString(),
       members: membersArray,
     }
@@ -420,7 +433,7 @@ function CheckinPage() {
     setLastResult(result)
     setFlashMessage('success', `Da check-in su kien cho ${result.teamName}`)
     fetchCheckinsData({ force: true })
-  }, [authToken, fetchCheckinsData, user])
+  }, [authToken, fetchCheckinsData, programState.currentPhase, user])
 
   const handleStationOperation = useCallback((rawCode, action) => {
     if (!selectedStation) {
@@ -504,6 +517,7 @@ function CheckinPage() {
 
     setLastResult({
       kind: action,
+      phaseKey: selectedPhase,
       teamId,
       teamName,
       eventName: selectedStation.eventName,
@@ -583,16 +597,19 @@ function CheckinPage() {
   const handleResetCheckin = useCallback(async (team) => {
     if (!authToken) return
 
-    const teamKey = team.id || team.name
-    if (!teamKey) return
+    const resetKey = team.checkinId || team.id || team.name
+    if (!resetKey) return
 
-    const confirmed = window.confirm(`Xoa check-in su kien cua ${team.name || teamKey}?`)
+    const confirmed = window.confirm(`Xoa check-in su kien cua ${team.name || team.id || resetKey}?`)
     if (!confirmed) return
 
-    setDeletingTeamId(teamKey)
+    setDeletingTeamId(resetKey)
 
     try {
-      const response = await fetch(`${API_BASE_URL}/checkin/${encodeURIComponent(teamKey)}`, {
+      const endpoint = team.checkinId
+        ? `${API_BASE_URL}/event-checkins/${encodeURIComponent(team.checkinId)}`
+        : `${API_BASE_URL}/checkin/${encodeURIComponent(team.id || team.name || resetKey)}`
+      const response = await fetch(endpoint, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${authToken}` },
       })
@@ -602,7 +619,7 @@ function CheckinPage() {
         throw new Error(payload?.error || `Khong the xoa check-in (${response.status})`)
       }
 
-      setFlashMessage('success', `Da xoa check-in su kien cua ${team.name || teamKey}`)
+      setFlashMessage('success', `Da xoa check-in su kien cua ${team.name || team.id || resetKey}`)
       fetchCheckinsData({ force: true })
     } catch (error) {
       setFlashMessage('error', error.message)
@@ -635,7 +652,7 @@ function CheckinPage() {
     : '--'
   const statsTeams = checkinStats?.checked_in_teams ?? eventCheckins.length
   const statsParticipants = checkinStats?.checked_in_participants ?? 0
-  const phaseLabel = FIXED_PHASES.find(item => item.key === selectedPhase)?.label ?? selectedPhase
+  const lastResultPhaseLabel = FIXED_PHASES.find(item => item.key === lastResult?.phaseKey)?.label ?? '--'
 
   const inputClass = (hasError) => [
     'mt-1 w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink outline-none transition',
@@ -989,7 +1006,7 @@ function CheckinPage() {
                       <h3 className="text-lg font-semibold text-ink">{lastResult.teamName}</h3>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <InfoCell label="Ma doi" value={lastResult.teamId} />
-                        <InfoCell label="Phase" value={phaseLabel} />
+                        <InfoCell label="Phase" value={lastResultPhaseLabel} />
                         <InfoCell label="Event" value={lastResult.eventName || 'Check-in su kien'} />
                         <InfoCell label="Tram" value={lastResult.stationName || '--'} />
                       </div>
@@ -1046,9 +1063,9 @@ function CheckinPage() {
               </div>
               <div className="max-h-[520px] space-y-3 overflow-y-auto px-5 py-4">
                 {eventCheckins.length > 0 ? eventCheckins.map((team) => {
-                  const isDeleting = deletingTeamId === (team.id || team.name)
+                  const isDeleting = deletingTeamId === (team.checkinId || team.id || team.name)
                   return (
-                    <div key={team.id || team.name} className="rounded-xl border border-stone bg-paper px-4 py-3">
+                    <div key={team.checkinId || team.id || team.name} className="rounded-xl border border-stone bg-paper px-4 py-3">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-ink">{team.name}</p>

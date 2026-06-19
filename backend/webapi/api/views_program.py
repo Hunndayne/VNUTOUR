@@ -10,12 +10,12 @@ from api.services.program_service import (
     get_program, set_current_phase, update_phase_dates,
     create_sub_event, update_sub_event, delete_sub_event,
 )
-from .views_shared import _json_body, _auth_or_401, _require_role
+from .views_shared import _json_body, _require_role
 
 
 def program_view(request: HttpRequest):
     """GET: full program with phases and sub-events."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, "admin", "collab")
     if err:
         return err
     return JsonResponse(get_program())

@@ -111,12 +111,12 @@ const initialMembers = [
 function getUser() {
   try {
     return JSON.parse(localStorage.getItem('user') || 'null') || {
-      username: 'member',
-      email: 'member@vnutour.vn',
-      role: 'member',
+      username: 'participant',
+      email: 'participant@vnutour.vn',
+      role: 'participant',
     }
   } catch {
-    return { username: 'member', email: 'member@vnutour.vn', role: 'member' }
+    return { username: 'participant', email: 'participant@vnutour.vn', role: 'participant' }
   }
 }
 

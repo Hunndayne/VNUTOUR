@@ -79,7 +79,11 @@ def score_entry_create_view(request: HttpRequest):
         return JsonResponse({"error": "event_not_found"}, status=404)
     except Team.DoesNotExist:
         return JsonResponse({"error": "team_not_found"}, status=404)
-    except (ValueError, TypeError):
+    except ValueError as exc:
+        if str(exc) == "team_not_in_phase":
+            return JsonResponse({"error": "team_not_in_phase"}, status=403)
+        return JsonResponse({"error": "invalid_points"}, status=400)
+    except TypeError:
         return JsonResponse({"error": "invalid_points"}, status=400)
 
 

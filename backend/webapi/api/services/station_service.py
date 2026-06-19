@@ -11,8 +11,18 @@ from django.db import IntegrityError, transaction
 
 from api.models import (
     Account, Team, Station, StationSession, SubEvent,
-    ProgramPhase, ScoreEntry,
+    ProgramPhase, ScoreEntry, PhaseRoster,
 )
+
+
+def _resolve_team_from_scan(raw_code: str) -> Team | None:
+    """Resolve a team from QR token or a manual team code fallback."""
+    clean_token = str(raw_code or "").strip()
+    if not clean_token:
+        return None
+    if clean_token.startswith("t:") or clean_token.startswith("T:"):
+        clean_token = clean_token[2:]
+    return Team.objects.filter(qr_token=clean_token).first() or Team.objects.filter(code=clean_token).first()
 
 
 # =====================================================================
@@ -94,7 +104,7 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
 # =====================================================================
 
 def enter_station(
-    team_code: str,
+    team_ref: str,
     station_id: int,
     phase_key: str,
     event_id: int,
@@ -103,7 +113,9 @@ def enter_station(
     note: str | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
     """Record a team entering a station."""
-    team = Team.objects.filter(code=team_code, approval_status=Team.APPROVAL_APPROVED).first()
+    team = _resolve_team_from_scan(team_ref)
+    if team and team.approval_status != Team.APPROVAL_APPROVED:
+        team = None
     if not team:
         return None, "team_not_found"
 
@@ -124,6 +136,12 @@ def enter_station(
         sub_event = SubEvent.objects.get(id=event_id, phase=phase)
     except (ProgramPhase.DoesNotExist, SubEvent.DoesNotExist):
         return None, "event_not_found"
+
+    if PhaseRoster.objects.filter(phase=phase).exists() and not PhaseRoster.objects.filter(
+        phase=phase,
+        team=team,
+    ).exists():
+        return None, "team_not_in_phase"
 
     if station.sub_event_id != int(event_id):
         return None, "station_not_in_event"
@@ -150,14 +168,14 @@ def enter_station(
 
 
 def exit_station(
-    team_code: str,
+    team_ref: str,
     station_id: int,
     operator: Account,
     score: int | None = None,
     note: str | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
     """Record a team exiting a station."""
-    team = Team.objects.filter(code=team_code).first()
+    team = _resolve_team_from_scan(team_ref)
     if not team:
         return None, "team_not_found"
 

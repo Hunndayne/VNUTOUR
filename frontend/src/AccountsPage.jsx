@@ -12,28 +12,28 @@ const INITIAL_ACCOUNTS = [
   createAcct('admin', 'admin@vnutour.vn', 'admin', null, 'Quản trị viên', null, true, '18/06 08:15'),
   createAcct('collab01', 'collab01@vnutour.vn', 'collab', null, 'Cộng tác viên 01', null, true, '17/06 14:30'),
   createAcct('collab02', 'collab02@vnutour.vn', 'collab', null, 'Cộng tác viên 02', null, true, '17/06 09:00'),
-  createAcct('tranthanhhung', 'hung.tt@vnu.edu.vn', 'member', '25521001', 'Trần Thanh Hùng', 'Những chiến binh', true, '18/06 07:45'),
-  createAcct('baolq', 'bao.lq@vnu.edu.vn', 'member', '25561002', 'Lê Quốc Bảo', 'Fire Phoenix', true, '17/06 22:10'),
-  createAcct('linhnt', 'linh.nt@vnu.edu.vn', 'member', '25561080', 'Nguyễn Thùy Linh', 'Fire Phoenix', true, '18/06 06:20'),
-  createAcct('tuananh', 'tuananh@vnu.edu.vn', 'member', '25563005', 'Nguyễn Tuấn Anh', 'Những chiến binh', true, '16/06 18:00'),
-  createAcct('minhthu', 'thu.dm@vnu.edu.vn', 'member', '25564010', 'Đặng Minh Thư', 'Ice Breaker', true, '17/06 11:00'),
-  createAcct('ductri', 'tri.pd@vnu.edu.vn', 'member', '25565020', 'Phạm Đức Trí', 'Thunder', true, '17/06 15:30'),
-  createAcct('quanghuy', 'huy.nq@vnu.edu.vn', 'member', '25566099', 'Nguyễn Quang Huy', 'Đội A - Avengers', true, null),
-  createAcct('anhtuan', 'tuan.na@vnu.edu.vn', 'member', '25567100', 'Nguyễn Anh Tuấn', 'Đội B - Predator', true, null),
-  createAcct('inactive_user', 'old@vnu.edu.vn', 'member', '25500999', 'Người dùng cũ', null, false, '01/06 12:00'),
+  createAcct('tranthanhhung', 'hung.tt@vnu.edu.vn', 'participant', '25521001', 'Trần Thanh Hùng', 'Những chiến binh', true, '18/06 07:45'),
+  createAcct('baolq', 'bao.lq@vnu.edu.vn', 'participant', '25561002', 'Lê Quốc Bảo', 'Fire Phoenix', true, '17/06 22:10'),
+  createAcct('linhnt', 'linh.nt@vnu.edu.vn', 'participant', '25561080', 'Nguyễn Thùy Linh', 'Fire Phoenix', true, '18/06 06:20'),
+  createAcct('tuananh', 'tuananh@vnu.edu.vn', 'participant', '25563005', 'Nguyễn Tuấn Anh', 'Những chiến binh', true, '16/06 18:00'),
+  createAcct('minhthu', 'thu.dm@vnu.edu.vn', 'participant', '25564010', 'Đặng Minh Thư', 'Ice Breaker', true, '17/06 11:00'),
+  createAcct('ductri', 'tri.pd@vnu.edu.vn', 'participant', '25565020', 'Phạm Đức Trí', 'Thunder', true, '17/06 15:30'),
+  createAcct('quanghuy', 'huy.nq@vnu.edu.vn', 'participant', '25566099', 'Nguyễn Quang Huy', 'Đội A - Avengers', true, null),
+  createAcct('anhtuan', 'tuan.na@vnu.edu.vn', 'participant', '25567100', 'Nguyễn Anh Tuấn', 'Đội B - Predator', true, null),
+  createAcct('inactive_user', 'old@vnu.edu.vn', 'participant', '25500999', 'Người dùng cũ', null, false, '01/06 12:00'),
 ]
 
 const ROLE_DEF = {
   admin: { label: 'Admin', cls: 'bg-clay/12 text-clay' },
   collab: { label: 'Collab', cls: 'bg-gold/12 text-[#9A6B12]' },
-  member: { label: 'Member', cls: 'bg-trail/12 text-trail' },
+  participant: { label: 'Participant', cls: 'bg-trail/12 text-trail' },
 }
 
 const FILTER_TABS = [
   { key: 'all', label: 'Tất cả' },
   { key: 'admin', label: 'Admin' },
   { key: 'collab', label: 'Collab' },
-  { key: 'member', label: 'Member' },
+  { key: 'participant', label: 'Participant' },
   { key: 'inactive', label: 'Đã khóa' },
 ]
 
@@ -53,7 +53,7 @@ export default function AccountsPage() {
     all: accounts.length,
     admin: accounts.filter(a => a.role === 'admin').length,
     collab: accounts.filter(a => a.role === 'collab').length,
-    member: accounts.filter(a => a.role === 'member').length,
+    participant: accounts.filter(a => a.role === 'participant').length,
     inactive: accounts.filter(a => !a.isActive).length,
   }
 
@@ -219,7 +219,7 @@ export default function AccountsPage() {
                 className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10">
                 <option value="admin">Admin</option>
                 <option value="collab">Collab</option>
-                <option value="member">Member</option>
+                <option value="participant">Participant</option>
               </select>
             </div>
             <div>
@@ -269,7 +269,7 @@ export default function AccountsPage() {
                 <tr><td colSpan={8} className="px-5 py-20 text-center text-sm text-ink/30">Không tìm thấy tài khoản nào</td></tr>
               ) : (
                 filtered.map((acct) => {
-                  const role = ROLE_DEF[acct.role] || ROLE_DEF.member
+                  const role = ROLE_DEF[acct.role] || ROLE_DEF.participant
                   return (
                     <tr key={acct.username} className={`transition hover:bg-paper/50 ${!acct.isActive ? 'opacity-50' : ''}`}>
                       <td className="px-5 py-3.5">
@@ -404,7 +404,7 @@ export default function AccountsPage() {
                       className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10">
                       <option value="admin">Admin</option>
                       <option value="collab">Collab</option>
-                      <option value="member">Member</option>
+                      <option value="participant">Participant</option>
                     </select>
                   </div>
                   <div>
