@@ -102,7 +102,7 @@ function LoginPage() {
   const redirectByRole = (role) => {
     // Use replace so browser back doesn't land on login again
     if (role === 'admin') {
-      window.location.replace('/')
+      window.location.replace('/admin')
     } else if (role === 'collab') {
       window.location.replace('/checkin')
     } else {

@@ -6,7 +6,8 @@ import DiscordPage from './DiscordPage.jsx'
 import AccountsPage from './AccountsPage.jsx'
 import EventManagementPage from './EventManagementPage.jsx'
 import ScoreManagementPage from './ScoreManagementPage.jsx'
-import { FIXED_PHASES, PROGRAM_STORAGE_KEY, loadProgramState, normalizeProgramState, getPhaseInfo } from './adminProgram.js'
+import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
+import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
 
 // ─────────────────────────────────────────────────────────────────────
 // Icon set — outline SVGs, no emoji
@@ -116,6 +117,8 @@ const DATA = {
   },
 }
 
+void DATA
+
 // Light "field map" accents — icon/edge color per tone
 const TONE = {
   gold: { chip: 'bg-gold/15 text-gold', edge: 'bg-gold', bar: 'bg-gold' },
@@ -128,15 +131,23 @@ const TONE = {
 const CARD = 'rounded-xl border border-stone bg-white shadow-[0_1px_3px_rgba(32,49,43,0.05)]'
 
 function getUser() {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null') || { username: 'admin', email: 'admin@vnutour.vn' }
-  } catch {
-    return { username: 'admin', email: 'admin@vnutour.vn' }
-  }
+  return getStoredUser() || { username: 'admin', email: 'admin@vnutour.vn' }
 }
 
 function getCurrentPhaseLabel(currentPhase) {
   return getPhaseInfo(currentPhase).label
+}
+
+function explainApiError(error) {
+  const code = error?.data?.error || error?.message
+  const map = {
+    forbidden: 'Bạn không có quyền truy cập phần quản trị này.',
+    invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
+    phase_not_found: 'Không tìm thấy phase cần thao tác.',
+    not_found: 'Không tìm thấy dữ liệu cần chỉnh sửa.',
+    missing_name: 'Event cần có tên trước khi lưu.',
+  }
+  return map[code] || 'Không thể đồng bộ dữ liệu admin.'
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -480,40 +491,107 @@ function ActivityFeed({ items }) {
 // ─────────────────────────────────────────────────────────────────────
 // Dashboard content per phase
 // ─────────────────────────────────────────────────────────────────────
-function DashboardOverview({ phase, onNavigate }) {
+function DashboardOverview({ phase, onNavigate, overview, activityItems, scoreboard, loading }) {
   const isEvent = phase === 'qualifying' || phase === 'final'
   const isEnded = phase === 'ended'
-  const reg = DATA.registration
-  const ev = DATA.event
-  const kpis = isEvent || isEnded ? ev.kpis : reg.kpis
+  const stats = overview?.stats || {}
+  const phaseStats = overview?.phase_stats || {}
+  const totalTeams = Number(stats.total_teams) || 0
+  const approvedTeams = Number(stats.approved_teams) || 0
+  const totalParticipants = Number(stats.total_participants) || 0
+  const reviewCount = Math.max(totalTeams - approvedTeams, 0)
+  const phaseEventCount = Object.keys(phaseStats).length
+
+  const activity = (activityItems || []).map((item) => {
+    if (item.type === 'event_checkin') {
+      return {
+        type: 'checkin',
+        team: `${item.team_name} · ${item.event}`,
+        time: formatDateTime(item.time),
+      }
+    }
+    return {
+      type: item.action === 'exit' ? 'checkout' : 'checkin',
+      team: `${item.team_name} ${item.action === 'exit' ? 'rời' : 'vào'} ${item.station}`,
+      time: formatDateTime(item.time),
+    }
+  })
+
+  const leaderboardRows = (scoreboard?.leaderboard || [])
+    .slice(0, 5)
+    .map((item, index) => ({
+      rank: index + 1,
+      team: item.team_name || item.team_code,
+      score: item.total_points || 0,
+    }))
+
+  const stationRows = Object.entries(phaseStats)
+    .slice(0, 5)
+    .map(([name, item]) => ({
+      name,
+      current: item.active_station_sessions || 0,
+      done: item.checkins || 0,
+    }))
+
+  const registrationActions = [
+    { tone: 'clay', icon: 'clock', value: reviewCount, label: 'đội cần xử lý', cta: 'Xem đội', tab: 'teams' },
+    { tone: 'sky', icon: 'ticket', value: phaseEventCount, label: 'event trong phase', cta: 'Mở sự kiện', tab: 'events' },
+  ]
+
+  const registrationKpis = [
+    { icon: 'users', label: 'Tổng số đội', value: totalTeams, sub: `${approvedTeams} đã duyệt`, tone: 'gold', tab: 'teams' },
+    { icon: 'clock', label: 'Đang chờ xử lý', value: reviewCount, sub: 'Bao gồm draft và chờ duyệt', tone: 'clay', tab: 'teams' },
+    { icon: 'cap', label: 'Thành viên', value: totalParticipants, sub: 'Đang có trong các đội', tone: 'trail', tab: 'teams' },
+    { icon: 'ticket', label: 'Event đã tạo', value: phaseEventCount, sub: 'Trong phase đang xem', tone: 'sky', tab: 'events' },
+  ]
+
+  const eventKpis = [
+    { icon: 'users', label: 'Đội trong hệ thống', value: totalTeams, sub: `${approvedTeams} đã duyệt`, tone: 'gold', tab: 'teams' },
+    { icon: 'check', label: 'Đội trên bảng điểm', value: scoreboard?.roster_count || 0, sub: scoreboard?.uses_phase_roster ? 'Theo roster phase' : 'Theo đội đã duyệt', tone: 'trail', tab: 'scores' },
+    { icon: 'flag', label: 'Event có dữ liệu', value: phaseEventCount, sub: 'Có activity hoặc check-in/trạm', tone: 'sky', tab: 'events' },
+    { icon: 'chat', label: 'Hoạt động gần đây', value: activity.length, sub: 'Feed mới nhất', tone: 'sand', tab: 'dashboard' },
+  ]
 
   return (
     <div className="space-y-5">
+      {loading && (
+        <div className={`${CARD} px-4 py-3 text-sm text-ink/45`}>
+          Đang đồng bộ số liệu dashboard...
+        </div>
+      )}
+
       {phase === 'registration' && (
         <div className="grid gap-3 sm:grid-cols-2">
-          {reg.actions.map((a, i) => <ActionCard key={i} data={a} onNavigate={onNavigate} />)}
+          {registrationActions.map((item, index) => <ActionCard key={index} data={item} onNavigate={onNavigate} />)}
         </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((c, i) => <StatCard key={i} data={c} onNavigate={onNavigate} />)}
+        {(isEvent || isEnded ? eventKpis : registrationKpis).map((item, index) => (
+          <StatCard key={index} data={item} onNavigate={onNavigate} />
+        ))}
       </div>
 
       {phase === 'registration' ? (
         <div className="grid gap-5 lg:grid-cols-2">
-          <ProgressPanel items={reg.progress} />
-          <ActivityFeed items={reg.activity} />
+          <ProgressPanel
+            items={[
+              { label: 'Đội đã được duyệt', value: approvedTeams, total: Math.max(totalTeams, 1), tone: 'gold' },
+              { label: 'Đội đang cần xử lý', value: reviewCount, total: Math.max(totalTeams, 1), tone: 'trail' },
+            ]}
+          />
+          <ActivityFeed items={activity} />
         </div>
       ) : isEvent ? (
         <>
           <div className="grid gap-5 lg:grid-cols-2">
-            <StationPanel stations={ev.stations} />
-            <ActivityFeed items={ev.activity} />
+            <StationPanel stations={stationRows} />
+            <ActivityFeed items={activity} />
           </div>
-          <Leaderboard rows={ev.leaderboard} />
+          <Leaderboard rows={leaderboardRows} />
         </>
       ) : (
-        <Leaderboard rows={ev.leaderboard} />
+        <Leaderboard rows={leaderboardRows} />
       )}
     </div>
   )
@@ -540,74 +618,184 @@ function PlaceholderPage({ title, icon }) {
 function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [programState, setProgramState] = useState(loadProgramState)
-  const user = getUser()
+  const [user, setUser] = useState(getUser())
+  const [programState, setProgramState] = useState(() => normalizeProgramForFrontend())
+  const [overview, setOverview] = useState(null)
+  const [activityItems, setActivityItems] = useState([])
+  const [scoreboard, setScoreboard] = useState(null)
+  const [loadingProgram, setLoadingProgram] = useState(true)
+  const [loadingDashboard, setLoadingDashboard] = useState(true)
+  const [, setBusyAction] = useState('')
+  const [apiError, setApiError] = useState('')
+
+  const loadProgram = async () => {
+    const [me, programPayload] = await Promise.all([
+      apiRequest('/auth/me'),
+      apiRequest('/program'),
+    ])
+    setUser((current) => ({ ...current, ...me }))
+    setProgramState(normalizeProgramForFrontend(programPayload))
+  }
 
   useEffect(() => {
-    localStorage.setItem(PROGRAM_STORAGE_KEY, JSON.stringify(programState))
-  }, [programState])
+    let cancelled = false
 
-  const setManagedProgram = (updater) => {
-    setProgramState((current) => normalizeProgramState(
-      typeof updater === 'function' ? updater(current) : updater,
-    ))
-  }
+    const bootstrap = async () => {
+      try {
+        setLoadingProgram(true)
+        await loadProgram()
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        setApiError(explainApiError(error))
+      } finally {
+        if (!cancelled) {
+          setLoadingProgram(false)
+        }
+      }
+    }
+
+    bootstrap()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(PROGRAM_STORAGE_KEY, JSON.stringify(programState))
+  }, [programState])
 
   const phaseOptions = PHASES
   const phase = programState.currentPhase
   const currentPhaseLabel = getCurrentPhaseLabel(phase)
   const currentPhaseEvents = programState.subEventsByPhase[phase] ?? []
 
-  const updatePhaseSchedule = (phaseKey, patch) => {
-    setManagedProgram((current) => ({
-      ...current,
-      phaseSchedule: {
-        ...current.phaseSchedule,
-        [phaseKey]: {
-          ...current.phaseSchedule[phaseKey],
-          ...patch,
-        },
-      },
-    }))
+  useEffect(() => {
+    let cancelled = false
+
+    const loadDashboard = async () => {
+      try {
+        setLoadingDashboard(true)
+        const results = await Promise.allSettled([
+          apiRequest(`/dashboard/overview?phase=${phase}`),
+          apiRequest('/activity'),
+          apiRequest(`/scores/phases/${phase}`),
+        ])
+
+        if (cancelled) return
+
+        if (results[0].status === 'fulfilled') {
+          setOverview(results[0].value)
+        }
+        if (results[1].status === 'fulfilled') {
+          setActivityItems(results[1].value?.items || [])
+        }
+        if (results[2].status === 'fulfilled') {
+          setScoreboard(results[2].value)
+        } else {
+          setScoreboard(null)
+        }
+
+        const rejected = results.find(item => item.status === 'rejected')
+        if (rejected) {
+          const error = rejected.reason
+          if (error?.status === 401) {
+            logoutAndRedirect('/')
+            return
+          }
+          setApiError(explainApiError(error))
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingDashboard(false)
+        }
+      }
+    }
+
+    if (!phase) return
+    loadDashboard()
+    return () => {
+      cancelled = true
+    }
+  }, [phase])
+
+  const withBusy = async (busyKey, task) => {
+    setBusyAction(busyKey)
+    setApiError('')
+    try {
+      await task()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyAction('')
+    }
   }
 
-  const setCurrentPhase = (phaseKey) => {
-    setManagedProgram((current) => ({ ...current, currentPhase: phaseKey }))
-  }
-
-  const createSubEventInPhase = (phaseKey, draft) => {
-    setManagedProgram((current) => ({
-      ...current,
-      subEventsByPhase: {
-        ...current.subEventsByPhase,
-        [phaseKey]: [...(current.subEventsByPhase[phaseKey] ?? []), draft],
+  const updatePhaseSchedule = (phaseKey, patch) => withBusy(`phase:${phaseKey}`, async () => {
+    await apiRequest(`/program/phases/${phaseKey}`, {
+      method: 'PATCH',
+      body: {
+        start_date: patch.startDate || null,
+        end_date: patch.endDate || null,
       },
-    }))
-  }
+    })
+    await loadProgram()
+  })
 
-  const updateSubEventInPhase = (phaseKey, eventId, nextEvent) => {
-    setManagedProgram((current) => ({
-      ...current,
-      subEventsByPhase: {
-        ...current.subEventsByPhase,
-        [phaseKey]: (current.subEventsByPhase[phaseKey] ?? []).map((eventItem) => (
-          eventItem.id === eventId
-            ? { ...eventItem, ...nextEvent }
-            : eventItem
-        )),
-      },
-    }))
-  }
+  const setCurrentPhase = (phaseKey) => withBusy(`current-phase:${phaseKey}`, async () => {
+    await apiRequest('/program/current-phase', {
+      method: 'PUT',
+      body: { phase_key: phaseKey },
+    })
+    await loadProgram()
+  })
 
-  const deleteSubEventInPhase = (phaseKey, eventId) => {
-    setManagedProgram((current) => ({
-      ...current,
-      subEventsByPhase: {
-        ...current.subEventsByPhase,
-        [phaseKey]: (current.subEventsByPhase[phaseKey] ?? []).filter(eventItem => eventItem.id !== eventId),
+  const createSubEventInPhase = (phaseKey, draft) => withBusy(`create-event:${phaseKey}`, async () => {
+    await apiRequest(`/program/phases/${phaseKey}/sub-events`, {
+      method: 'POST',
+      body: {
+        name: draft.name,
+        type: draft.type,
+        start_date: draft.startDate || null,
+        end_date: draft.endDate || null,
+        uses_stations: Boolean(draft.usesStations),
+        note: draft.note || '',
+        order: draft.order || 0,
       },
-    }))
-  }
+    })
+    await loadProgram()
+  })
+
+  const updateSubEventInPhase = (phaseKey, eventId, nextEvent) => withBusy(`update-event:${eventId}`, async () => {
+    await apiRequest(`/program/sub-events/${eventId}`, {
+      method: 'PATCH',
+      body: {
+        name: nextEvent.name,
+        type: nextEvent.type,
+        start_date: nextEvent.startDate || null,
+        end_date: nextEvent.endDate || null,
+        uses_stations: Boolean(nextEvent.usesStations),
+        note: nextEvent.note || '',
+        order: nextEvent.order || 0,
+      },
+    })
+    await loadProgram()
+  })
+
+  const deleteSubEventInPhase = (phaseKey, eventId) => withBusy(`delete-event:${eventId}`, async () => {
+    await apiRequest(`/program/sub-events/${eventId}`, {
+      method: 'DELETE',
+    })
+    await loadProgram()
+  })
 
   const titles = {
     dashboard: 'Tổng quan',
@@ -642,6 +830,12 @@ function AdminDashboard() {
           />
 
           <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+            {apiError && (
+              <div className={`${CARD} border-clay/20 bg-clay/10 px-4 py-3 text-sm text-clay`}>
+                {apiError}
+              </div>
+            )}
+
             {activeTab === 'dashboard' ? (
               <>
                 <PhaseTrail
@@ -649,7 +843,14 @@ function AdminDashboard() {
                   phases={phaseOptions}
                   onChange={setCurrentPhase}
                 />
-                <DashboardOverview phase={phase} onNavigate={setActiveTab} />
+                <DashboardOverview
+                  phase={phase}
+                  onNavigate={setActiveTab}
+                  overview={overview}
+                  activityItems={activityItems}
+                  scoreboard={scoreboard}
+                  loading={loadingProgram || loadingDashboard}
+                />
               </>
             ) : activeTab === 'events' ? (
               <EventManagementPage

@@ -44,7 +44,7 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
               label={phase.label}
               cls={isCurrent ? 'bg-trail/12 text-trail' : 'bg-ink/[0.07] text-ink/55'}
             />
-            {isCurrent && <Badge label="Dang hien tai" cls="bg-gold/15 text-gold" />}
+            {isCurrent && <Badge label="Đang hiện tại" cls="bg-gold/15 text-gold" />}
           </div>
           <p className="mt-3 text-sm leading-6 text-ink/55">{phase.hint}</p>
         </div>
@@ -58,7 +58,7 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
             }}
             className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
           >
-            Chuyen phase
+            Chuyển phase
           </button>
         )}
       </div>
@@ -66,7 +66,7 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Bat dau
+            Bắt đầu
           </label>
           <input
             type="date"
@@ -78,7 +78,7 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
         </div>
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Ket thuc
+            Kết thúc
           </label>
           <input
             type="date"
@@ -117,7 +117,7 @@ function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Badge label={typeMeta.label} cls={typeMeta.cls} />
-            {subEvent.usesStations && <Badge label="Co tram" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+            {subEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
           </div>
           <h3 className="mt-2 truncate text-base font-semibold text-ink">{subEvent.name}</h3>
           <p className="mt-1 text-xs text-ink/45">
@@ -135,7 +135,7 @@ function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
             onDelete()
           }}
           className="rounded-lg p-1.5 text-ink/30 transition hover:bg-paper hover:text-clay"
-          title="Xoa event"
+          title="Xóa event"
         >
           <Icon name="trash" className="h-4 w-4" />
         </button>
@@ -160,26 +160,26 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-stone bg-paper px-4 py-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Phase dang sua</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Phase đang sửa</p>
         <p className="mt-1 text-sm font-medium text-ink">{phaseLabel}</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Ten event con
+            Tên event con
           </label>
           <input
             value={form.name}
             onChange={(event) => set('name', event.target.value)}
             className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-            placeholder="Vi du: Chay tram ban do"
+            placeholder="Ví dụ: Chạy trạm bản đồ"
           />
         </div>
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Loai event
+            Loại event
           </label>
           <select
             value={form.type}
@@ -200,13 +200,13 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
               onChange={(event) => set('usesStations', event.target.checked)}
               className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
             />
-            Event nay co tram
+            Event này có trạm
           </label>
         </div>
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Bat dau
+            Bắt đầu
           </label>
           <input
             type="date"
@@ -218,7 +218,7 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Ket thuc
+            Kết thúc
           </label>
           <input
             type="date"
@@ -231,14 +231,14 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
 
       <div>
         <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-          Ghi chu van hanh
+          Ghi chú vận hành
         </label>
         <textarea
           rows={4}
           value={form.note}
           onChange={(event) => set('note', event.target.value)}
           className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-          placeholder="Mo ta event nay dung de lam gi, cach cham diem, va moi lien he voi tram neu co."
+          placeholder="Mô tả event này dùng để làm gì, cách chấm điểm, và mối liên hệ với trạm nếu có."
         />
       </div>
 
@@ -248,7 +248,7 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
           onClick={onCancel}
           className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
         >
-          Huy
+          Hủy
         </button>
         <button
           type="button"
@@ -312,15 +312,15 @@ function EventManagementPage({
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="max-w-3xl">
               <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">
-                Phase co dinh · event ben trong
+                Phase cố định · event bên trong
               </p>
               <h2 className="mt-2 font-display text-xl font-semibold text-ink">
-                Chi sua lich phase, con event nho se nam ben trong phase
+                Chỉ sửa lịch phase, còn event nhỏ sẽ nằm bên trong phase
               </h2>
               <p className="mt-2 text-sm leading-6 text-ink/60">
-                Phase cua mua hien tai la co dinh: Dang ky, Vong loai, Vong chung ket, Ket thuc.
-                BTC chi doi ngay bat dau, ngay ket thuc, va chuyen phase hien tai. Moi event nho
-                nhu social, chay tram, quiz, nop file se duoc tao trong phase dang chon.
+                Phase của mùa hiện tại là cố định: Đăng ký, Vòng loại, Vòng chung kết, Kết thúc.
+                BTC chỉ đổi ngày bắt đầu, ngày kết thúc, và chuyển phase hiện tại. Mỗi event nhỏ
+                như social, chạy trạm, quiz, nộp file sẽ được tạo trong phase đang chọn.
               </p>
             </div>
 
@@ -330,17 +330,17 @@ function EventManagementPage({
               className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
             >
               <Icon name="plus" className="h-4 w-4" />
-              Tao event trong phase
+              Tạo event trong phase
             </button>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <MetricCard value={String(FIXED_PHASES.length)} label="Phase co dinh" />
-        <MetricCard value={String(allEventCount)} label="Tong event con" accent="sky" />
+        <MetricCard value={String(FIXED_PHASES.length)} label="Phase cố định" />
+        <MetricCard value={String(allEventCount)} label="Tổng event con" accent="sky" />
         <MetricCard value={String(visibleSubEvents.length)} label={`Event trong ${selectedPhaseInfo.label.toLowerCase()}`} accent="trail" />
-        <MetricCard value={String(stationEventCount)} label="Event co tram trong phase" accent="gold" />
+        <MetricCard value={String(stationEventCount)} label="Event có trạm trong phase" accent="gold" />
       </div>
 
       <section className="grid gap-4 xl:grid-cols-2">
@@ -361,7 +361,7 @@ function EventManagementPage({
       <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
         <div className="space-y-3">
           <div className={`${CARD} px-4 py-3`}>
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Phase dang xem</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Phase đang xem</p>
             <p className="mt-1 text-sm font-semibold text-ink">{selectedPhaseInfo.label}</p>
             <p className="mt-2 text-sm leading-6 text-ink/50">{selectedPhaseInfo.hint}</p>
           </div>
@@ -384,7 +384,7 @@ function EventManagementPage({
 
           {visibleSubEvents.length === 0 && (
             <div className={`${CARD} border-dashed px-4 py-10 text-sm text-ink/35`}>
-              Phase nay chua co event nao. Hay tao event dau tien de sau do gan tram va diem.
+              Phase này chưa có event nào. Hãy tạo event đầu tiên để sau đó gắn trạm và điểm.
             </div>
           )}
         </div>
@@ -395,8 +395,8 @@ function EventManagementPage({
               <div className="border-b border-stone px-5 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-display text-lg font-semibold text-ink">Tao event con</p>
-                    <p className="mt-1 text-sm text-ink/45">Event nay se nam ben trong phase {selectedPhaseInfo.label.toLowerCase()}.</p>
+                    <p className="font-display text-lg font-semibold text-ink">Tạo event con</p>
+                    <p className="mt-1 text-sm text-ink/45">Event này sẽ nằm bên trong phase {selectedPhaseInfo.label.toLowerCase()}.</p>
                   </div>
                   <button
                     type="button"
@@ -417,7 +417,7 @@ function EventManagementPage({
                     usesStations: false,
                   })}
                   phaseLabel={selectedPhaseInfo.label}
-                  submitLabel="Tao event"
+                  submitLabel="Tạo event"
                   onSave={(draft) => {
                     onCreateSubEvent(selectedPhase, draft)
                     setCreating(false)
@@ -433,12 +433,12 @@ function EventManagementPage({
               <div className="border-b border-stone px-5 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="font-display text-lg font-semibold text-ink">Chi tiet event con</p>
-                    <p className="mt-1 text-sm text-ink/45">Sua event con trong phase ma khong lam thay doi cau truc phase co dinh.</p>
+                    <p className="font-display text-lg font-semibold text-ink">Chi tiết event con</p>
+                    <p className="mt-1 text-sm text-ink/45">Sửa event con trong phase mà không làm thay đổi cấu trúc phase cố định.</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <PhaseEventBadge type={selectedSubEvent.type} />
-                    {selectedSubEvent.usesStations && <Badge label="Co tram" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+                    {selectedSubEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
                   </div>
                 </div>
               </div>
@@ -448,7 +448,7 @@ function EventManagementPage({
                   key={`${selectedSubEvent.id}-${detailSeed}`}
                   initialEvent={selectedSubEvent}
                   phaseLabel={selectedPhaseInfo.label}
-                  submitLabel="Luu event"
+                  submitLabel="Lưu event"
                   onSave={(draft) => onUpdateSubEvent(selectedPhase, selectedSubEvent.id, draft)}
                   onCancel={() => setDetailSeed(value => value + 1)}
                 />

@@ -5,7 +5,7 @@ Score & advancement views — §9.8.
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, ScoreEntry, ProgramPhase, SubEvent, Team
+from api.models import Account, ScoreEntry, ProgramPhase, SubEvent, Team, AdvancementRule
 from api.services.score_service import (
     get_phase_scoreboard, create_score_entry,
     update_score_entry, delete_score_entry,
@@ -123,10 +123,30 @@ def score_entry_detail_view(request: HttpRequest, entry_id: int):
 
 @csrf_exempt
 def advancement_rule_view(request: HttpRequest, phase_key: str):
-    """PUT: configure advancement rule."""
+    """GET/PUT: read or configure advancement rule."""
     acc, err = _require_role(request, Account.ROLE_ADMIN)
     if err:
         return err
+
+    if request.method == "GET":
+        try:
+            phase = ProgramPhase.objects.get(key=phase_key)
+        except ProgramPhase.DoesNotExist:
+            return JsonResponse({"error": "phase_not_found"}, status=404)
+
+        next_phase = ProgramPhase.objects.filter(order__gt=phase.order).order_by("order").first()
+        rule = AdvancementRule.objects.select_related("to_phase", "published_by").filter(
+            from_phase=phase,
+        ).first()
+        return JsonResponse({
+            "from_phase": phase.key,
+            "to_phase": rule.to_phase.key if rule else (next_phase.key if next_phase else None),
+            "to_phase_label": rule.to_phase.label if rule else (next_phase.label if next_phase else None),
+            "mode": rule.mode if rule else AdvancementRule.MODE_TOP_N,
+            "slots": rule.slots if rule else 0,
+            "last_published_at": rule.last_published_at.isoformat() if rule and rule.last_published_at else None,
+            "published_by": rule.published_by.username if rule and rule.published_by else None,
+        })
 
     if request.method != "PUT":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
@@ -154,7 +174,11 @@ def advancement_rule_view(request: HttpRequest, phase_key: str):
         })
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
-    except (ValueError, TypeError):
+    except ValueError as exc:
+        if str(exc) == "invalid_mode":
+            return JsonResponse({"error": "invalid_mode"}, status=400)
+        return JsonResponse({"error": "invalid_slots"}, status=400)
+    except TypeError:
         return JsonResponse({"error": "invalid_slots"}, status=400)
 
 
@@ -169,7 +193,9 @@ def publish_advancement_view(request: HttpRequest, phase_key: str):
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
     try:
-        result = publish_advancement(phase_key, acc)
+        data = _json_body(request) or {}
+        manual_team_codes = data.get("manual_team_codes") or data.get("manualTeamCodes") or []
+        result = publish_advancement(phase_key, acc, manual_team_codes=manual_team_codes)
         return JsonResponse(result)
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)

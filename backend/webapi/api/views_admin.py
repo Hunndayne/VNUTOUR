@@ -7,11 +7,12 @@ from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError
+from django.db.models import Q
 
-from api.models import Account, Team, TeamMembership, Participant
+from api.models import Account, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team,
-    get_team_members, team_is_editable,
+    get_team_members, add_member, link_account_profile,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -37,7 +38,11 @@ def teams_collection_view(request: HttpRequest):
 
         q = request.GET.get("q")
         if q:
-            qs = qs.filter(name__icontains=q)
+            qs = qs.filter(
+                Q(name__icontains=q)
+                | Q(code__icontains=q)
+                | Q(owner_account__username__icontains=q),
+            )
 
         # Pagination
         try:
@@ -57,6 +62,11 @@ def teams_collection_view(request: HttpRequest):
                     "owner_username": t.owner_account.username if t.owner_account else None,
                     "approval_status": t.approval_status,
                     "provision_state": t.provision_state,
+                    "provision_last_error": t.provision_last_error,
+                    "last_provisioned_at": t.last_provisioned_at.isoformat() if t.last_provisioned_at else None,
+                    "discord_role_id": t.discord_role_id,
+                    "text_channel_id": t.text_channel_id,
+                    "voice_channel_id": t.voice_channel_id,
                     "member_count": TeamMembership.objects.filter(team=t).count(),
                     "created_at": t.created_at.isoformat(),
                 }
@@ -74,9 +84,38 @@ def teams_collection_view(request: HttpRequest):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
         name = str((data.get("team_name") or data.get("name") or "").strip())
-        team, err = create_team(name, owner_account=acc, auto_approve=True)
+        owner_username = str((data.get("owner_username") or data.get("owner") or "").strip())
+        owner_account = acc
+        if owner_username:
+            owner_account = Account.objects.filter(
+                username__iexact=owner_username,
+                is_active=True,
+            ).first()
+            if not owner_account:
+                return JsonResponse({"error": "owner_not_found"}, status=404)
+            if owner_account.role != Account.ROLE_PARTICIPANT:
+                return JsonResponse({"error": "invalid_owner_role"}, status=400)
+            if not owner_account.mssv:
+                return JsonResponse({"error": "owner_profile_incomplete"}, status=409)
+            if TeamMembership.objects.filter(participant__mssv=owner_account.mssv).exists():
+                return JsonResponse({"error": "owner_already_has_team"}, status=409)
+
+        team, err = create_team(name, owner_account=owner_account, auto_approve=True)
         if err:
             return JsonResponse({"error": err}, status=400)
+
+        if owner_account and owner_account.mssv:
+            _, member_err = add_member(
+                team,
+                owner_account.mssv,
+                full_name=owner_account.full_name or owner_account.username,
+                email=owner_account.email,
+                is_captain=True,
+            )
+            if member_err:
+                team.delete()
+                return JsonResponse({"error": member_err}, status=400)
+            link_account_profile(owner_account)
 
         return JsonResponse({
             "code": team.code, "name": team.name,
@@ -240,6 +279,12 @@ def admin_accounts_view(request: HttpRequest):
                     "is_active": a.is_active, "mssv": a.mssv, "full_name": a.full_name,
                     "last_login": a.last_login.isoformat() if a.last_login else None,
                     "created_at": a.created_at.isoformat(),
+                    "team_name": TeamMembership.objects.filter(
+                        participant__mssv=a.mssv,
+                    ).select_related("team").values_list("team__name", flat=True).first(),
+                    "team_code": TeamMembership.objects.filter(
+                        participant__mssv=a.mssv,
+                    ).select_related("team").values_list("team__code", flat=True).first(),
                 }
                 for a in qs[offset:offset + limit]
             ],
@@ -264,12 +309,17 @@ def admin_accounts_view(request: HttpRequest):
         try:
             new_acc = Account(
                 username=username, email=email,
-                password_hash=make_password(password), role=role, is_active=True,
+                password_hash=make_password(password),
+                role=role,
+                is_active=True,
+                mssv=str((data.get("mssv") or "").strip()) or None,
+                full_name=str((data.get("full_name") or data.get("fullName") or "").strip()) or None,
             )
             new_acc.save()
             return JsonResponse({
                 "username": new_acc.username, "email": new_acc.email,
                 "role": new_acc.role, "is_active": new_acc.is_active,
+                "mssv": new_acc.mssv, "full_name": new_acc.full_name,
             }, status=201)
         except IntegrityError:
             return JsonResponse({"error": "conflict"}, status=409)
@@ -290,11 +340,16 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         return JsonResponse({"error": "not_found"}, status=404)
 
     if request.method == "GET":
+        membership = TeamMembership.objects.filter(
+            participant__mssv=target.mssv,
+        ).select_related("team").first()
         return JsonResponse({
             "username": target.username, "email": target.email, "role": target.role,
             "is_active": target.is_active, "mssv": target.mssv, "full_name": target.full_name,
             "last_login": target.last_login.isoformat() if target.last_login else None,
             "created_at": target.created_at.isoformat(),
+            "team_name": membership.team.name if membership else None,
+            "team_code": membership.team.code if membership else None,
         })
 
     if request.method == "PATCH":
@@ -302,15 +357,29 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
+        if "email" in data and data["email"]:
+            target.email = str(data["email"]).strip()
+        if "mssv" in data:
+            target.mssv = str(data["mssv"]).strip() or None
+        if "full_name" in data or "fullName" in data:
+            target.full_name = str(data.get("full_name") or data.get("fullName") or "").strip() or None
         if "role" in data and data["role"] in dict(Account.ROLE_CHOICES):
             target.role = data["role"]
         if "is_active" in data:
             target.is_active = bool(data["is_active"])
         if "password" in data and data["password"]:
             target.password_hash = make_password(data["password"])
-        target.save()
+        try:
+            target.save()
+        except IntegrityError:
+            return JsonResponse({"error": "conflict"}, status=409)
         return JsonResponse({
-            "username": target.username, "role": target.role, "is_active": target.is_active,
+            "username": target.username,
+            "email": target.email,
+            "mssv": target.mssv,
+            "full_name": target.full_name,
+            "role": target.role,
+            "is_active": target.is_active,
         })
 
     if request.method == "DELETE":

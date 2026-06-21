@@ -1,82 +1,71 @@
-import { useState } from 'react'
-import { Icon, CARD, Badge, PROVISION } from './ui.jsx'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import { Badge, CARD, Icon, PROVISION } from './ui.jsx'
 
-// ─────────────────────────────────────────────────────────────────────
-// Mock data
-// ─────────────────────────────────────────────────────────────────────
-const BOT_INFO = {
-  name: 'VNUTour Bot',
-  status: 'online', // online | offline | degraded
-  version: '2.1.0',
-  uptime: '3 ngày 7 giờ',
-  server: 'VNUTour Official',
-  memberCount: 256,
-  serverIcon: 'V',
+const SUB_TABS = [
+  { key: 'overview', label: 'Tong quan', icon: 'grid' },
+  { key: 'members', label: 'Thanh vien', icon: 'userCircle' },
+  { key: 'channels', label: 'Kenh & thong bao', icon: 'chat' },
+]
+
+const BROADCAST_STATUS_META = {
+  draft: { label: 'Draft', cls: 'bg-gold/15 text-gold' },
+  sent: { label: 'Sent', cls: 'bg-trail/12 text-trail' },
+  failed: { label: 'Failed', cls: 'bg-clay/12 text-clay' },
 }
 
-const PROVISIONING_QUEUE = [
-  { id: 'T0003', name: 'Những chiến binh', status: 'pending', reason: 'Đội vừa được duyệt' },
-  { id: 'T0004', name: 'Ice Breaker', status: 'pending', reason: 'Đội vừa được duyệt' },
-  { id: 'T0006', name: 'Đội A - Avengers', status: 'error', reason: 'Không còn slot category — cần thêm category hoặc dọn kênh cũ' },
-]
+function explainApiError(error) {
+  const code = error?.data?.error || error?.message
+  const map = {
+    forbidden: 'Ban khong co quyen thao tac Discord.',
+    invalid_json: 'Du lieu gui len khong hop le.',
+    missing_fields: 'Vui long dien du tieu de va noi dung.',
+    team_not_found: 'Khong tim thay doi can dong bo lai.',
+    member_not_found: 'Khong tim thay thanh vien can sync.',
+  }
+  return map[code] || 'Khong the dong bo du lieu Discord.'
+}
 
-const ALL_CHANNELS = [
-  { id: 'ch-1', teamId: 'T0001', teamName: 'Sky Walker', textChannel: 'sky-walker', textId: '1234567890', voiceChannel: 'sky-walker', voiceId: '1234567891', memberCount: 5, lastActive: '15:01 hôm nay' },
-  { id: 'ch-2', teamId: 'T0002', teamName: 'Fire Phoenix', textChannel: 'fire-phoenix', textId: '1234567892', voiceChannel: 'fire-phoenix', voiceId: '1234567893', memberCount: 5, lastActive: '14:45 hôm nay' },
-  { id: 'ch-3', teamId: 'T0005', teamName: 'Thunder', textChannel: 'thunder', textId: '1234567894', voiceChannel: 'thunder', voiceId: '1234567895', memberCount: 5, lastActive: '09:12 hôm nay' },
-  { id: 'ch-4', teamId: 'T0009', teamName: 'Blue Ocean', textChannel: 'blue-ocean', textId: '1234567896', voiceChannel: 'blue-ocean', voiceId: '1234567897', memberCount: 5, lastActive: 'Hôm qua' },
-  { id: 'ch-5', teamId: 'T0007', teamName: 'Predator', textChannel: 'predator', textId: '1234567898', voiceChannel: 'predator', voiceId: '1234567899', memberCount: 3, lastActive: '2 ngày trước' },
-]
+function toneValueClass(tone) {
+  if (tone === 'trail') return 'text-trail'
+  if (tone === 'gold') return 'text-gold'
+  if (tone === 'clay') return 'text-clay'
+  if (tone === 'sky') return 'text-[#3E7CA8]'
+  return 'text-ink'
+}
 
-const MOCK_MEMBERS = [
-  { discordId: '740123456789012345', discordName: 'maipnt', displayName: 'Mai 🏕️', accountUser: 'maipnt', teamId: 'T0007', teamName: 'Những chiến binh', roles: ['Những chiến binh', 'Member'], joinedAt: '12/06', isLinked: true },
-  { discordId: '840987654321098765', discordName: 'ngocncm', displayName: 'Ngọc 📸', accountUser: 'ngocncm', teamId: 'T0008', teamName: 'Fire Phoenix', roles: ['Fire Phoenix', 'Member'], joinedAt: '13/06', isLinked: true },
-  { discordId: '111111111111111111', discordName: 'hoangtu', displayName: 'Tú', accountUser: 'tuha', teamId: 'T0001', teamName: 'Sky Walker', roles: ['Sky Walker', 'Captain'], joinedAt: '10/06', isLinked: true },
-  { discordId: '222222222222222222', discordName: 'trangdt', displayName: 'Trang', accountUser: 'trangdt', teamId: 'T0001', teamName: 'Sky Walker', roles: ['Sky Walker', 'Member'], joinedAt: '10/06', isLinked: true },
-  { discordId: '333333333333333333', discordName: 'giabao', displayName: 'Bảo 🎮', accountUser: 'giabao', teamId: 'T0001', teamName: 'Sky Walker', roles: ['Sky Walker', 'Member'], joinedAt: '11/06', isLinked: true },
-  { discordId: null, discordName: null, displayName: null, accountUser: 'ngoctt', teamId: 'T0007', teamName: 'Những chiến binh', roles: [], joinedAt: null, isLinked: false },
-  { discordId: null, discordName: null, displayName: null, accountUser: 'hungnv', teamId: 'T0007', teamName: 'Những chiến binh', roles: [], joinedAt: null, isLinked: false },
-]
-
-const CATEGORIES = [
-  { name: '🏕️ VNUTour Teams 1', channels: 8, slots: 12, teams: ['Sky Walker', 'Fire Phoenix', 'Thunder'] },
-  { name: '🏕️ VNUTour Teams 2', channels: 6, slots: 12, teams: ['Blue Ocean', 'Predator'] },
-]
-
-const MOCK_BROADCAST_HISTORY = [
-  { id: 1, title: 'Thông báo lịch check-in vòng loại', sentTo: 'Tất cả đội (28)', sentAt: '18/06 08:00', status: 'sent' },
-  { id: 2, title: 'Nhắc nhở submit đội trước hạn', sentTo: 'Đội chưa submit (3)', sentAt: '17/06 20:00', status: 'sent' },
-]
-
-// ─────────────────────────────────────────────────────────────────────
-// Sub-components
-// ─────────────────────────────────────────────────────────────────────
-const SUB_TABS = [
-  { key: 'overview', label: 'Tổng quan', icon: 'grid' },
-  { key: 'members', label: 'Thành viên', icon: 'userCircle' },
-  { key: 'channels', label: 'Kênh & Tin nhắn', icon: 'chat' },
-]
+function MetricCard({ label, value, note, tone = 'default' }) {
+  return (
+    <div className={`${CARD} p-4`}>
+      <p className={`font-mono text-2xl font-semibold ${toneValueClass(tone)}`}>{value}</p>
+      <p className="mt-1 text-sm font-medium text-ink/70">{label}</p>
+      {note && <p className="mt-0.5 text-xs text-ink/40">{note}</p>}
+    </div>
+  )
+}
 
 function SubTabBar({ active, onChange, counts }) {
   return (
-    <div className={`${CARD} flex items-stretch overflow-hidden`}>
-      {SUB_TABS.map((tab, i) => (
+    <div className={`${CARD} flex overflow-hidden`}>
+      {SUB_TABS.map((tab, index) => (
         <button
           key={tab.key}
           type="button"
           onClick={() => onChange(tab.key)}
-          className={`group relative flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm transition hover:bg-paper ${
-            i > 0 ? 'border-l border-stone' : ''
+          className={`relative flex flex-1 items-center justify-center gap-2 px-4 py-3 text-sm transition hover:bg-paper ${
+            index > 0 ? 'border-l border-stone' : ''
           }`}
         >
           {active === tab.key && (
             <span className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full bg-trail" />
           )}
           <Icon name={tab.icon} className={`h-4 w-4 ${active === tab.key ? 'text-trail' : 'text-ink/35'}`} />
-          <span className={`font-medium ${active === tab.key ? 'text-ink' : 'text-ink/50'}`}>{tab.label}</span>
-          {counts && counts[tab.key] !== undefined && (
-            <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
-              active === tab.key ? 'bg-trail/15 text-trail' : 'bg-ink/5 text-ink/35'
+          <span className={active === tab.key ? 'font-semibold text-ink' : 'font-medium text-ink/50'}>
+            {tab.label}
+          </span>
+          {counts?.[tab.key] !== undefined && (
+            <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+              active === tab.key ? 'bg-trail/12 text-trail' : 'bg-ink/[0.06] text-ink/35'
             }`}>
               {counts[tab.key]}
             </span>
@@ -87,586 +76,582 @@ function SubTabBar({ active, onChange, counts }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Overview tab
-// ─────────────────────────────────────────────────────────────────────
-function OverviewTab() {
-  const statusColors = { online: 'bg-trail', offline: 'bg-clay', degraded: 'bg-gold' }
-  const statusLabels = { online: 'Online', offline: 'Offline', degraded: 'Suy giảm' }
+function normalizeTeam(team) {
+  return {
+    code: team.code,
+    name: team.name || '',
+    provisionState: team.provision_state || 'none',
+    provisionLastError: team.provision_last_error || '',
+    lastProvisionedAt: team.last_provisioned_at || '',
+    memberCount: team.member_count || 0,
+    textChannelId: team.text_channel_id || null,
+    voiceChannelId: team.voice_channel_id || null,
+    discordRoleId: team.discord_role_id || null,
+  }
+}
+
+function normalizeMember(item) {
+  return {
+    mssv: item.mssv,
+    fullName: item.full_name || '(Chua dien ten)',
+    teamCode: item.team_code || '',
+    teamName: item.team_name || '',
+    discordId: item.discord_id ? String(item.discord_id) : '',
+    linked: Boolean(item.linked),
+  }
+}
+
+function targetLabel(item) {
+  if (item.target === 'team_ids') {
+    const count = Array.isArray(item.targetPayload?.team_codes) ? item.targetPayload.team_codes.length : 0
+    return count > 0 ? `${count} doi cu the` : 'Nhom doi tu chon'
+  }
+  if (item.target === 'approved') return 'Doi da duyet'
+  if (item.target === 'pending') return 'Doi chua provision'
+  return 'Tat ca doi'
+}
+
+function queueBadge(item) {
+  if (item.provision_state === 'failed') {
+    return <Badge label="Loi" cls="bg-clay/12 text-clay" />
+  }
+  return <Badge label="Dang cho" cls="bg-gold/15 text-gold" />
+}
+
+function broadcastBadge(status) {
+  return BROADCAST_STATUS_META[status] || BROADCAST_STATUS_META.draft
+}
+
+function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRefresh }) {
+  const provisionedTeams = teams.filter(team => team.provisionState === 'done')
+  const failedTeams = teams.filter(team => team.provisionState === 'failed')
+  const pendingTeams = teams.filter(team => team.provisionState === 'pending')
+  const linkedChannelTeams = provisionedTeams.filter(team => team.textChannelId || team.voiceChannelId)
 
   return (
     <div className="space-y-5">
-      {/* Bot status header */}
       <div className={`${CARD} p-5`}>
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-trail/15 font-display text-xl font-bold text-trail">
-                {BOT_INFO.serverIcon}
-              </div>
-              <span className={`absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border-2 border-white ${statusColors[BOT_INFO.status]}`} />
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-display text-lg font-bold text-ink">VNUTour Discord</h2>
+              <Badge label={`${status.provisioning.done} da xong`} cls="bg-trail/12 text-trail" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-lg font-bold text-ink">{BOT_INFO.name}</h2>
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusColors[BOT_INFO.status] === 'bg-trail' ? 'bg-trail/12 text-trail' : 'bg-clay/12 text-clay'}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${statusColors[BOT_INFO.status]}`} />
-                  {statusLabels[BOT_INFO.status]}
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-ink/45">
-                <span className="font-mono text-xs">{BOT_INFO.version}</span>
-                <span className="mx-2 text-stone">·</span>
-                Server: {BOT_INFO.server}
-                <span className="mx-2 text-stone">·</span>
-                Uptime: {BOT_INFO.uptime}
-              </p>
-            </div>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/50">
+              Theo doi trang thai provision kenh/role, doi can retry, va lich su thong bao da tao tu trang admin.
+            </p>
           </div>
-          <div className="flex gap-2">
-            <button type="button" className="rounded-lg border border-stone bg-white px-4 py-2 text-sm font-medium text-ink/70 transition hover:bg-paper active:scale-[0.98]">
-              Khởi động lại
-            </button>
-            <button type="button" className="rounded-lg bg-trail px-4 py-2 text-sm font-semibold text-white transition hover:bg-trail/90 active:scale-[0.98]">
-              Đồng bộ tất cả
-            </button>
-          </div>
+
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-medium text-ink/65 transition hover:bg-paper hover:text-ink"
+          >
+            <Icon name="check" className="h-4 w-4" />
+            Tai lai
+          </button>
         </div>
       </div>
 
-      {/* Stats row */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: 'Đội đã đồng bộ', value: '28/42', sub: '14 đội chưa có kênh', tone: 'trail' },
-          { label: 'Roles Discord', value: 30, sub: 'Tương ứng 30 đội', tone: 'gold' },
-          { label: 'Kênh team', value: 58, sub: '29 text + 29 voice', tone: 'sky' },
-          { label: 'Người trong server', value: BOT_INFO.memberCount, sub: '120 đã liên kết đội', tone: 'ink' },
-        ].map((s, i) => (
-          <div key={i} className={`${CARD} p-4`}>
-            <p className="font-mono text-2xl font-semibold text-ink">{s.value}</p>
-            <p className="mt-1 text-sm font-medium text-ink/70">{s.label}</p>
-            <p className="mt-0.5 text-xs text-ink/40">{s.sub}</p>
-          </div>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Doi da provision" value={`${status.provisioning.done}`} note={`${linkedChannelTeams.length} doi da co channel id`} tone="trail" />
+        <MetricCard label="Doi trong queue" value={`${status.provisioning.pending}`} note={pendingTeams.length > 0 ? 'Can bot xu ly tiep' : 'Khong co doi cho'} tone="gold" />
+        <MetricCard label="Provision loi" value={`${status.provisioning.failed}`} note={failedTeams.length > 0 ? 'Nen retry sau khi kiem tra bot' : 'Khong co loi ton'} tone="clay" />
+        <MetricCard label="Thong bao gan day" value={`${broadcasts.length}`} note="Lay tu lich su broadcast" tone="sky" />
       </div>
 
-      {/* Provisioning queue + Categories */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        {/* Queue */}
-        <div className={`${CARD} overflow-hidden`}>
+      <div className="grid gap-5 xl:grid-cols-[1.2fr_minmax(320px,0.8fr)]">
+        <section className={`${CARD} overflow-hidden`}>
           <div className="flex items-center justify-between border-b border-stone px-5 py-3">
             <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">
-              Hàng đợi đồng bộ
+              Hang doi provision
             </h3>
-            <span className="font-mono text-xs text-ink/35">{PROVISIONING_QUEUE.length} đội</span>
+            <span className="font-mono text-xs text-ink/35">{queue.length} doi</span>
           </div>
+
           <div className="divide-y divide-stone/60">
-            {PROVISIONING_QUEUE.length === 0 ? (
-              <p className="px-5 py-8 text-center text-sm text-ink/30">Hàng đợi trống — tất cả đã được đồng bộ</p>
-            ) : (
-              PROVISIONING_QUEUE.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {item.status === 'error' ? (
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-clay/12">
-                        <Icon name="xmark" className="h-4 w-4 text-clay" />
-                      </span>
-                    ) : (
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gold/12">
-                        <Icon name="clock" className="h-4 w-4 text-gold" />
-                      </span>
-                    )}
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-ink">
-                        {item.name}
-                        <span className="ml-1.5 font-mono text-xs text-ink/35">{item.id}</span>
-                      </p>
-                      <p className="truncate text-xs text-ink/40">{item.reason}</p>
+            {queue.length > 0 ? queue.map((item) => {
+              const retryKey = `queue:${item.code}`
+              return (
+                <div key={item.code} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-ink">{item.name}</p>
+                      <span className="font-mono text-xs text-ink/35">{item.code}</span>
+                      {queueBadge(item)}
                     </div>
+                    <p className="mt-1 text-xs leading-5 text-ink/45">
+                      {item.provision_last_error || 'Doi dang cho bot tao role/channel tuong ung.'}
+                    </p>
+                    <p className="mt-1 font-mono text-[11px] text-ink/35">
+                      Retry: {item.provision_retry_count || 0}
+                      {item.last_provisioned_at ? ` · Lan gan nhat ${formatDateTime(item.last_provisioned_at)}` : ''}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {item.status === 'error' ? (
-                      <button type="button" className="rounded-md px-3 py-1.5 text-xs font-semibold text-clay transition hover:bg-clay/8 active:scale-95">
-                        Thử lại
-                      </button>
-                    ) : (
-                      <Badge label="Đang chờ" cls="bg-gold/15 text-[#9A6B12]" />
-                    )}
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onRetry(item.code)}
+                    disabled={busyKey === retryKey}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
+                  >
+                    <Icon name="check" className="h-4 w-4" />
+                    {busyKey === retryKey ? 'Dang retry...' : 'Retry'}
+                  </button>
                 </div>
-              ))
+              )
+            }) : (
+              <div className="px-5 py-10 text-center text-sm text-ink/35">
+                Queue dang trong. Khong co doi nao can provision them.
+              </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Categories */}
-        <div className={`${CARD} overflow-hidden`}>
+        <section className={`${CARD} overflow-hidden`}>
           <div className="flex items-center justify-between border-b border-stone px-5 py-3">
             <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">
-              Category Discord
+              Broadcast gan day
             </h3>
-            <button type="button" className="rounded-md px-2 py-1 text-xs font-medium text-trail transition hover:bg-trail/6">
-              + Thêm
-            </button>
+            <span className="font-mono text-xs text-ink/35">{broadcasts.length} muc</span>
           </div>
+
           <div className="divide-y divide-stone/60">
-            {CATEGORIES.map((cat, i) => (
-              <div key={i} className="px-5 py-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-ink">{cat.name}</p>
-                  <span className="font-mono text-xs text-ink/35">{cat.channels}/{cat.slots} kênh</span>
+            {broadcasts.length > 0 ? broadcasts.slice(0, 6).map((item) => (
+              <div key={item.id} className="px-5 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold text-ink">{item.title}</p>
+                  <Badge {...broadcastBadge(item.status)} />
                 </div>
-                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-paper">
-                  <div
-                    className={`h-full rounded-full transition-all ${cat.channels >= cat.slots ? 'bg-clay' : cat.channels / cat.slots > 0.7 ? 'bg-gold' : 'bg-trail'}`}
-                    style={{ width: `${Math.round((cat.channels / cat.slots) * 100)}%` }}
-                  />
-                </div>
-                <p className="mt-2 text-xs text-ink/35">
-                  {cat.teams.slice(0, 3).join(', ')}{cat.teams.length > 3 ? ` +${cat.teams.length - 3}` : ''}
+                <p className="mt-1 text-xs text-ink/45">{targetLabel(item)}</p>
+                <p className="mt-1 font-mono text-[11px] text-ink/35">
+                  Tao luc {formatDateTime(item.createdAt)}
+                  {item.sentAt ? ` · Gui luc ${formatDateTime(item.sentAt)}` : ''}
                 </p>
+                {item.error && <p className="mt-2 text-xs leading-5 text-clay">{item.error}</p>}
               </div>
-            ))}
+            )) : (
+              <div className="px-5 py-10 text-center text-sm text-ink/35">
+                Chua co broadcast nao duoc tao.
+              </div>
+            )}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Members tab
-// ─────────────────────────────────────────────────────────────────────
-function MembersTab() {
+function MembersTab({ members, busyKey, onSync }) {
   const [search, setSearch] = useState('')
-  const [linkFilter, setLinkFilter] = useState('all') // all | linked | unlinked
+  const [filter, setFilter] = useState('all')
   const [selectedMember, setSelectedMember] = useState(null)
 
-  const filtered = MOCK_MEMBERS.filter((m) => {
-    if (linkFilter === 'linked' && !m.isLinked) return false
-    if (linkFilter === 'unlinked' && m.isLinked) return false
-    if (!search.trim()) return true
-    const q = search.toLowerCase()
-    return (
-      (m.discordName || '').toLowerCase().includes(q) ||
-      (m.displayName || '').toLowerCase().includes(q) ||
-      (m.accountUser || '').toLowerCase().includes(q) ||
-      (m.teamName || '').toLowerCase().includes(q)
-    )
-  })
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return members.filter((member) => {
+      if (filter === 'linked' && !member.linked) return false
+      if (filter === 'unlinked' && member.linked) return false
+      if (!q) return true
+      return [
+        member.fullName,
+        member.mssv,
+        member.teamCode,
+        member.teamName,
+        member.discordId,
+      ].some(value => String(value || '').toLowerCase().includes(q))
+    })
+  }, [filter, members, search])
 
-  const linkedCount = MOCK_MEMBERS.filter(m => m.isLinked).length
-  const unlinkedCount = MOCK_MEMBERS.filter(m => !m.isLinked).length
+  const linkedCount = members.filter(member => member.linked).length
+  const unlinkedCount = members.length - linkedCount
 
   return (
     <div className="space-y-5">
-      {/* Filter + search */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex rounded-lg border border-stone overflow-hidden text-sm">
+        <div className="flex overflow-hidden rounded-lg border border-stone text-sm">
           {[
-            { key: 'all', label: `Tất cả (${MOCK_MEMBERS.length})` },
-            { key: 'linked', label: `Đã liên kết (${linkedCount})`, dot: 'bg-trail' },
-            { key: 'unlinked', label: `Chưa liên kết (${unlinkedCount})`, dot: 'bg-clay' },
-          ].map((f) => (
+            { key: 'all', label: `Tat ca (${members.length})` },
+            { key: 'linked', label: `Da lien ket (${linkedCount})` },
+            { key: 'unlinked', label: `Chua lien ket (${unlinkedCount})` },
+          ].map((tab, index) => (
             <button
-              key={f.key}
+              key={tab.key}
               type="button"
-              onClick={() => setLinkFilter(f.key)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 transition ${
-                linkFilter === f.key
-                  ? 'bg-ink/6 font-semibold text-ink'
-                  : 'text-ink/50 hover:bg-paper'
-              } ${f.key !== 'all' ? 'border-l border-stone' : ''}`}
+              onClick={() => setFilter(tab.key)}
+              className={`px-3.5 py-2 transition ${
+                filter === tab.key ? 'bg-ink/6 font-semibold text-ink' : 'text-ink/50 hover:bg-paper'
+              } ${index > 0 ? 'border-l border-stone' : ''}`}
             >
-              {f.dot && <span className={`h-1.5 w-1.5 rounded-full ${f.dot}`} />}
-              {f.label}
+              {tab.label}
             </button>
           ))}
         </div>
 
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative min-w-[240px] flex-1 max-w-sm">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/25">
             <Icon name="search" className="h-4 w-4" />
           </span>
           <input
-            type="text" placeholder="Tìm thành viên..."
-            value={search} onChange={e => setSearch(e.target.value)}
+            type="text"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Tim theo MSSV, ten, doi..."
             className="w-full rounded-lg border border-stone bg-white py-2.5 pl-10 pr-4 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
           />
         </div>
       </div>
 
-      {/* List */}
       <div className={`${CARD} overflow-hidden`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-stone bg-paper/70">
+                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thanh vien</th>
+                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Doi</th>
                 <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Discord</th>
-                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tài khoản Web</th>
-                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Đội</th>
-                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45 hidden md:table-cell">Roles</th>
-                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45 hidden md:table-cell">Tham gia</th>
-                <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tác</th>
+                <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tac</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone/60">
-              {filtered.map((m, i) => (
-                <tr key={i} className="transition hover:bg-paper/50">
-                  <td className="px-5 py-3.5">
-                    {m.isLinked ? (
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-trail/15 font-display text-xs font-bold text-trail">
-                          {(m.displayName || m.discordName || '?').charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-ink">{m.displayName || m.discordName}</p>
-                          <p className="font-mono text-xs text-ink/35">{m.discordName}</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-clay/10 font-display text-xs font-bold text-clay/60">
-                          ?
-                        </div>
-                        <span className="text-sm text-ink/30 italic">Chưa liên kết</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <span className="text-sm text-ink/70">{m.accountUser}</span>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <span className="text-sm text-ink/60">{m.teamName || '—'}</span>
-                  </td>
-                  <td className="px-5 py-3.5 hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
-                      {m.roles.map((r, j) => (
-                        <span key={j} className="rounded-md bg-trail/8 px-2 py-0.5 font-mono text-[11px] text-trail">{r}</span>
-                      ))}
-                      {m.roles.length === 0 && <span className="text-ink/25">—</span>}
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5 font-mono text-xs text-ink/35 hidden md:table-cell">
-                    {m.joinedAt || '—'}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center justify-end gap-1">
-                      {m.isLinked ? (
-                        <>
-                          <button type="button" className="rounded-md p-1.5 text-ink/25 transition hover:bg-trail/8 hover:text-trail" title="Đồng bộ lại roles">
-                            <Icon name="check" className="h-4 w-4" />
-                          </button>
-                          <button type="button" className="rounded-md p-1.5 text-ink/25 transition hover:bg-clay/8 hover:text-clay" title="Gỡ liên kết Discord">
-                            <Icon name="xmark" className="h-4 w-4" />
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className="rounded-md px-3 py-1.5 text-xs font-semibold text-trail transition hover:bg-trail/8 active:scale-95">
-                          Liên kết
-                        </button>
-                      )}
-                      <button type="button" className="rounded-md p-1.5 text-ink/25 transition hover:bg-paper hover:text-ink/55" title="Xem chi tiết"
-                        onClick={() => setSelectedMember(selectedMember?.accountUser === m.accountUser ? null : m)}>
-                        <Icon name="chevronR" className={`h-4 w-4 transition ${selectedMember?.accountUser === m.accountUser ? 'rotate-90' : ''}`} />
+              {filtered.length > 0 ? filtered.map((member) => {
+                const syncKey = `member:${member.mssv}`
+                return (
+                  <tr key={member.mssv} className="transition hover:bg-paper/50">
+                    <td className="px-5 py-3.5">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMember(selectedMember?.mssv === member.mssv ? null : member)}
+                        className="text-left"
+                      >
+                        <p className="text-sm font-semibold text-ink">{member.fullName}</p>
+                        <p className="mt-0.5 font-mono text-xs text-ink/35">{member.mssv}</p>
                       </button>
-                    </div>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <p className="text-sm text-ink/70">{member.teamName || '--'}</p>
+                      <p className="mt-0.5 font-mono text-xs text-ink/35">{member.teamCode || '--'}</p>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {member.linked ? (
+                        <div>
+                          <Badge label="Da lien ket" cls="bg-trail/12 text-trail" />
+                          <p className="mt-1 font-mono text-xs text-ink/35">{member.discordId}</p>
+                        </div>
+                      ) : (
+                        <Badge label="Chua lien ket" cls="bg-clay/12 text-clay" />
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onSync(member.mssv)}
+                          disabled={busyKey === syncKey}
+                          className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
+                        >
+                          {busyKey === syncKey ? 'Dang sync...' : 'Sync'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              }) : (
+                <tr>
+                  <td colSpan={4} className="px-5 py-12 text-center text-sm text-ink/35">
+                    Khong co thanh vien nao khop bo loc hien tai.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Member detail panel */}
       {selectedMember && (
-        <div className={`${CARD} p-5 animate-[fadeIn_0.15s_ease-out]`}>
-          <div className="flex items-start justify-between">
+        <div className={`${CARD} p-5`}>
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="font-display text-lg font-semibold text-ink">{selectedMember.accountUser}</h3>
-              <p className="mt-1 font-mono text-xs text-ink/40">
-                {selectedMember.isLinked
-                  ? `Discord: ${selectedMember.discordName} (ID: ${selectedMember.discordId})`
-                  : 'Chưa liên kết tài khoản Discord'}
-              </p>
+              <h3 className="font-display text-lg font-semibold text-ink">{selectedMember.fullName}</h3>
+              <p className="mt-1 font-mono text-xs text-ink/40">{selectedMember.mssv}</p>
             </div>
-            <button type="button" onClick={() => setSelectedMember(null)} className="rounded-lg p-1.5 text-ink/25 transition hover:bg-paper hover:text-ink/55">
+            <button
+              type="button"
+              onClick={() => setSelectedMember(null)}
+              className="rounded-lg p-1.5 text-ink/25 transition hover:bg-paper hover:text-ink/55"
+            >
               <Icon name="close" className="h-5 w-5" />
             </button>
           </div>
-          {selectedMember.isLinked && (
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border border-stone p-3">
-                <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Roles Discord</p>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {selectedMember.roles.map((r, j) => (
-                    <span key={j} className="rounded-md bg-trail/8 px-2 py-0.5 font-mono text-[11px] text-trail">{r}</span>
-                  ))}
-                </div>
-              </div>
-              <div className="rounded-lg border border-stone p-3">
-                <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Đội</p>
-                <p className="mt-2 text-sm text-ink">{selectedMember.teamName}</p>
-              </div>
-              <div className="rounded-lg border border-stone p-3">
-                <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Tham gia server</p>
-                <p className="mt-2 text-sm text-ink">{selectedMember.joinedAt || '—'}</p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border border-stone p-3">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Trang thai</p>
+              <div className="mt-2">
+                {selectedMember.linked
+                  ? <Badge label="Da lien ket Discord" cls="bg-trail/12 text-trail" />
+                  : <Badge label="Chua lien ket Discord" cls="bg-clay/12 text-clay" />}
               </div>
             </div>
-          )}
+            <div className="rounded-lg border border-stone p-3">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Doi</p>
+              <p className="mt-2 text-sm text-ink">{selectedMember.teamName || '--'}</p>
+              <p className="mt-0.5 font-mono text-xs text-ink/35">{selectedMember.teamCode || '--'}</p>
+            </div>
+            <div className="rounded-lg border border-stone p-3">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Discord ID</p>
+              <p className="mt-2 font-mono text-sm text-ink">{selectedMember.discordId || '--'}</p>
+            </div>
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Channels & Broadcast tab
-// ─────────────────────────────────────────────────────────────────────
-function ChannelsTab() {
-  const [broadcastTab, setBroadcastTab] = useState('channels') // channels | compose | history
-  const [composeForm, setComposeForm] = useState({ title: '', message: '', target: 'all', teamIds: [] })
-  const [sent, setSent] = useState(false)
+function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast }) {
+  const [tab, setTab] = useState('channels')
+  const [composeForm, setComposeForm] = useState({
+    title: '',
+    message: '',
+    target: 'all',
+    teamCodes: [],
+  })
 
-  const handleSend = () => {
-    if (!composeForm.title.trim() || !composeForm.message.trim()) return
-    setSent(true)
-    setTimeout(() => {
-      setSent(false)
-      setComposeForm({ title: '', message: '', target: 'all', teamIds: [] })
-      setBroadcastTab('history')
-    }, 1200)
+  const readyTeams = useMemo(
+    () => teams.filter(team => team.provisionState === 'done'),
+    [teams],
+  )
+
+  const selectableTeams = readyTeams.filter(team => team.textChannelId || team.voiceChannelId)
+
+  const toggleTeamCode = (teamCode) => {
+    setComposeForm((current) => ({
+      ...current,
+      teamCodes: current.teamCodes.includes(teamCode)
+        ? current.teamCodes.filter(code => code !== teamCode)
+        : [...current.teamCodes, teamCode],
+    }))
   }
 
-  const targetLabels = {
-    all: 'Tất cả đội đã có kênh',
-    approved: 'Đội đã duyệt',
-    pending: 'Đội chưa submit',
-    custom: 'Chọn đội cụ thể',
+  const handleSubmit = async () => {
+    await onCreateBroadcast(composeForm)
+    setComposeForm({ title: '', message: '', target: 'all', teamCodes: [] })
+    setTab('history')
   }
 
   return (
     <div className="space-y-5">
-      {/* Sub-tabs for channels/compose */}
-      <div className="flex rounded-lg border border-stone overflow-hidden w-fit text-sm">
+      <div className="flex w-fit overflow-hidden rounded-lg border border-stone text-sm">
         {[
-          { key: 'channels', label: 'Danh sách kênh' },
-          { key: 'compose', label: 'Soạn tin nhắn' },
-          { key: 'history', label: 'Lịch sử gửi' },
-        ].map((t) => (
+          { key: 'channels', label: 'Danh sach kenh' },
+          { key: 'compose', label: 'Soan thong bao' },
+          { key: 'history', label: 'Lich su' },
+        ].map((item, index) => (
           <button
-            key={t.key}
+            key={item.key}
             type="button"
-            onClick={() => setBroadcastTab(t.key)}
+            onClick={() => setTab(item.key)}
             className={`px-4 py-2 transition ${
-              broadcastTab === t.key
-                ? 'bg-trail/10 font-semibold text-trail'
-                : 'text-ink/50 hover:bg-paper'
-            } ${t.key !== 'channels' ? 'border-l border-stone' : ''}`}
+              tab === item.key ? 'bg-trail/10 font-semibold text-trail' : 'text-ink/50 hover:bg-paper'
+            } ${index > 0 ? 'border-l border-stone' : ''}`}
           >
-            {t.label}
+            {item.label}
           </button>
         ))}
       </div>
 
-      {broadcastTab === 'channels' && (
+      {tab === 'channels' && (
         <div className={`${CARD} overflow-hidden`}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-stone bg-paper/70">
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Đội</th>
+                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Doi</th>
+                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Provision</th>
                   <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Text channel</th>
                   <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Voice channel</th>
                   <th className="px-5 py-3 text-center font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Members</th>
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45 hidden md:table-cell">Hoạt động</th>
-                  <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tác</th>
+                  <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tac</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone/60">
-                {ALL_CHANNELS.map((ch) => (
-                  <tr key={ch.id} className="transition hover:bg-paper/50">
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm font-medium text-ink">{ch.teamName}</span>
-                      <span className="ml-1.5 font-mono text-xs text-ink/35">{ch.teamId}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="inline-flex items-center gap-1.5 font-mono text-xs text-trail">
-                        <Icon name="listBullet" className="h-3.5 w-3.5" />
-                        #{ch.textChannel}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="inline-flex items-center gap-1.5 font-mono text-xs text-ink/50">
-                        <span role="img" aria-label="voice">🔊</span>
-                        {ch.voiceChannel}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-center">
-                      <span className="font-mono text-xs font-semibold text-ink/60">{ch.memberCount}/5</span>
-                    </td>
-                    <td className="px-5 py-3.5 font-mono text-xs text-ink/35 hidden md:table-cell">{ch.lastActive}</td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <button type="button" className="rounded-md p-1.5 text-ink/25 transition hover:bg-trail/8 hover:text-trail" title="Gửi tin nhắn vào kênh"
-                          onClick={() => { setComposeForm(f => ({ ...f, target: 'custom', teamIds: [ch.teamId] })); setBroadcastTab('compose') }}>
-                          <Icon name="chat" className="h-4 w-4" />
-                        </button>
-                        <button type="button" className="rounded-md p-1.5 text-ink/25 transition hover:bg-paper hover:text-ink/55" title="Xoá kênh">
-                          <Icon name="trash" className="h-4 w-4" />
-                        </button>
-                      </div>
+                {teams.length > 0 ? teams.map((team) => {
+                  const retryKey = `queue:${team.code}`
+                  return (
+                    <tr key={team.code} className="transition hover:bg-paper/50">
+                      <td className="px-5 py-3.5">
+                        <p className="text-sm font-semibold text-ink">{team.name}</p>
+                        <p className="mt-0.5 font-mono text-xs text-ink/35">{team.code}</p>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <Badge {...(PROVISION[team.provisionState] || PROVISION.none)} />
+                      </td>
+                      <td className="px-5 py-3.5 font-mono text-xs text-ink/55">
+                        {team.textChannelId || '--'}
+                      </td>
+                      <td className="px-5 py-3.5 font-mono text-xs text-ink/55">
+                        {team.voiceChannelId || '--'}
+                      </td>
+                      <td className="px-5 py-3.5 text-center font-mono text-sm text-ink/65">
+                        {team.memberCount}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center justify-end gap-2">
+                          {team.provisionState !== 'done' && (
+                            <button
+                              type="button"
+                              onClick={() => onRetry(team.code)}
+                              disabled={busyKey === retryKey}
+                              className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
+                            >
+                              {busyKey === retryKey ? 'Dang retry...' : 'Retry'}
+                            </button>
+                          )}
+                          {team.provisionState === 'done' && (team.textChannelId || team.voiceChannelId) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setComposeForm((current) => ({ ...current, target: 'team_ids', teamCodes: [team.code] }))
+                                setTab('compose')
+                              }}
+                              className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/65 transition hover:bg-paper hover:text-ink"
+                            >
+                              Nhac nhanh
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }) : (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-12 text-center text-sm text-ink/35">
+                      Chua co doi nao trong he thong.
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {broadcastTab === 'compose' && (
+      {tab === 'compose' && (
         <div className={`${CARD} p-5`}>
-          {sent ? (
-            <div className="flex flex-col items-center py-12">
-              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-trail/15">
-                <Icon name="checkPlain" className="h-7 w-7 text-trail" />
-              </span>
-              <p className="mt-4 font-display text-lg font-semibold text-ink">Đã gửi!</p>
-              <p className="mt-1 text-sm text-ink/45">Tin nhắn đang được gửi đến các kênh đã chọn</p>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tieu de</label>
+              <input
+                type="text"
+                value={composeForm.title}
+                onChange={event => setComposeForm((current) => ({ ...current, title: event.target.value }))}
+                className="w-full rounded-lg border border-stone bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
+                placeholder="VD: Nhac lich check-in vong loai"
+              />
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45 mb-1.5">Tiêu đề</label>
-                <input
-                  type="text" placeholder="VD: Thông báo lịch check-in vòng loại"
-                  value={composeForm.title} onChange={e => setComposeForm(f => ({ ...f, title: e.target.value }))}
-                  className="w-full rounded-lg border border-stone bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
-                />
-              </div>
 
-              <div>
-                <label className="block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45 mb-1.5">Nội dung</label>
-                <textarea
-                  rows={5} placeholder="Nhập nội dung tin nhắn... (hỗ trợ Markdown)"
-                  value={composeForm.message} onChange={e => setComposeForm(f => ({ ...f, message: e.target.value }))}
-                  className="w-full rounded-lg border border-stone bg-white px-4 py-3 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10 resize-y"
-                />
-              </div>
+            <div>
+              <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Noi dung</label>
+              <textarea
+                rows={5}
+                value={composeForm.message}
+                onChange={event => setComposeForm((current) => ({ ...current, message: event.target.value }))}
+                className="w-full resize-y rounded-lg border border-stone bg-white px-4 py-3 text-sm leading-6 text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
+                placeholder="Ho tro Markdown o phia Discord bot."
+              />
+            </div>
 
-              <div>
-                <label className="block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45 mb-2">Gửi đến</label>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {[
-                    { key: 'all', icon: 'chat' },
-                    { key: 'approved', icon: 'check' },
-                    { key: 'pending', icon: 'clock' },
-                    { key: 'custom', icon: 'pin' },
-                  ].map((opt) => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      onClick={() => setComposeForm(f => ({ ...f, target: opt.key }))}
-                      className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition ${
-                        composeForm.target === opt.key
-                          ? 'border-trail/40 bg-trail/6'
-                          : 'border-stone hover:bg-paper'
-                      }`}
-                    >
-                      <Icon name={opt.icon} className={`h-4 w-4 ${composeForm.target === opt.key ? 'text-trail' : 'text-ink/30'}`} />
-                      <div>
-                        <p className={`text-sm font-medium ${composeForm.target === opt.key ? 'text-ink' : 'text-ink/60'}`}>
-                          {targetLabels[opt.key]}
-                        </p>
-                        {opt.key === 'custom' && composeForm.target === 'custom' && composeForm.teamIds.length > 0 && (
-                          <p className="mt-0.5 font-mono text-xs text-trail">{composeForm.teamIds.length} đội đã chọn</p>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+            <div>
+              <label className="mb-2 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Gui den</label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[
+                  { key: 'all', label: 'Tat ca doi' },
+                  { key: 'approved', label: 'Doi da duyet' },
+                  { key: 'pending', label: 'Doi chua provision xong' },
+                  { key: 'team_ids', label: 'Chon doi cu the' },
+                ].map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setComposeForm((current) => ({ ...current, target: option.key }))}
+                    className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+                      composeForm.target === option.key
+                        ? 'border-trail/30 bg-trail/10 text-trail'
+                        : 'border-stone bg-white text-ink/60 hover:bg-paper'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {composeForm.target === 'team_ids' && (
+              <div className="rounded-lg border border-stone bg-paper px-4 py-3">
+                <p className="mb-2 text-sm font-medium text-ink">Chon doi co channel de gui</p>
+                <div className="grid max-h-52 gap-2 overflow-y-auto sm:grid-cols-2">
+                  {selectableTeams.length > 0 ? selectableTeams.map((team) => (
+                    <label key={team.code} className="flex items-center gap-2 rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink/70">
+                      <input
+                        type="checkbox"
+                        checked={composeForm.teamCodes.includes(team.code)}
+                        onChange={() => toggleTeamCode(team.code)}
+                        className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+                      />
+                      <span className="min-w-0 truncate">{team.code} · {team.name}</span>
+                    </label>
+                  )) : (
+                    <p className="text-sm text-ink/35">Chua co doi nao san sang nhan thong bao theo kenh rieng.</p>
+                  )}
                 </div>
-                {composeForm.target === 'custom' && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {ALL_CHANNELS.map(ch => {
-                      const selected = composeForm.teamIds.includes(ch.teamId)
-                      return (
-                        <button
-                          key={ch.teamId}
-                          type="button"
-                          onClick={() => setComposeForm(f => ({
-                            ...f,
-                            teamIds: selected
-                              ? f.teamIds.filter(id => id !== ch.teamId)
-                              : [...f.teamIds, ch.teamId]
-                          }))}
-                          className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                            selected
-                              ? 'bg-trail/15 text-trail border border-trail/30'
-                              : 'bg-paper text-ink/50 border border-stone hover:border-stone/80'
-                          }`}
-                        >
-                          {ch.teamName}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
               </div>
+            )}
 
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleSend}
-                  disabled={!composeForm.title.trim() || !composeForm.message.trim()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-trail px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-trail/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Icon name="chat" className="h-4 w-4" />
-                  Gửi tin nhắn
-                </button>
-                <span className="font-mono text-xs text-ink/30">
-                  {composeForm.target === 'all' ? '→ 28 kênh'
-                    : composeForm.target === 'approved' ? '→ 28 kênh'
-                    : composeForm.target === 'pending' ? '→ 3 kênh'
-                    : composeForm.teamIds.length > 0 ? `→ ${composeForm.teamIds.length} kênh`
-                    : '→ chưa chọn đội'}
-                </span>
-              </div>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-ink/45">
+                Broadcast hien tao ban nhap trong database; bot se doc queue nay de gui ve Discord.
+              </p>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={
+                  busyKey === 'broadcast:create'
+                  || !composeForm.title.trim()
+                  || !composeForm.message.trim()
+                  || (composeForm.target === 'team_ids' && composeForm.teamCodes.length === 0)
+                }
+                className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
+              >
+                <Icon name="chat" className="h-4 w-4" />
+                {busyKey === 'broadcast:create' ? 'Dang tao...' : 'Tao broadcast'}
+              </button>
             </div>
-          )}
+          </div>
         </div>
       )}
 
-      {broadcastTab === 'history' && (
+      {tab === 'history' && (
         <div className={`${CARD} overflow-hidden`}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-stone bg-paper/70">
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tiêu đề</th>
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Gửi đến</th>
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thời gian</th>
-                  <th className="px-5 py-3 text-center font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Trạng thái</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone/60">
-                {MOCK_BROADCAST_HISTORY.map((item) => (
-                  <tr key={item.id} className="transition hover:bg-paper/50">
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm font-medium text-ink">{item.title}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm text-ink/55">{item.sentTo}</span>
-                    </td>
-                    <td className="px-5 py-3.5 font-mono text-xs text-ink/35">{item.sentAt}</td>
-                    <td className="px-5 py-3.5 text-center">
-                      <Badge label="Đã gửi" cls="bg-trail/10 text-trail" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="divide-y divide-stone/60">
+            {broadcasts.length > 0 ? broadcasts.map((item) => (
+              <div key={item.id} className="px-5 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold text-ink">{item.title}</p>
+                  <Badge {...broadcastBadge(item.status)} />
+                </div>
+                <p className="mt-1 text-xs text-ink/45">{targetLabel(item)}</p>
+                <p className="mt-1 font-mono text-[11px] text-ink/35">
+                  Tao boi {item.sentBy || 'admin'} · {formatDateTime(item.createdAt)}
+                  {item.sentAt ? ` · Sent ${formatDateTime(item.sentAt)}` : ''}
+                </p>
+                {item.error && <p className="mt-2 text-xs leading-5 text-clay">{item.error}</p>}
+              </div>
+            )) : (
+              <div className="px-5 py-12 text-center text-sm text-ink/35">
+                Chua co lich su broadcast.
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -674,25 +659,186 @@ function ChannelsTab() {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────
 export default function DiscordPage() {
-  const [subTab, setSubTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState('overview')
+  const [loading, setLoading] = useState(true)
+  const [busyKey, setBusyKey] = useState('')
+  const [apiError, setApiError] = useState('')
+  const [status, setStatus] = useState({ provisioning: { pending: 0, failed: 0, done: 0 } })
+  const [queue, setQueue] = useState([])
+  const [members, setMembers] = useState([])
+  const [teams, setTeams] = useState([])
+  const [broadcasts, setBroadcasts] = useState([])
 
-  const counts = {
-    overview: PROVISIONING_QUEUE.filter(q => q.status === 'pending').length,
-    members: MOCK_MEMBERS.length,
-    channels: ALL_CHANNELS.length,
+  const loadDiscordData = useCallback(async () => {
+    const [statusPayload, queuePayload, membersPayload, broadcastsPayload, teamsPayload] = await Promise.all([
+      apiRequest('/discord/status'),
+      apiRequest('/discord/provisioning-queue'),
+      apiRequest('/discord/members'),
+      apiRequest('/discord/broadcasts'),
+      apiRequest('/teams?limit=200'),
+    ])
+
+    setStatus(statusPayload || { provisioning: { pending: 0, failed: 0, done: 0 } })
+    setQueue(queuePayload?.queue || [])
+    setMembers((membersPayload?.items || []).map(normalizeMember))
+    setBroadcasts((broadcastsPayload?.items || []).map(item => ({
+      id: item.id,
+      title: item.title || '',
+      target: item.target || 'all',
+      status: item.status || 'draft',
+      sentBy: item.sent_by || '',
+      sentAt: item.sent_at || '',
+      createdAt: item.sent_at || item.created_at || '',
+      error: item.error || '',
+      targetPayload: item.target_payload || null,
+    })))
+    setTeams((teamsPayload?.items || []).map(normalizeTeam))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const bootstrap = async () => {
+      try {
+        setLoading(true)
+        setApiError('')
+        await loadDiscordData()
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        setApiError(explainApiError(error))
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    bootstrap()
+    return () => {
+      cancelled = true
+    }
+  }, [loadDiscordData])
+
+  const handleRetryProvision = async (teamCode) => {
+    const nextBusyKey = `queue:${teamCode}`
+    try {
+      setBusyKey(nextBusyKey)
+      setApiError('')
+      await apiRequest(`/discord/teams/${encodeURIComponent(teamCode)}/provision`, { method: 'POST' })
+      await loadDiscordData()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyKey('')
+    }
   }
+
+  const handleSyncMember = async (mssv) => {
+    const nextBusyKey = `member:${mssv}`
+    try {
+      setBusyKey(nextBusyKey)
+      setApiError('')
+      await apiRequest(`/discord/members/${encodeURIComponent(mssv)}/sync`, { method: 'POST' })
+      await loadDiscordData()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyKey('')
+    }
+  }
+
+  const handleCreateBroadcast = async (form) => {
+    try {
+      setBusyKey('broadcast:create')
+      setApiError('')
+      await apiRequest('/discord/broadcasts', {
+        method: 'POST',
+        body: {
+          title: form.title.trim(),
+          message: form.message.trim(),
+          target: form.target,
+          target_payload: form.target === 'team_ids'
+            ? { team_codes: form.teamCodes }
+            : null,
+        },
+      })
+      await loadDiscordData()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+      throw error
+    } finally {
+      setBusyKey('')
+    }
+  }
+
+  const counts = useMemo(() => ({
+    overview: queue.length,
+    members: members.length,
+    channels: teams.length,
+  }), [members.length, queue.length, teams.length])
 
   return (
     <div className="space-y-5">
-      <SubTabBar active={subTab} onChange={setSubTab} counts={counts} />
+      <SubTabBar active={activeTab} onChange={setActiveTab} counts={counts} />
 
-      {subTab === 'overview' && <OverviewTab />}
-      {subTab === 'members' && <MembersTab />}
-      {subTab === 'channels' && <ChannelsTab />}
+      {apiError && (
+        <div className="rounded-xl border border-clay/20 bg-clay/[0.05] px-4 py-3 text-sm text-clay">
+          {apiError}
+        </div>
+      )}
+
+      {loading ? (
+        <div className={`${CARD} px-5 py-14 text-center text-sm text-ink/35`}>
+          Dang tai du lieu Discord...
+        </div>
+      ) : (
+        <>
+          {activeTab === 'overview' && (
+            <OverviewTab
+              status={status}
+              teams={teams}
+              queue={queue}
+              broadcasts={broadcasts}
+              busyKey={busyKey}
+              onRetry={handleRetryProvision}
+              onRefresh={loadDiscordData}
+            />
+          )}
+          {activeTab === 'members' && (
+            <MembersTab
+              members={members}
+              busyKey={busyKey}
+              onSync={handleSyncMember}
+            />
+          )}
+          {activeTab === 'channels' && (
+            <ChannelsTab
+              teams={teams}
+              broadcasts={broadcasts}
+              busyKey={busyKey}
+              onRetry={handleRetryProvision}
+              onCreateBroadcast={handleCreateBroadcast}
+            />
+          )}
+        </>
+      )}
     </div>
   )
 }

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { Icon, CARD, Badge } from './ui.jsx'
+import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 
 const LEGACY_STATIONS_STORAGE_KEY = 'vnutour:admin:stations-by-phase'
 
@@ -76,25 +77,25 @@ const MODE_META = {
 
 const CHECKIN_POLICY_META = {
   staff_scan: {
-    label: 'Can coop scan',
-    hint: 'Doi phai duoc check-in/check-out boi admin hoac co-op.',
+    label: 'Cần coop scan',
+    hint: 'Đội phải được check-in/check-out bởi admin hoặc co-op.',
     cls: 'bg-gold/15 text-gold',
   },
   free_play: {
-    label: 'Tu do vao choi',
-    hint: 'Khong bat buoc admin/co-op scan check-in tai tram nay.',
+    label: 'Tự do vào chơi',
+    hint: 'Không bắt buộc admin/co-op scan check-in tại trạm này.',
     cls: 'bg-ink/[0.07] text-ink/55',
   },
 }
 
 const CAPACITY_MODE_META = {
   unlimited: {
-    label: 'Khong gioi han',
-    hint: 'Khong gioi han so doi choi cung luc.',
+    label: 'Không giới hạn',
+    hint: 'Không giới hạn số đội chơi cùng lúc.',
   },
   limited: {
-    label: 'Gioi han dong thoi',
-    hint: 'Chi mot so doi duoc choi cung luc.',
+    label: 'Giới hạn đồng thời',
+    hint: 'Chỉ một số đội được chơi cùng lúc.',
   },
 }
 
@@ -238,7 +239,7 @@ const REGISTRATION_STATIONS = [
     id: 'REG03',
     order: 3,
     name: 'Khu briefing đội thi',
-    location: 'Phong 201 · UIT',
+    location: 'Phòng 201 · UIT',
     active: false,
   }),
 ]
@@ -247,14 +248,14 @@ const QUALIFYING_STATIONS = [
   createStation({
     id: 'VL01',
     order: 1,
-    name: 'Tram 1 · UIT',
-    location: 'Khu pho 6, P. Linh Trung, TP. Thu Duc',
+    name: 'Trạm 1 · UIT',
+    location: 'Khu phố 6, P. Linh Trung, TP. Thủ Đức',
     active: true,
     teamsHere: [
       { id: 'T0003', name: 'Những chiến binh', arrivedAt: '14:20' },
       { id: 'T0005', name: 'Thunder', arrivedAt: '14:35' },
       { id: 'T0009', name: 'Red Storm', arrivedAt: '14:48' },
-      { id: 'T0011', name: 'Doi moi', arrivedAt: '15:01' },
+      { id: 'T0011', name: 'Đội mới', arrivedAt: '15:01' },
     ],
     teamsDone: [
       { id: 'T0001', name: 'Sky Walker', doneAt: '12:10' },
@@ -277,8 +278,8 @@ const QUALIFYING_STATIONS = [
   createStation({
     id: 'VL02',
     order: 2,
-    name: 'Tram 2 · Thu vien Khoa hoc Tong hop',
-    location: '69 Dinh Tien Hoang, Q.1, TP. HCM',
+    name: 'Trạm 2 · Thư viện Khoa học Tổng hợp',
+    location: '69 Đinh Tiên Hoàng, Q.1, TP. HCM',
     active: true,
     teamsHere: [
       { id: 'T0001', name: 'Sky Walker', arrivedAt: '14:55' },
@@ -296,12 +297,12 @@ const QUALIFYING_STATIONS = [
         items: [
           {
             question: 'Nhân vật nào được đặt tên cho thư viện?',
-            options: ['Le Quy Don', 'Nguyen Dinh Chieu', 'Tran Hung Dao', 'Ho Xuan Huong'],
+            options: ['Lê Quý Đôn', 'Nguyễn Đình Chiểu', 'Trần Hưng Đạo', 'Hồ Xuân Hương'],
             correctOption: 1,
           },
           {
-            question: 'Khu vuc doc mo cua thu vien nam o tang nao?',
-            options: ['Tang 1', 'Tang 2', 'Tang 3', 'Tang 4'],
+            question: 'Khu vực đọc mở cửa thư viện nằm ở tầng nào?',
+            options: ['Tầng 1', 'Tầng 2', 'Tầng 3', 'Tầng 4'],
             correctOption: 2,
           },
         ],
@@ -311,8 +312,8 @@ const QUALIFYING_STATIONS = [
   createStation({
     id: 'VL03',
     order: 3,
-    name: 'Tram 3 · Trung tam GDQP&AN',
-    location: 'Duong so 6, KDT Dai hoc Quoc gia, TP. Thu Duc',
+    name: 'Trạm 3 · Trung tâm GDQP&AN',
+    location: 'Đường số 6, KDT Đại học Quốc gia, TP. Thủ Đức',
     active: true,
     teamsHere: [
       { id: 'T0004', name: 'Ice Breaker', arrivedAt: '14:30' },
@@ -324,20 +325,20 @@ const QUALIFYING_STATIONS = [
       { id: 'T0002', name: 'Fire Phoenix', doneAt: '12:00' },
     ],
     submission: {
-      brief: 'Nop anh minh chung sau khi doi vuot qua bai tap van dong.',
+      brief: 'Nộp ảnh minh chứng sau khi đội vượt qua bài tập vận động.',
       attachment: {
         enabled: true,
         maxFiles: 2,
         allowedTypes: 'JPG, PNG',
-        note: 'Can ro mat doi va bang ten tram trong anh.',
+        note: 'Cần rõ mặt đội và bảng tên trạm trong ảnh.',
       },
     },
   }),
   createStation({
     id: 'VL04',
     order: 4,
-    name: 'Tram 4 · Dai hoc Bach Khoa',
-    location: '268 Ly Thuong Kiet, Q.10, TP. HCM',
+    name: 'Trạm 4 · Đại học Bách Khoa',
+    location: '268 Lý Thường Kiệt, Q.10, TP. HCM',
     active: true,
     teamsHere: [
       { id: 'T0007', name: 'Dark Matter', arrivedAt: '15:00' },
@@ -346,7 +347,7 @@ const QUALIFYING_STATIONS = [
       { id: 'T0001', name: 'Sky Walker', doneAt: '13:10' },
     ],
     submission: {
-      brief: 'Tram ket hop tra loi va nop file minh chung.',
+      brief: 'Trạm kết hợp trả lời và nộp file minh chứng.',
       form: {
         enabled: true,
         fields: [
@@ -357,25 +358,25 @@ const QUALIFYING_STATIONS = [
         enabled: true,
         maxFiles: 1,
         allowedTypes: 'JPG, PNG, PDF',
-        note: 'Nop anh chup vat pham tai diem ket thuc.',
+        note: 'Nộp ảnh chụp vật phẩm tại điểm kết thúc.',
       },
     },
   }),
   createStation({
     id: 'VL05',
     order: 5,
-    name: 'Tram 5 · Nha Van hoa Thanh nien',
-    location: '4 Pham Ngoc Thach, Q.1, TP. HCM',
+    name: 'Trạm 5 · Nhà Văn hoá Thanh niên',
+    location: '4 Phạm Ngọc Thạch, Q.1, TP. HCM',
     active: false,
   }),
   createStation({
     id: 'VL06',
     order: 6,
-    name: 'Tram dich · SVD Thong Nhat',
-    location: '138 Dao Duy Tu, Q.10, TP. HCM',
+    name: 'Trạm đích · SVĐ Thống Nhất',
+    location: '138 Đào Duy Từ, Q.10, TP. HCM',
     active: false,
     submission: {
-      brief: 'Tong hop bai nop cuoi cung de cham diem ve dich.',
+      brief: 'Tổng hợp bài nộp cuối cùng để chấm điểm về đích.',
       form: {
         enabled: true,
         fields: [
@@ -386,7 +387,7 @@ const QUALIFYING_STATIONS = [
         enabled: true,
         maxFiles: 3,
         allowedTypes: 'JPG, PNG, MP4',
-        note: 'Co the nop anh hoac clip tong ket hanh trinh.',
+        note: 'Có thể nộp ảnh hoặc clip tổng kết hành trình.',
       },
     },
   }),
@@ -396,8 +397,8 @@ const FINAL_STATIONS = [
   createStation({
     id: 'CK01',
     order: 1,
-    name: 'Final · San khoi dong',
-    location: 'Khu vuc xuat phat · Cong vien phia dong',
+    name: 'Final · Sân khởi động',
+    location: 'Khu vực xuất phát · Công viên phía đông',
     active: true,
     teamsHere: [
       { id: 'T0001', name: 'Sky Walker', arrivedAt: '17:20' },
@@ -407,13 +408,13 @@ const FINAL_STATIONS = [
       { id: 'T0002', name: 'Fire Phoenix', doneAt: '17:05' },
     ],
     submission: {
-      brief: 'Quiz mo man chung ket de kich hoat clue tiep theo.',
+      brief: 'Quiz mở màn chung kết để kích hoạt clue tiếp theo.',
       quiz: {
         enabled: true,
         items: [
           {
-            question: 'Manh clue dau tien dan doi den khu vuc nao?',
-            options: ['San khau', 'Khu trung tam', 'Leu checkpoint', 'Cong chinh'],
+            question: 'Mảnh clue đầu tiên dẫn đội đến khu vực nào?',
+            options: ['Sân khấu', 'Khu trung tâm', 'Lều checkpoint', 'Cổng chính'],
             correctOption: 1,
           },
         ],
@@ -423,8 +424,8 @@ const FINAL_STATIONS = [
   createStation({
     id: 'CK02',
     order: 2,
-    name: 'Final · Tram giai ma',
-    location: 'Nha dieu hanh trung tam',
+    name: 'Final · Trạm giải mã',
+    location: 'Nhà điều hành trung tâm',
     active: true,
     teamsHere: [
       { id: 'T0002', name: 'Fire Phoenix', arrivedAt: '17:28' },
@@ -434,7 +435,7 @@ const FINAL_STATIONS = [
       { id: 'T0004', name: 'Ice Breaker', doneAt: '17:23' },
     ],
     submission: {
-      brief: 'Can nop dap an cuoi va file chup manh ghep sau khi giai xong.',
+      brief: 'Cần nộp đáp án cuối và file chụp mảnh ghép sau khi giải xong.',
       form: {
         enabled: true,
         fields: [
@@ -445,22 +446,22 @@ const FINAL_STATIONS = [
         enabled: true,
         maxFiles: 1,
         allowedTypes: 'JPG, PNG',
-        note: 'Anh chup manh ghep hoan chinh.',
+        note: 'Ảnh chụp mảnh ghép hoàn chỉnh.',
       },
     },
   }),
   createStation({
     id: 'CK03',
     order: 3,
-    name: 'Final · Tram but toc',
-    location: 'Duong chay noi khu',
+    name: 'Final · Trạm bứt tốc',
+    location: 'Đường chạy nội khu',
     active: false,
     teamsDone: [
       { id: 'T0003', name: 'Những chiến binh', doneAt: '17:15' },
       { id: 'T0005', name: 'Thunder', doneAt: '17:19' },
     ],
     submission: {
-      brief: 'Anh minh chung qua vach dong thoi tra loi cau hoi an tuong.',
+      brief: 'Ảnh minh chứng qua vạch đồng thời trả lời câu hỏi ấn tượng.',
       form: {
         enabled: true,
         fields: [
@@ -471,15 +472,15 @@ const FINAL_STATIONS = [
         enabled: true,
         maxFiles: 2,
         allowedTypes: 'JPG, PNG',
-        note: 'Mot anh toan doi va mot anh checkpoint neu can.',
+        note: 'Một ảnh toàn đội và một ảnh checkpoint nếu cần.',
       },
     },
   }),
   createStation({
     id: 'CK04',
     order: 4,
-    name: 'Final · Vach dich',
-    location: 'San khau chung ket',
+    name: 'Final · Vạch đích',
+    location: 'Sân khấu chung kết',
     active: false,
   }),
 ]
@@ -488,8 +489,8 @@ const ENDED_STATIONS = [
   createStation({
     id: 'ARC01',
     order: 1,
-    name: 'Tong ket · Vong loai',
-    location: 'Kho minh chung su kien',
+    name: 'Tổng kết · Vòng loại',
+    location: 'Kho minh chứng sự kiện',
     active: false,
     teamsDone: [
       { id: 'T0001', name: 'Sky Walker', doneAt: '18:00' },
@@ -497,7 +498,7 @@ const ENDED_STATIONS = [
       { id: 'T0003', name: 'Những chiến binh', doneAt: '18:00' },
     ],
     submission: {
-      brief: 'Luu metadata cua tat ca bai nop vong loai de doi chieu sau su kien.',
+      brief: 'Lưu metadata của tất cả bài nộp vòng loại để đối chiếu sau sự kiện.',
       form: {
         enabled: true,
         fields: [
@@ -508,28 +509,28 @@ const ENDED_STATIONS = [
         enabled: true,
         maxFiles: 5,
         allowedTypes: 'ZIP, PDF, JPG, PNG',
-        note: 'Kho minh chung tong hop sau vong loai.',
+        note: 'Kho minh chứng tổng hợp sau vòng loại.',
       },
     },
   }),
   createStation({
     id: 'ARC02',
     order: 2,
-    name: 'Tong ket · Chung ket',
-    location: 'Phong dieu hanh',
+    name: 'Tổng kết · Chung kết',
+    location: 'Phòng điều hành',
     active: false,
     teamsDone: [
       { id: 'T0001', name: 'Sky Walker', doneAt: '19:20' },
       { id: 'T0002', name: 'Fire Phoenix', doneAt: '19:20' },
     ],
     submission: {
-      brief: 'Luu ket qua quiz va tep minh chung cua chung ket.',
+      brief: 'Lưu kết quả quiz và tệp minh chứng của chung kết.',
       quiz: {
         enabled: true,
         items: [
           {
-            question: 'Da xac nhan ket qua chung ket?',
-            options: ['Chua', 'Da xac nhan', 'Can doi soat', 'Khac'],
+            question: 'Đã xác nhận kết quả chung kết?',
+            options: ['Chưa', 'Đã xác nhận', 'Cần đối soát', 'Khác'],
             correctOption: 1,
           },
         ],
@@ -538,7 +539,7 @@ const ENDED_STATIONS = [
         enabled: true,
         maxFiles: 2,
         allowedTypes: 'PDF, XLSX',
-        note: 'Bien ban cham diem va bang tong hop ket qua.',
+        note: 'Biên bản chấm điểm và bảng tổng hợp kết quả.',
       },
     },
   }),
@@ -553,7 +554,7 @@ function normalizeStations(stations = []) {
     }))
 }
 
-function reindexStations(stations = []) {
+function _reindexStations(stations = []) {
   return normalizeStations(stations).map((station, index) => ({
     ...station,
     order: index + 1,
@@ -564,11 +565,24 @@ function sumStationScore(station) {
   return (station?.teamsDone ?? []).reduce((total, team) => total + (Number(team.score) || 0), 0)
 }
 
+function explainApiError(error) {
+  const code = error?.data?.error || error?.message
+  const map = {
+    forbidden: 'Bạn không có quyền thao tác trạm.',
+    invalid_json: 'Dữ liệu trạm gửi lên không hợp lệ.',
+    missing_code_or_name: 'Trạm cần có mã và tên trước khi lưu.',
+    method_not_allowed: 'Thao tác này chưa được API hỗ trợ.',
+    station_not_found: 'Không tìm thấy trạm cần thao tác.',
+    station_not_in_event: 'Trạm này không thuộc event đang chọn.',
+  }
+  return map[code] || 'Không thể đồng bộ dữ liệu trạm.'
+}
+
 function formatCapacitySummary(station) {
   if (station?.capacityMode === 'limited') {
-    return `${station.maxConcurrentTeams} doi cung luc`
+    return `${station.maxConcurrentTeams} đội cùng lúc`
   }
-  return 'Khong gioi han'
+  return 'Không giới hạn'
 }
 
 function getDefaultStationsByPhaseEvent() {
@@ -647,6 +661,77 @@ function loadStationsByPhaseEvent(phaseKeys) {
   }
 
   return defaults
+}
+
+function mapSessionsToStationState(sessions = []) {
+  const sortedSessions = [...sessions].sort((left, right) => (
+    new Date(right.exited_at || right.entered_at || 0).getTime()
+    - new Date(left.exited_at || left.entered_at || 0).getTime()
+  ))
+
+  const teamsHere = sortedSessions
+    .filter(session => session.status === 'active')
+    .map(session => ({
+      id: session.team_code,
+      name: session.team_name,
+      arrivedAt: formatDateTime(session.entered_at),
+    }))
+
+  const teamsDone = sortedSessions
+    .filter(session => session.status === 'closed')
+    .map(session => ({
+      id: session.team_code,
+      name: session.team_name,
+      doneAt: formatDateTime(session.exited_at || session.entered_at),
+      score: Number(session.score) || 0,
+      note: session.note || '',
+    }))
+
+  return { teamsHere, teamsDone }
+}
+
+function stationFromApi(station, sessions = []) {
+  const { teamsHere, teamsDone } = mapSessionsToStationState(sessions)
+  return createStation({
+    id: String(station.id),
+    order: station.order ?? 0,
+    name: station.name || '',
+    location: station.location || '',
+    active: station.active !== false,
+    checkinPolicy: station.checkin_policy || 'staff_scan',
+    capacityMode: station.capacity_mode || 'unlimited',
+    maxConcurrentTeams: Math.max(1, Number(station.max_concurrent_teams) || 2),
+    teamsHere,
+    teamsDone,
+    submission: createSubmissionConfig(station.submission_config),
+  })
+}
+
+function buildStationPayload(form, order, active) {
+  return {
+    name: form.name.trim(),
+    location: form.location.trim(),
+    order,
+    active,
+    checkin_policy: form.checkinPolicy,
+    capacity_mode: form.capacityMode,
+    max_concurrent_teams: form.capacityMode === 'limited'
+      ? Math.max(1, Number(form.maxConcurrentTeams) || 1)
+      : null,
+    submission_config: sanitizeSubmission(form.submission),
+  }
+}
+
+async function fetchStationsForEvent(phaseKey, eventId) {
+  const payload = await apiRequest(`/program/phases/${phaseKey}/sub-events/${eventId}/stations?include_inactive=1`)
+  const stations = payload?.stations || []
+  const historyPayloads = await Promise.all(
+    stations.map(station => apiRequest(`/stations/${station.id}/sessions`)),
+  )
+
+  return normalizeStations(
+    stations.map((station, index) => stationFromApi(station, historyPayloads[index]?.sessions || [])),
+  )
 }
 
 function makeStationId(phase, stations) {
@@ -746,7 +831,7 @@ function renderInlineMarkdown(text, keyPrefix = 'md') {
   return nodes.length > 0 ? nodes : text
 }
 
-function MarkdownPreview({ content, emptyMessage = 'Chua co mo ta markdown.' }) {
+function MarkdownPreview({ content, emptyMessage = 'Chưa có mô tả markdown.' }) {
   const normalized = content.replace(/\r\n/g, '\n').trim()
   if (!normalized) {
     return <p className="text-sm italic text-ink/35">{emptyMessage}</p>
@@ -944,7 +1029,7 @@ function SubmissionModeList({ submission, compact = false }) {
   const modes = getSubmissionModes(submission)
 
   if (modes.length === 0) {
-    return <span className="text-xs text-ink/35">Khong co bai nop</span>
+    return <span className="text-xs text-ink/35">Không có bài nộp</span>
   }
 
   return (
@@ -1080,7 +1165,7 @@ function MarkdownComposer({ value, onChange, placeholder }) {
               tab === 'write' ? 'bg-white text-ink shadow-sm' : 'text-ink/50 hover:text-ink'
             }`}
           >
-            Soan thao
+            Soạn thảo
           </button>
           <button
             type="button"
@@ -1089,7 +1174,7 @@ function MarkdownComposer({ value, onChange, placeholder }) {
               tab === 'preview' ? 'bg-white text-ink shadow-sm' : 'text-ink/50 hover:text-ink'
             }`}
           >
-            Xem truoc
+            Xem trước
           </button>
         </div>
 
@@ -1116,7 +1201,7 @@ function MarkdownComposer({ value, onChange, placeholder }) {
         />
       ) : (
         <div className="bg-paper px-4 py-4">
-          <MarkdownPreview content={value} emptyMessage="Chua co mo ta de xem truoc." />
+          <MarkdownPreview content={value} emptyMessage="Chưa có mô tả để xem trước." />
         </div>
       )}
     </div>
@@ -1152,11 +1237,11 @@ function StationSubmissionOverview({ submission }) {
 
   return (
     <div className="px-4 pb-4">
-      <SectionTitle title="Cau hinh bai nop" action={<SubmissionModeList submission={submission} />} />
+      <SectionTitle title="Cấu hình bài nộp" action={<SubmissionModeList submission={submission} />} />
 
       {modes.length === 0 ? (
         <div className={`${CARD} px-4 py-4 text-sm italic text-ink/35`}>
-          Tram nay hien chua yeu cau doi nop form, trac nghiem hay file dinh kem.
+          Trạm này hiện chưa yêu cầu đội nộp form, trắc nghiệm hay file đính kèm.
         </div>
       ) : (
         <div className="space-y-3">
@@ -1175,10 +1260,10 @@ function StationSubmissionOverview({ submission }) {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-medium text-ink">{field.label || `Truong ${index + 1}`}</p>
-                        <p className="mt-1 text-xs text-ink/45">{field.placeholder || 'Chua co goi y nhap lieu'}</p>
+                        <p className="mt-1 text-xs text-ink/45">{field.placeholder || 'Chưa có gợi ý nhập liệu'}</p>
                       </div>
                       <Badge
-                        label={field.required ? 'Bat buoc' : 'Tuy chon'}
+                        label={field.required ? 'Bắt buộc' : 'Tuỳ chọn'}
                         cls={field.required ? 'bg-[#3E7CA8]/12 text-[#3E7CA8]' : 'bg-ink/[0.07] text-ink/45'}
                       />
                     </div>
@@ -1194,7 +1279,7 @@ function StationSubmissionOverview({ submission }) {
               <div className="space-y-3">
                 {submission.quiz.items.map((item, index) => (
                   <div key={item.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
-                    <p className="text-sm font-medium text-ink">{index + 1}. {item.question || 'Chua dat noi dung cau hoi'}</p>
+                    <p className="text-sm font-medium text-ink">{index + 1}. {item.question || 'Chưa đặt nội dung câu hỏi'}</p>
                     <div className="mt-3 grid gap-2">
                       {item.options.map((option, optionIndex) => (
                         <div
@@ -1212,7 +1297,7 @@ function StationSubmissionOverview({ submission }) {
                           }`}>
                             {String.fromCharCode(65 + optionIndex)}
                           </span>
-                          <span>{option || 'Chua nhap lua chon'}</span>
+                          <span>{option || 'Chưa nhập lựa chọn'}</span>
                         </div>
                       ))}
                     </div>
@@ -1224,15 +1309,15 @@ function StationSubmissionOverview({ submission }) {
 
           {submission.attachment.enabled && (
             <div className={`${CARD} px-4 py-4`}>
-              <SectionTitle title="File dinh kem" />
+              <SectionTitle title="File đính kèm" />
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border border-stone bg-paper px-3 py-3">
-                  <p className="text-xs text-ink/40">So file toi da</p>
+                  <p className="text-xs text-ink/40">Số file tối đa</p>
                   <p className="mt-1 text-sm font-semibold text-ink">{submission.attachment.maxFiles} file</p>
                 </div>
                 <div className="rounded-lg border border-stone bg-paper px-3 py-3">
-                  <p className="text-xs text-ink/40">Loai file cho phep</p>
-                  <p className="mt-1 text-sm font-semibold text-ink">{submission.attachment.allowedTypes || 'Chua cau hinh'}</p>
+                  <p className="text-xs text-ink/40">Loại file cho phép</p>
+                  <p className="mt-1 text-sm font-semibold text-ink">{submission.attachment.allowedTypes || 'Chưa cấu hình'}</p>
                 </div>
               </div>
               {submission.attachment.note && (
@@ -1253,7 +1338,7 @@ function StationFlowOverview({ station }) {
 
   return (
     <div className="px-4 pb-4">
-      <SectionTitle title="Van hanh check-in" />
+      <SectionTitle title="Vận hành check-in" />
       <div className="grid gap-3 sm:grid-cols-2">
         <div className={`${CARD} px-4 py-3`}>
           <div className="flex items-center gap-2">
@@ -1262,12 +1347,12 @@ function StationFlowOverview({ station }) {
           <p className="mt-2 text-sm leading-6 text-ink/60">{policyMeta.hint}</p>
         </div>
         <div className={`${CARD} px-4 py-3`}>
-          <p className="text-xs text-ink/40">Cong suat</p>
+          <p className="text-xs text-ink/40">Công suất</p>
           <p className="mt-1 text-sm font-semibold text-ink">{formatCapacitySummary(station)}</p>
           <p className="mt-2 text-sm leading-6 text-ink/50">
             {station.capacityMode === 'limited'
-              ? `He thong can chan them doi moi khi da co ${station.maxConcurrentTeams} doi dang choi.`
-              : 'Tram nay khong can gioi han so doi dang choi cung luc.'}
+              ? `Hệ thống cần chặn thêm đội mới khi đã có ${station.maxConcurrentTeams} đội đang chơi.`
+              : 'Trạm này không cần giới hạn số đội đang chơi cùng lúc.'}
           </p>
         </div>
       </div>
@@ -1408,24 +1493,24 @@ function StationForm({ initial, onSave, onCancel }) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Ten tram
+            Tên trạm
           </label>
           <input
             value={form.name}
             onChange={event => set('name', event.target.value)}
-            placeholder="Tram 1 · UIT"
+            placeholder="Trạm 1 · UIT"
             className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Dia diem
+            Địa điểm
           </label>
           <input
             value={form.location}
             onChange={event => set('location', event.target.value)}
-            placeholder="Dia chi tram..."
+            placeholder="Địa chỉ trạm..."
             className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
           />
         </div>
@@ -1443,7 +1528,7 @@ function StationForm({ initial, onSave, onCancel }) {
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Luong vao tram
+            Luồng vào trạm
           </label>
           <select
             value={form.checkinPolicy}
@@ -1461,7 +1546,7 @@ function StationForm({ initial, onSave, onCancel }) {
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Cong suat dong thoi
+            Công suất đồng thời
           </label>
           <select
             value={form.capacityMode}
@@ -1480,7 +1565,7 @@ function StationForm({ initial, onSave, onCancel }) {
         {form.capacityMode === 'limited' && (
           <div className="sm:col-span-2">
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-              So doi toi da cung luc
+              Số đội tối đa cùng lúc
             </label>
             <input
               type="number"
@@ -1495,18 +1580,18 @@ function StationForm({ initial, onSave, onCancel }) {
 
       <div className="space-y-3">
         <SectionTitle
-          title="Nhiem vu tram"
+          title="Nhiệm vụ trạm"
           action={<Badge label="Markdown" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
         />
         <MarkdownComposer
           value={form.submission.brief}
           onChange={value => updateSubmission(submission => ({ ...submission, brief: value }))}
-          placeholder="Mo ta nhiem vu, checklist, clue, luat tinh diem... bang Markdown."
+          placeholder="Mô tả nhiệm vụ, checklist, clue, luật tính điểm... bằng Markdown."
         />
       </div>
 
       <div className="space-y-3">
-        <SectionTitle title="Kieu bai nop" />
+        <SectionTitle title="Kiểu bài nộp" />
         <div className="grid gap-3 lg:grid-cols-3">
           <ModeCard modeKey="form" enabled={form.submission.form.enabled} onToggle={() => toggleMode('form')} />
           <ModeCard modeKey="quiz" enabled={form.submission.quiz.enabled} onToggle={() => toggleMode('quiz')} />
@@ -1517,7 +1602,7 @@ function StationForm({ initial, onSave, onCancel }) {
       {form.submission.form.enabled && (
         <div className={`${CARD} p-4`}>
           <SectionTitle
-            title="Cau hinh form"
+            title="Cấu hình form"
             action={(
               <button
                 type="button"
@@ -1525,7 +1610,7 @@ function StationForm({ initial, onSave, onCancel }) {
                 className="inline-flex items-center gap-1 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
               >
                 <Icon name="plus" className="h-3.5 w-3.5" />
-                Them truong
+                Thêm trường
               </button>
             )}
           />
@@ -1533,12 +1618,12 @@ function StationForm({ initial, onSave, onCancel }) {
             {form.submission.form.fields.map((field, index) => (
               <div key={field.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-ink">Truong {index + 1}</p>
+                  <p className="text-sm font-semibold text-ink">Trường {index + 1}</p>
                   <button
                     type="button"
                     onClick={() => removeField(field.id)}
                     className="rounded-lg p-1.5 text-ink/35 transition hover:bg-white hover:text-clay"
-                    title="Xoa truong"
+                    title="Xoá trường"
                   >
                     <Icon name="trash" className="h-4 w-4" />
                   </button>
@@ -1547,13 +1632,13 @@ function StationForm({ initial, onSave, onCancel }) {
                   <input
                     value={field.label}
                     onChange={event => updateField(field.id, 'label', event.target.value)}
-                    placeholder="Noi dung truong, vd: Mat ma tim duoc"
+                    placeholder="Nội dung trường, vd: Mật mã tìm được"
                     className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                   />
                   <input
                     value={field.placeholder}
                     onChange={event => updateField(field.id, 'placeholder', event.target.value)}
-                    placeholder="Goi y cach nhap du lieu"
+                    placeholder="Gợi ý cách nhập dữ liệu"
                     className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                   />
                   <label className="inline-flex items-center gap-2 text-sm text-ink/60">
@@ -1563,7 +1648,7 @@ function StationForm({ initial, onSave, onCancel }) {
                       onChange={event => updateField(field.id, 'required', event.target.checked)}
                       className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
                     />
-                    Bat buoc
+                    Bắt buộc
                   </label>
                 </div>
               </div>
@@ -1575,7 +1660,7 @@ function StationForm({ initial, onSave, onCancel }) {
       {form.submission.quiz.enabled && (
         <div className={`${CARD} p-4`}>
           <SectionTitle
-            title="Cau hinh trac nghiem"
+            title="Cấu hình trắc nghiệm"
             action={(
               <button
                 type="button"
@@ -1583,7 +1668,7 @@ function StationForm({ initial, onSave, onCancel }) {
                 className="inline-flex items-center gap-1 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
               >
                 <Icon name="plus" className="h-3.5 w-3.5" />
-                Them cau hoi
+                Thêm câu hỏi
               </button>
             )}
           />
@@ -1591,12 +1676,12 @@ function StationForm({ initial, onSave, onCancel }) {
             {form.submission.quiz.items.map((item, index) => (
               <div key={item.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-ink">Cau hoi {index + 1}</p>
+                  <p className="text-sm font-semibold text-ink">Câu hỏi {index + 1}</p>
                   <button
                     type="button"
                     onClick={() => removeQuizItem(item.id)}
                     className="rounded-lg p-1.5 text-ink/35 transition hover:bg-white hover:text-clay"
-                    title="Xoa cau hoi"
+                    title="Xoá câu hỏi"
                   >
                     <Icon name="trash" className="h-4 w-4" />
                   </button>
@@ -1606,7 +1691,7 @@ function StationForm({ initial, onSave, onCancel }) {
                   rows={2}
                   value={item.question}
                   onChange={event => updateQuizItem(item.id, 'question', event.target.value)}
-                  placeholder="Nhap noi dung cau hoi"
+                  placeholder="Nhập nội dung câu hỏi"
                   className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                 />
 
@@ -1621,14 +1706,14 @@ function StationForm({ initial, onSave, onCancel }) {
                             ? 'border-gold/40 bg-gold/10 text-gold'
                             : 'border-stone bg-white text-ink/40 hover:bg-paper'
                         }`}
-                        title="Danh dau dap an dung"
+                        title="Đánh dấu đáp án đúng"
                       >
                         {String.fromCharCode(65 + optionIndex)}
                       </button>
                       <input
                         value={option}
                         onChange={event => updateQuizOption(item.id, optionIndex, event.target.value)}
-                        placeholder={`Lua chon ${String.fromCharCode(65 + optionIndex)}`}
+                        placeholder={`Lựa chọn ${String.fromCharCode(65 + optionIndex)}`}
                         className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                       />
                     </div>
@@ -1642,11 +1727,11 @@ function StationForm({ initial, onSave, onCancel }) {
 
       {form.submission.attachment.enabled && (
         <div className={`${CARD} p-4`}>
-          <SectionTitle title="Cau hinh file dinh kem" />
+          <SectionTitle title="Cấu hình file đính kèm" />
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                So file toi da
+                Số file tối đa
               </label>
               <input
                 type="number"
@@ -1658,7 +1743,7 @@ function StationForm({ initial, onSave, onCancel }) {
             </div>
             <div>
               <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                Dinh dang cho phep
+                Định dạng cho phép
               </label>
               <input
                 value={form.submission.attachment.allowedTypes}
@@ -1669,13 +1754,13 @@ function StationForm({ initial, onSave, onCancel }) {
             </div>
             <div className="sm:col-span-2">
               <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                Ghi chu cho file dinh kem
+                Ghi chú cho file đính kèm
               </label>
               <textarea
                 rows={3}
                 value={form.submission.attachment.note}
                 onChange={event => updateAttachment('note', event.target.value)}
-                placeholder="Huong dan doi can chup gi, dat ten file ra sao, can bao nhieu anh..."
+                placeholder="Hướng dẫn đội cần chụp gì, đặt tên file ra sao, cần bao nhiêu ảnh..."
                 className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
               />
             </div>
@@ -1689,7 +1774,7 @@ function StationForm({ initial, onSave, onCancel }) {
           onClick={onCancel}
           className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
         >
-          Huy
+          Hủy
         </button>
         <button
           type="button"
@@ -1697,7 +1782,7 @@ function StationForm({ initial, onSave, onCancel }) {
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
         >
           <Icon name="checkPlain" className="h-4 w-4" />
-          Luu tram
+          Lưu trạm
         </button>
       </div>
     </div>
@@ -1778,7 +1863,7 @@ function StationDrawer({
                 </div>
                 <div className={`${CARD} px-3 py-2.5`}>
                   <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
-                  <p className="mt-1 text-[11px] text-ink/40">Tong diem tram</p>
+                  <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
                 </div>
               </div>
 
@@ -1797,7 +1882,7 @@ function StationDrawer({
                       <span className="font-mono text-xs text-gold">{team.arrivedAt}</span>
                     </div>
                   )) : (
-                    <p className="px-4 py-4 text-sm italic text-ink/30">Chua co doi nao o day.</p>
+                    <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
                   )}
                 </div>
               </div>
@@ -1812,12 +1897,12 @@ function StationDrawer({
                         <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} diem</p>
+                        <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
                         <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
                       </div>
                     </div>
                   )) : (
-                    <p className="px-4 py-4 text-sm italic text-ink/30">Chua co doi nao hoan thanh.</p>
+                    <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
                   )}
                 </div>
               </div>
@@ -1830,7 +1915,7 @@ function StationDrawer({
             {confirmDelete ? (
               <div className="space-y-3 px-4 py-4">
                 <p className="text-sm text-ink">
-                  Xoa tram <span className="font-semibold">{station.name}</span>?
+                  Xoá trạm <span className="font-semibold">{station.name}</span>?
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -1838,7 +1923,7 @@ function StationDrawer({
                     onClick={() => setConfirmDelete(false)}
                     className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
                   >
-                    Huy
+                    Hủy
                   </button>
                   <button
                     type="button"
@@ -1849,7 +1934,7 @@ function StationDrawer({
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-clay py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]"
                   >
                     <Icon name="trash" className="h-4 w-4" />
-                    Xac nhan xoa
+                    Xác nhận xoá
                   </button>
                 </div>
               </div>
@@ -1859,7 +1944,7 @@ function StationDrawer({
                   type="button"
                   onClick={() => setConfirmDelete(true)}
                   className="rounded-lg border border-stone p-2.5 text-ink/35 transition hover:border-clay/30 hover:text-clay"
-                  title="Xoa tram"
+                  title="Xoá trạm"
                 >
                   <Icon name="trash" className="h-4 w-4" />
                 </button>
@@ -1872,14 +1957,14 @@ function StationDrawer({
                       : 'border-trail/30 bg-trail/[0.06] text-trail hover:bg-trail/10'
                   }`}
                 >
-                  {station.active ? 'Tam ngung tram' : 'Kich hoat tram'}
+                  {station.active ? 'Tạm ngưng trạm' : 'Kích hoạt trạm'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditing(true)}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
                 >
-                  Chinh sua
+                  Chỉnh sửa
                 </button>
               </div>
             )}
@@ -1909,6 +1994,9 @@ function StationsPage({
   const [selectedEventId, setSelectedEventId] = useState('')
   const [selectedId, setSelectedId] = useState(null)
   const [adding, setAdding] = useState(false)
+  const [listLoading, setListLoading] = useState(false)
+  const [busyKey, setBusyKey] = useState('')
+  const [apiError, setApiError] = useState('')
 
   useEffect(() => {
     setStationsByPhaseEvent((current) => {
@@ -1940,6 +2028,16 @@ function StationsPage({
     window.localStorage.setItem(STATIONS_STORAGE_KEY, JSON.stringify(stationsByPhaseEvent))
   }, [stationsByPhaseEvent])
 
+  const syncStationsForEvent = useCallback((phaseKey, eventId, nextStations) => {
+    setStationsByPhaseEvent(current => ({
+      ...current,
+      [phaseKey]: {
+        ...(current[phaseKey] ?? {}),
+        [eventId]: nextStations,
+      },
+    }))
+  }, [])
+
   useEffect(() => {
     if (phaseStationEvents.length === 0) {
       setSelectedEventId('')
@@ -1955,6 +2053,29 @@ function StationsPage({
     setSelectedId(null)
     setAdding(false)
   }, [phase, selectedEventId])
+
+  const reloadSelectedEvent = useCallback(async () => {
+    if (!selectedEventId) return
+    try {
+      setListLoading(true)
+      setApiError('')
+      const nextStations = await fetchStationsForEvent(phase, selectedEventId)
+      syncStationsForEvent(phase, selectedEventId, nextStations)
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setListLoading(false)
+    }
+  }, [phase, selectedEventId, syncStationsForEvent])
+
+  useEffect(() => {
+    if (!selectedEventId) return
+    void reloadSelectedEvent()
+  }, [reloadSelectedEvent, selectedEventId])
 
   const phaseBucket = useMemo(
     () => stationsByPhaseEvent[phase] ?? {},
@@ -1983,70 +2104,113 @@ function StationsPage({
   const attachmentRequired = stations.filter(station => station.submission.attachment.enabled)
   const totalScore = stations.reduce((total, station) => total + sumStationScore(station), 0)
 
-  const updatePhaseEventStations = (updater) => {
+  const toggleActive = async (id) => {
+    const station = stations.find(item => item.id === id)
+    if (!station) return
+
+    try {
+      setBusyKey(`toggle:${id}`)
+      setApiError('')
+      await apiRequest(`/stations/${id}`, {
+        method: 'PATCH',
+        body: { active: !station.active },
+      })
+      await reloadSelectedEvent()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyKey('')
+    }
+  }
+
+  const saveStation = async (id, form) => {
+    const station = stations.find(item => item.id === id)
+    if (!station) return
+
+    try {
+      setBusyKey(`save:${id}`)
+      setApiError('')
+      await apiRequest(`/stations/${id}`, {
+        method: 'PATCH',
+        body: buildStationPayload(form, station.order, form.active),
+      })
+      await reloadSelectedEvent()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyKey('')
+    }
+  }
+
+  const deleteStation = async (id) => {
+    try {
+      setBusyKey(`delete:${id}`)
+      setApiError('')
+      await apiRequest(`/stations/${id}`, { method: 'DELETE' })
+      setSelectedId(null)
+      await reloadSelectedEvent()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyKey('')
+    }
+  }
+
+  const addStation = async (form) => {
     if (!selectedEventId) return
-    setStationsByPhaseEvent(current => ({
-      ...current,
-      [phase]: {
-        ...(current[phase] ?? {}),
-        [selectedEventId]: updater(current[phase]?.[selectedEventId] ?? []),
-      },
-    }))
-  }
-
-  const toggleActive = (id) => {
-    updatePhaseEventStations(current =>
-      current.map(station => (
-        station.id === id
-          ? { ...station, active: !station.active }
-          : station
-      )),
-    )
-  }
-
-  const saveStation = (id, form) => {
-    updatePhaseEventStations(current =>
-      current.map(station => (
-        station.id === id
-          ? { ...createStation(form), id: station.id, order: station.order }
-          : station
-      )),
-    )
-  }
-
-  const deleteStation = (id) => {
-    updatePhaseEventStations(current => reindexStations(current.filter(station => station.id !== id)))
-    setSelectedId(null)
-  }
-
-  const addStation = (form) => {
-    updatePhaseEventStations(current => {
-      const nextStations = reindexStations(current)
-      return [
-        ...nextStations,
-        {
-          ...createStation(form),
-          id: makeStationId(phase, nextStations),
-          order: nextStations.length + 1,
-          teamsHere: [],
-          teamsDone: [],
+    try {
+      setBusyKey('create')
+      setApiError('')
+      const code = makeStationId(phase, stations)
+      await apiRequest(`/sub-events/${selectedEventId}/stations`, {
+        method: 'POST',
+        body: {
+          code,
+          ...buildStationPayload(form, stations.length + 1, true),
         },
-      ]
-    })
-    setAdding(false)
+      })
+      setAdding(false)
+      await reloadSelectedEvent()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyKey('')
+    }
   }
 
   return (
     <div className="space-y-4">
+      {apiError && (
+        <div className="rounded-xl border border-clay/20 bg-clay/[0.05] px-4 py-3 text-sm text-clay">
+          {apiError}
+        </div>
+      )}
+
       <div className={`${CARD} overflow-hidden`}>
         <div className="border-b border-stone px-5 py-4">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="max-w-3xl">
               <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">
-                Tram nam ben trong event con
+                Trạm nằm bên trong event con
               </p>
               <h2 className="mt-2 font-display text-xl font-semibold text-ink">
-                Quan ly bo tram theo phase va event
+                Quản lý bộ trạm theo phase và event
               </h2>
               <p className="mt-2 text-sm leading-6 text-ink/60">
                 {phaseMeta.description}
@@ -2056,7 +2220,7 @@ function StationsPage({
             <div className="flex flex-wrap items-center gap-2">
               <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
               <span className="rounded-full bg-paper px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink/45">
-                Frontend state
+                API-backed
               </span>
             </div>
           </div>
@@ -2077,48 +2241,60 @@ function StationsPage({
                 onChange={setSelectedEventId}
               />
               <p className="text-xs leading-5 text-ink/45">
-                Chi cac event con bat "Co tram" moi xuat hien o day. Moi tram co the cau hinh bai nop dang form,
-                trac nghiem, file dinh kem, hoac ket hop nhieu loai cung luc.
+                Chỉ các event con bật "Có trạm" mới xuất hiện ở đây. Mỗi trạm có thể cấu hình bài nộp dạng form,
+                trắc nghiệm, file đính kèm, hoặc kết hợp nhiều loại cùng lúc.
               </p>
             </>
           ) : (
             <div className="rounded-xl border border-dashed border-stone bg-paper px-4 py-4 text-sm leading-6 text-ink/45">
-              Phase nay chua co event nao bat "Co tram". Hay vao tab Quan ly su kien, tao event con va bat tuy chon do truoc khi them tram.
+              Phase này chưa có event nào bật "Có trạm". Hãy vào tab Quản lý sự kiện, tạo event con và bật tuỳ chọn đó trước khi thêm trạm.
             </div>
           )}
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <SummaryCard value={String(phaseStationEvents.length)} label="Event co tram" />
-        <SummaryCard value={String(stations.length)} label="Tram cua event" />
+        <SummaryCard value={String(phaseStationEvents.length)} label="Event có trạm" />
+        <SummaryCard value={String(stations.length)} label="Trạm của event" />
         <SummaryCard value={String(active.length)} label="Đang hoạt động" accent="trail" />
-        <SummaryCard value={String(configured.length)} label="Co bai nop" accent="sky" />
-        <SummaryCard value={String(totalScore)} label="Tong diem tram" accent="gold" />
-        <SummaryCard value={String(totalDone)} label="Luot hoan thanh" accent="trail" />
+        <SummaryCard value={String(configured.length)} label="Có bài nộp" accent="sky" />
+        <SummaryCard value={String(totalScore)} label="Tổng điểm trạm" accent="gold" />
+        <SummaryCard value={String(totalDone)} label="Lượt hoàn thành" accent="trail" />
       </div>
 
       <div className={`${CARD} px-4 py-3`}>
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <p className="font-mono text-xs text-ink/40">
-            {selectedEvent ? `${selectedEvent.name} · ` : ''}{active.length} tram hoat dong · {inactive.length} chua mo · {attachmentRequired.length} tram yeu cau tep · {totalHere} doi dang o tram
+            {selectedEvent ? `${selectedEvent.name} · ` : ''}{active.length} trạm hoạt động · {inactive.length} chưa mở · {attachmentRequired.length} trạm yêu cầu tệp · {totalHere} đội đang ở trạm
           </p>
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            disabled={!selectedEvent}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Icon name="plus" className="h-4 w-4" />
-            Them tram
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {listLoading && <span className="text-xs text-ink/40">Đang tải trạm...</span>}
+            <button
+              type="button"
+              onClick={() => void reloadSelectedEvent()}
+              disabled={!selectedEventId || listLoading || Boolean(busyKey)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone bg-white px-4 py-2.5 text-sm font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="check" className="h-4 w-4" />
+              Tải lại
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              disabled={!selectedEvent || Boolean(busyKey)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="plus" className="h-4 w-4" />
+              Thêm trạm
+            </button>
+          </div>
         </div>
       </div>
 
       {adding && selectedEvent && (
         <div className={`${CARD} overflow-hidden`}>
           <div className="flex items-center justify-between gap-3 border-b border-stone px-5 py-3">
-            <p className="font-display font-semibold text-ink">Them tram moi</p>
+            <p className="font-display font-semibold text-ink">Thêm trạm mới</p>
             <div className="flex flex-wrap items-center gap-2">
               <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
               <Badge
@@ -2142,18 +2318,26 @@ function StationsPage({
             <thead>
               <tr className="border-b border-stone font-mono text-[10px] uppercase tracking-wider text-ink/35">
                 <th className="w-12 px-4 py-3 font-medium">STT</th>
-                <th className="px-4 py-3 font-medium">Ten tram</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Dia diem</th>
-                <th className="px-4 py-3 font-medium">Bai nop</th>
-                <th className="px-4 py-3 text-center font-medium">Dang o</th>
+                <th className="px-4 py-3 font-medium">Tên trạm</th>
+                <th className="hidden px-4 py-3 font-medium md:table-cell">Địa điểm</th>
+                <th className="px-4 py-3 font-medium">Bài nộp</th>
+                <th className="px-4 py-3 text-center font-medium">Đang ở</th>
                 <th className="px-4 py-3 text-center font-medium">Xong</th>
-                <th className="px-4 py-3 text-right font-medium">Diem</th>
-                <th className="px-4 py-3 font-medium">Trang thai</th>
+                <th className="px-4 py-3 text-right font-medium">Điểm</th>
+                <th className="px-4 py-3 font-medium">Trạng thái</th>
                 <th className="w-8 px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-stone/60">
-              {stations.map(station => {
+              {listLoading && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-14 text-center text-sm text-ink/35">
+                    Đang đồng bộ danh sách trạm...
+                  </td>
+                </tr>
+              )}
+
+              {!listLoading && stations.map(station => {
                 const status = STATUS[station.active ? 'active' : 'inactive']
                 const stationScore = sumStationScore(station)
                 return (
@@ -2207,10 +2391,10 @@ function StationsPage({
                 )
               })}
 
-              {stations.length === 0 && (
+              {!listLoading && stations.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-16 text-center text-sm text-ink/35">
-                    Chua co tram nao cho event {selectedEvent.name.toLowerCase()}. Bam "Them tram" de bat dau.
+                    Chưa có trạm nào cho event {selectedEvent.name.toLowerCase()}. Bấm "Thêm trạm" để bắt đầu.
                   </td>
                 </tr>
               )}

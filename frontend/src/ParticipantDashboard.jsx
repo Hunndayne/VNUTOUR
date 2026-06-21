@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import logoImage from './assets/vnutour-logo.png'
-import { Icon, Badge } from './ui.jsx'
+import { Badge, Icon } from './ui.jsx'
+import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 
 const MAX_MEMBERS = 5
 const COLORS = {
@@ -12,8 +13,8 @@ const COLORS = {
   clay: '#D6492B',
 }
 const PARTICIPANT_CARD = 'rounded-xl border border-[#DCD8CC] bg-white shadow-[0_1px_3px_rgba(32,49,43,0.05)]'
-const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg bg-[#20312B] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#20312B]/85 active:scale-[0.98]'
-const SECONDARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-4 py-2.5 text-sm font-semibold text-[#20312B]/65 transition hover:bg-[#F3F4F1] hover:text-[#20312B]'
+const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg bg-[#20312B] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#20312B]/85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
+const SECONDARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-4 py-2.5 text-sm font-semibold text-[#20312B]/65 transition hover:bg-[#F3F4F1] hover:text-[#20312B] disabled:cursor-not-allowed disabled:opacity-45'
 const TRAIL_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg bg-[#1F7A6B] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
 
 const STATUS = {
@@ -47,6 +48,7 @@ const PROVISION = {
   done: { label: 'Đã tạo Discord', cls: 'bg-[#1F7A6B]/12 text-[#1F7A6B]' },
   pending: { label: 'Đang tạo Discord', cls: 'bg-[#E0A23A]/15 text-[#9A6B12]' },
   none: { label: 'Chưa tạo Discord', cls: 'bg-[#20312B]/[0.06] text-[#20312B]/40' },
+  failed: { label: 'Discord lỗi', cls: 'bg-[#D6492B]/12 text-[#D6492B]' },
 }
 
 const STEPS = [
@@ -57,67 +59,75 @@ const STEPS = [
   { key: 'approved', label: 'Được duyệt' },
 ]
 
-const initialProfile = {
-  full_name: 'Phạm Nguyễn Thanh Mai',
-  mssv: '25521072',
-  email: 'mai.pnt@example.edu.vn',
-  phone: '0901234567',
-  faculty: 'Công nghệ phần mềm',
-  school: 'Trường Đại học Công nghệ Thông tin',
-  facebook: 'facebook.com/maipnt',
+const EMPTY_PROFILE = {
+  full_name: '',
+  mssv: '',
+  email: '',
+  phone: '',
+  faculty: '',
+  school: '',
+  facebook: '',
 }
 
-const initialTeam = {
-  team_id: 'T0007',
-  team_name: 'Những chiến binh',
-  approval_status: 'draft',
-  provision_state: 'none',
-  approval_note: '',
+function normalizeProfile(authMe, profilePayload) {
+  const profile = profilePayload?.profile || null
+  return {
+    full_name: profile?.full_name || authMe?.full_name || '',
+    mssv: profile?.mssv || authMe?.mssv || '',
+    email: profile?.email || authMe?.email || '',
+    phone: profile?.phone || '',
+    faculty: profile?.faculty || '',
+    school: profile?.school || '',
+    facebook: profile?.facebook || '',
+  }
 }
 
-const initialMembers = [
-  {
-    mssv: '25521072',
-    full_name: 'Phạm Nguyễn Thanh Mai',
-    email: 'mai.pnt@example.edu.vn',
-    phone: '0901234567',
-    faculty: 'CNPM',
-    school: 'UIT',
-    has_account: true,
-    is_captain: true,
-  },
-  {
-    mssv: '25521089',
-    full_name: 'Lê Quốc Bảo',
-    email: 'bao.lq@example.edu.vn',
-    phone: '0907654321',
-    faculty: 'KHMT',
-    school: 'UIT',
-    has_account: true,
-    is_captain: false,
-  },
-  {
-    mssv: '25521144',
-    full_name: 'Trần Thị Ngọc',
+function normalizeTeam(teamPayload, teamDetail = null) {
+  if (!teamPayload?.team) return null
+  return {
+    team_id: teamPayload.team.code,
+    team_name: teamDetail?.name || teamPayload.team.name || '',
+    approval_status: teamDetail?.approval_status || teamPayload.team.approval_status || 'draft',
+    provision_state: teamDetail?.provision_state || 'none',
+    approval_note: teamDetail?.approval_note || teamPayload.team.approval_note || '',
+    submitted_at: teamDetail?.submitted_at || teamPayload.team.submitted_at || null,
+    qr_token: teamPayload.team.qr_token || null,
+  }
+}
+
+function blankMember() {
+  return {
+    mssv: '',
+    full_name: '',
     email: '',
     phone: '',
-    faculty: 'HTTT',
-    school: 'UIT',
+    faculty: '',
+    school: '',
     has_account: false,
     is_captain: false,
-  },
-]
-
-function getUser() {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null') || {
-      username: 'participant',
-      email: 'participant@vnutour.vn',
-      role: 'participant',
-    }
-  } catch {
-    return { username: 'participant', email: 'participant@vnutour.vn', role: 'participant' }
   }
+}
+
+function explainApiError(error) {
+  const code = error?.data?.error || error?.message
+  const map = {
+    missing_mssv: 'Bạn cần cập nhật MSSV trước khi tiếp tục.',
+    mssv_taken: 'MSSV này đã được dùng bởi tài khoản khác.',
+    profile_incomplete: 'Hồ sơ hiện chưa đủ để tạo đội.',
+    team_locked: 'Đội đã khóa chỉnh sửa.',
+    team_full: 'Đội đã đủ số lượng thành viên.',
+    mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
+    not_team_owner: 'Bạn không phải đội trưởng của đội này.',
+    no_team: 'Bạn chưa có đội.',
+    already_has_team: 'Tài khoản này đã có đội.',
+    already_approved: 'Đội này đã được duyệt rồi.',
+    no_members: 'Đội cần có ít nhất một thành viên trước khi gửi duyệt.',
+    team_not_approved: 'Đội cần được duyệt trước khi lấy QR.',
+    invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
+    registration_closed: 'Đợt đăng ký hiện đang đóng.',
+    not_found: 'Không tìm thấy dữ liệu cần thiết.',
+  }
+  return map[code] || 'Có lỗi xảy ra khi đồng bộ dữ liệu.'
 }
 
 function Contours() {
@@ -179,7 +189,7 @@ function getNextAction(profile, team, members) {
   if (!profile.mssv) {
     return {
       title: 'Bổ sung MSSV để ghép hồ sơ',
-      body: 'MSSV giúp hệ thống nhận diện thành viên và tự điền thông tin khi đội trưởng thêm bạn vào đội.',
+      body: 'MSSV giúp hệ thống nhận diện thành viên và đồng bộ dữ liệu đúng với đội của bạn.',
       action: 'Lưu hồ sơ',
       kind: 'profile',
     }
@@ -236,7 +246,7 @@ function ProgressTrail({ profile, team, members }) {
   return (
     <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
       <div className="grid grid-cols-5 divide-x divide-[#DCD8CC]">
-        {STEPS.map((step) => {
+        {STEPS.map((step, index) => {
           const state = getStepState(step, profile, team, members)
           const active = state === 'active'
           const done = state === 'done'
@@ -251,7 +261,7 @@ function ProgressTrail({ profile, team, members }) {
                 className="mx-auto flex h-8 w-8 items-center justify-center rounded-full border font-mono text-xs font-semibold"
                 style={circleStyle}
               >
-                {done ? <Icon name="checkPlain" className="h-4 w-4" /> : STEPS.indexOf(step) + 1}
+                {done ? <Icon name="checkPlain" className="h-4 w-4" /> : index + 1}
               </span>
               <p className={`mt-2 text-xs font-medium ${done || active ? 'text-ink' : 'text-ink/35'}`}>
                 {step.label}
@@ -264,7 +274,7 @@ function ProgressTrail({ profile, team, members }) {
   )
 }
 
-function MemberDrawer({ form, onChange, onClose, onSave, editing }) {
+function MemberDrawer({ form, editing, saving, onChange, onClose, onSave }) {
   if (!form) return null
 
   return (
@@ -284,7 +294,13 @@ function MemberDrawer({ form, onChange, onClose, onSave, editing }) {
         </div>
 
         <form className="flex-1 space-y-4 overflow-y-auto px-5 py-5" onSubmit={onSave}>
-          <Field label="MSSV" value={form.mssv} onChange={(v) => onChange({ ...form, mssv: v })} placeholder="Nhập MSSV" />
+          <Field
+            label="MSSV"
+            value={form.mssv}
+            onChange={(v) => onChange({ ...form, mssv: v })}
+            placeholder="Nhập MSSV"
+            disabled={editing}
+          />
           <Field label="Họ và tên" value={form.full_name} onChange={(v) => onChange({ ...form, full_name: v })} placeholder="Nhập họ tên" />
           <Field label="Email" value={form.email} onChange={(v) => onChange({ ...form, email: v })} placeholder="name@example.edu.vn" />
           <Field label="Số điện thoại" value={form.phone} onChange={(v) => onChange({ ...form, phone: v })} placeholder="09..." />
@@ -296,7 +312,8 @@ function MemberDrawer({ form, onChange, onClose, onSave, editing }) {
             <input
               type="checkbox"
               checked={form.has_account}
-              onChange={(e) => onChange({ ...form, has_account: e.target.checked })}
+              disabled
+              readOnly
               className="h-4 w-4 rounded border-[#DCD8CC] text-[#1F7A6B] focus:ring-[#1F7A6B]/20"
             />
             Thành viên đã có tài khoản web
@@ -307,10 +324,11 @@ function MemberDrawer({ form, onChange, onClose, onSave, editing }) {
           <button
             type="button"
             onClick={onSave}
+            disabled={saving}
             className={`w-full ${PRIMARY_BUTTON}`}
           >
             <Icon name="checkPlain" className="h-4 w-4" />
-            Lưu thành viên
+            {saving ? 'Đang lưu...' : 'Lưu thành viên'}
           </button>
         </div>
       </aside>
@@ -318,7 +336,7 @@ function MemberDrawer({ form, onChange, onClose, onSave, editing }) {
   )
 }
 
-function EmptyTeamCard({ onCreate }) {
+function EmptyTeamCard({ busy, onCreate }) {
   return (
     <div className={`${PARTICIPANT_CARD} border-dashed px-5 py-10 text-center`}>
       <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#E0A23A]/15 text-[#9A6B12]">
@@ -331,34 +349,97 @@ function EmptyTeamCard({ onCreate }) {
       <button
         type="button"
         onClick={onCreate}
+        disabled={busy}
         className={`mt-5 ${PRIMARY_BUTTON}`}
       >
         <Icon name="plus" className="h-4 w-4" />
-        Tạo đội
+        {busy ? 'Đang tạo...' : 'Tạo đội'}
       </button>
     </div>
   )
 }
 
+function LoadingState() {
+  return (
+    <div className="mx-auto max-w-7xl p-4 sm:p-6">
+      <div className={`${PARTICIPANT_CARD} px-5 py-16 text-center text-sm text-ink/45`}>
+        Đang tải dữ liệu thí sinh...
+      </div>
+    </div>
+  )
+}
+
 function ParticipantDashboard() {
-  const user = getUser()
-  const [profile, setProfile] = useState(initialProfile)
+  const [user, setUser] = useState(() => getStoredUser() || {
+    username: 'participant',
+    email: 'participant@vnutour.vn',
+    role: 'participant',
+  })
+  const [profile, setProfile] = useState(EMPTY_PROFILE)
   const [profileSaved, setProfileSaved] = useState(false)
-  const [team, setTeam] = useState(initialTeam)
-  const [members, setMembers] = useState(initialMembers)
+  const [team, setTeam] = useState(null)
+  const [members, setMembers] = useState([])
+  const [teamNameDraft, setTeamNameDraft] = useState('')
   const [drawer, setDrawer] = useState(null)
   const [memberForm, setMemberForm] = useState(null)
+  const [editable, setEditable] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [busyAction, setBusyAction] = useState('')
+  const [apiError, setApiError] = useState('')
+
+  const loadDashboard = async () => {
+    const me = await apiRequest('/auth/me')
+    const profilePayload = await apiRequest('/me/profile')
+    const teamPayload = await apiRequest('/my-team')
+    let teamDetail = null
+
+    if (teamPayload?.team?.code) {
+      teamDetail = await apiRequest(`/teams/${teamPayload.team.code}`)
+    }
+
+    setUser((current) => ({ ...current, ...me }))
+    setProfile(normalizeProfile(me, profilePayload))
+    const normalizedTeam = normalizeTeam(teamPayload, teamDetail)
+    setTeam(normalizedTeam)
+    setTeamNameDraft(normalizedTeam?.team_name || '')
+    setMembers(Array.isArray(teamDetail?.members) ? teamDetail.members : Array.isArray(teamPayload?.members) ? teamPayload.members : [])
+    setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    const bootstrap = async () => {
+      try {
+        setLoading(true)
+        await loadDashboard()
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        setApiError(explainApiError(error))
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    bootstrap()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const status = STATUS[team?.approval_status || 'draft']
   const provision = PROVISION[team?.provision_state || 'none']
-  const editable = !team || ['draft', 'pending_approval', 'rejected'].includes(team.approval_status)
   const nextAction = useMemo(() => getNextAction(profile, team, members), [profile, team, members])
-  const accountCount = members.filter((m) => m.has_account).length
+  const accountCount = members.filter((member) => member.has_account).length
 
   const openMemberDrawer = (index = null) => {
-    const base = index === null
-      ? { mssv: '', full_name: '', email: '', phone: '', faculty: '', school: '', has_account: false, is_captain: false }
-      : members[index]
+    const base = index === null ? blankMember() : members[index]
     setDrawer({ index })
     setMemberForm({ ...base })
   }
@@ -368,60 +449,102 @@ function ParticipantDashboard() {
     setMemberForm(null)
   }
 
-  const saveMember = (event) => {
+  const saveTeamNameIfNeeded = async () => {
+    if (!team || !editable) return
+    const nextName = teamNameDraft.trim()
+    if (!nextName || nextName === team.team_name) return
+
+    const payload = await apiRequest('/my-team', {
+      method: 'PATCH',
+      body: { team_name: nextName },
+    })
+    setTeam((current) => (
+      current
+        ? { ...current, team_name: payload.name || nextName }
+        : current
+    ))
+    setTeamNameDraft(payload.name || nextName)
+  }
+
+  const withBusy = async (actionKey, task) => {
+    setBusyAction(actionKey)
+    setApiError('')
+    try {
+      await task()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  const createTeam = () => withBusy('create-team', async () => {
+    const baseName = profile.full_name?.trim() ? `Đội của ${profile.full_name.trim()}` : 'Đội mới'
+    await apiRequest('/my-team', {
+      method: 'POST',
+      body: { team_name: baseName },
+    })
+    await loadDashboard()
+  })
+
+  const saveProfile = async (event) => {
+    event.preventDefault()
+    await withBusy('save-profile', async () => {
+      const nextProfile = await apiRequest('/me/profile', {
+        method: 'PATCH',
+        body: profile,
+      })
+      setProfile((current) => ({ ...current, ...nextProfile }))
+      setProfileSaved(true)
+      window.setTimeout(() => setProfileSaved(false), 1400)
+    })
+  }
+
+  const saveMember = async (event) => {
     event?.preventDefault?.()
     if (!memberForm?.mssv || !memberForm?.full_name) return
-    if (drawer.index === null) {
-      if (members.length >= MAX_MEMBERS) return
-      setMembers((prev) => [...prev, memberForm])
-    } else {
-      setMembers((prev) => prev.map((m, i) => (i === drawer.index ? memberForm : m)))
-    }
-    closeMemberDrawer()
-  }
 
-  const removeMember = (index) => {
-    const member = members[index]
-    if (member?.is_captain) return
-    setMembers((prev) => prev.filter((_, i) => i !== index))
-  }
-
-  const createTeam = () => {
-    setTeam({
-      team_id: 'T0911',
-      team_name: 'Đội chưa đặt tên',
-      approval_status: 'draft',
-      provision_state: 'none',
-      approval_note: '',
+    await withBusy('save-member', async () => {
+      if (drawer?.index === null) {
+        await apiRequest('/my-team/members', {
+          method: 'POST',
+          body: memberForm,
+        })
+      } else {
+        await apiRequest(`/my-team/members/${members[drawer.index].mssv}`, {
+          method: 'PATCH',
+          body: memberForm,
+        })
+      }
+      await loadDashboard()
+      closeMemberDrawer()
     })
-    setMembers([
-      {
-        mssv: profile.mssv,
-        full_name: profile.full_name,
-        email: profile.email,
-        phone: profile.phone,
-        faculty: profile.faculty,
-        school: profile.school,
-        has_account: true,
-        is_captain: true,
-      },
-    ])
   }
 
-  const saveProfile = (event) => {
-    event.preventDefault()
-    setProfileSaved(true)
-    window.setTimeout(() => setProfileSaved(false), 1400)
+  const removeMember = async (index) => {
+    const member = members[index]
+    if (!member || member.is_captain) return
+
+    await withBusy('remove-member', async () => {
+      await apiRequest(`/my-team/members/${member.mssv}`, {
+        method: 'DELETE',
+      })
+      await loadDashboard()
+    })
   }
 
-  const submitTeam = () => {
-    if (!team || members.length === 0) return
-    setTeam((prev) => ({
-      ...prev,
-      approval_status: 'pending_approval',
-      approval_note: '',
-    }))
-  }
+  const submitTeam = async () => withBusy('submit-team', async () => {
+    await saveTeamNameIfNeeded()
+    await apiRequest('/my-team/submit', {
+      method: 'POST',
+      body: {},
+    })
+    await loadDashboard()
+  })
 
   const handleNextAction = () => {
     if (nextAction.kind === 'create-team') createTeam()
@@ -431,9 +554,16 @@ function ParticipantDashboard() {
   }
 
   const logout = () => {
-    localStorage.removeItem('authToken')
-    localStorage.removeItem('user')
-    window.location.replace('/login')
+    logoutAndRedirect('/')
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen font-sans" style={{ backgroundColor: COLORS.paper, color: COLORS.ink }}>
+        <Contours />
+        <LoadingState />
+      </div>
+    )
   }
 
   return (
@@ -445,7 +575,7 @@ function ParticipantDashboard() {
         style={{ backgroundColor: 'rgba(243,244,241,0.95)', borderColor: COLORS.stone }}
       >
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <a href="/landing" className="flex items-center gap-3">
+          <a href="/" className="flex items-center gap-3">
             <img src={logoImage} alt="VNUTour" className="h-10 w-10 object-contain" />
             <div>
               <p className="font-display text-base font-bold text-ink">VNUTour</p>
@@ -469,6 +599,12 @@ function ParticipantDashboard() {
       </header>
 
       <main className="relative mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+        {apiError && (
+          <div className="rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+            {apiError}
+          </div>
+        )}
+
         <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
           <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
             <div className="px-5 py-6 sm:px-7">
@@ -491,6 +627,7 @@ function ParticipantDashboard() {
               <button
                 type="button"
                 onClick={handleNextAction}
+                disabled={Boolean(busyAction)}
                 className={`mt-5 w-full ${PRIMARY_BUTTON}`}
               >
                 {nextAction.action}
@@ -505,7 +642,7 @@ function ParticipantDashboard() {
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
             {!team ? (
-              <EmptyTeamCard onCreate={createTeam} />
+              <EmptyTeamCard busy={busyAction === 'create-team'} onCreate={createTeam} />
             ) : (
               <div className={`${PARTICIPANT_CARD} p-5`}>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -528,12 +665,26 @@ function ParticipantDashboard() {
                 <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_160px]">
                   <Field
                     label="Tên đội"
-                    value={team.team_name}
+                    value={teamNameDraft}
                     disabled={!editable}
-                    onChange={(value) => setTeam((prev) => ({ ...prev, team_name: value }))}
+                    onChange={setTeamNameDraft}
                   />
                   <Field label="Mã đội" value={team.team_id} disabled onChange={() => {}} />
                 </div>
+
+                {editable && teamNameDraft !== team.team_name && (
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => withBusy('save-team-name', saveTeamNameIfNeeded)}
+                      disabled={Boolean(busyAction)}
+                      className={SECONDARY_BUTTON}
+                    >
+                      <Icon name="checkPlain" className="h-4 w-4" />
+                      Lưu tên đội
+                    </button>
+                  </div>
+                )}
 
                 <div className="mt-5 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/70 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
@@ -552,17 +703,17 @@ function ParticipantDashboard() {
                   <button
                     type="button"
                     onClick={submitTeam}
-                    disabled={!editable || members.length === 0 || team.approval_status === 'pending_approval'}
+                    disabled={!editable || members.length === 0 || team.approval_status === 'pending_approval' || Boolean(busyAction)}
                     className={TRAIL_BUTTON}
                   >
                     <Icon name="checkPlain" className="h-4 w-4" />
-                    Gửi duyệt
+                    {busyAction === 'submit-team' ? 'Đang gửi...' : 'Gửi duyệt'}
                   </button>
                   <button
                     type="button"
                     onClick={() => openMemberDrawer()}
-                    disabled={!editable || members.length >= MAX_MEMBERS}
-                    className={`${SECONDARY_BUTTON} disabled:cursor-not-allowed disabled:opacity-45`}
+                    disabled={!editable || members.length >= MAX_MEMBERS || Boolean(busyAction)}
+                    className={SECONDARY_BUTTON}
                   >
                     <Icon name="plus" className="h-4 w-4" />
                     Thêm thành viên
@@ -601,7 +752,7 @@ function ParticipantDashboard() {
                       <button
                         type="button"
                         onClick={() => openMemberDrawer(index)}
-                        disabled={!editable}
+                        disabled={!editable || Boolean(busyAction)}
                         className="rounded-md px-3 py-1.5 text-xs font-semibold text-[#20312B]/55 transition hover:bg-[#F3F4F1] hover:text-[#20312B] disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Sửa
@@ -609,7 +760,7 @@ function ParticipantDashboard() {
                       <button
                         type="button"
                         onClick={() => removeMember(index)}
-                        disabled={!editable || member.is_captain}
+                        disabled={!editable || member.is_captain || Boolean(busyAction)}
                         className="rounded-md p-1.5 text-[#20312B]/25 transition hover:bg-[#D6492B]/10 hover:text-[#D6492B] disabled:cursor-not-allowed disabled:opacity-30"
                         aria-label="Xóa thành viên"
                       >
@@ -648,10 +799,11 @@ function ParticipantDashboard() {
               </div>
               <button
                 type="submit"
+                disabled={Boolean(busyAction)}
                 className={`mt-4 w-full ${PRIMARY_BUTTON}`}
               >
                 <Icon name="checkPlain" className="h-4 w-4" />
-                Lưu hồ sơ
+                {busyAction === 'save-profile' ? 'Đang lưu...' : 'Lưu hồ sơ'}
               </button>
             </form>
 
@@ -685,7 +837,10 @@ function ParticipantDashboard() {
               <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Thông báo</p>
               <h2 className="mt-1 font-display text-lg font-bold text-ink">Từ BTC</h2>
               <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/70 px-4 py-3 text-sm leading-6 text-[#20312B]/55">
-                Sau khi đội được duyệt, hệ thống sẽ tạo Discord role và kênh đội. Thành viên chưa có tài khoản cần đăng ký bằng email hoặc MSSV đã khai báo.
+                {team?.approval_status === 'approved'
+                  ? 'Đội đã được duyệt. BTC sẽ tiếp tục đồng bộ Discord và các thông tin vận hành liên quan đến ngày thi.'
+                  : 'Sau khi đội được duyệt, hệ thống sẽ tạo Discord role và kênh đội. Thành viên chưa có tài khoản cần đăng ký bằng email hoặc MSSV đã khai báo.'}
+                {team?.submitted_at ? ` Gửi duyệt lúc ${formatDateTime(team.submitted_at)}.` : ''}
               </div>
             </div>
           </aside>
@@ -694,10 +849,11 @@ function ParticipantDashboard() {
 
       <MemberDrawer
         form={memberForm}
+        editing={drawer?.index !== null}
+        saving={busyAction === 'save-member'}
         onChange={setMemberForm}
         onClose={closeMemberDrawer}
         onSave={saveMember}
-        editing={drawer?.index !== null}
       />
     </div>
   )

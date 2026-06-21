@@ -176,7 +176,12 @@ def settings_view(request: HttpRequest):
                     key=key, defaults={"value": value},
                 )
 
-        return JsonResponse({key: SystemSetting.objects.filter(key=key).first().value
-                            for key in default_settings})
+        response_settings = default_settings.copy()
+        for key in default_settings:
+            setting = SystemSetting.objects.filter(key=key).first()
+            if setting is not None:
+                response_settings[key] = setting.value
+
+        return JsonResponse(response_settings)
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)

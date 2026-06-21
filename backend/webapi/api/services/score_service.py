@@ -12,7 +12,7 @@ from django.db import transaction
 
 from api.models import (
     Account, Team, ProgramPhase, SubEvent, PhaseRoster,
-    ScoreEntry, AdvancementRule,
+    ScoreEntry, AdvancementRule, TeamMembership,
 )
 
 
@@ -54,13 +54,36 @@ def _team_scope_for_phase(phase: ProgramPhase) -> tuple[list[dict], list[int], b
     return items, [team.id for team in approved_teams], False
 
 
+def _build_team_meta_map(team_ids: list[int]) -> dict[int, dict]:
+    memberships = TeamMembership.objects.filter(
+        team_id__in=team_ids,
+    ).select_related("participant")
+    meta: dict[int, dict] = {}
+
+    for membership in memberships:
+        current = meta.setdefault(
+            membership.team_id,
+            {"member_count": 0, "captain_name": None},
+        )
+        current["member_count"] += 1
+        if membership.is_captain and not current["captain_name"]:
+            current["captain_name"] = membership.participant.full_name or membership.participant.mssv
+
+    return meta
+
+
 def get_phase_scoreboard(phase_key: str) -> dict:
     """Return roster, leaderboard, and event breakdown for a phase."""
     phase = ProgramPhase.objects.get(key=phase_key)
     roster_teams, team_ids, roster_is_strict = _team_scope_for_phase(phase)
+    team_meta = _build_team_meta_map(team_ids)
 
     # Get all sub-events for this phase
     sub_events = SubEvent.objects.filter(phase=phase).order_by("order")
+    next_phase = ProgramPhase.objects.filter(order__gt=phase.order).order_by("order").first()
+    advancement_rule = AdvancementRule.objects.select_related(
+        "to_phase", "published_by",
+    ).filter(from_phase=phase).first()
 
     scores = ScoreEntry.objects.filter(
         phase=phase,
@@ -74,6 +97,8 @@ def get_phase_scoreboard(phase_key: str) -> dict:
             {
                 "team_code": team["team_code"],
                 "team_name": team["team_name"],
+                "member_count": team_meta.get(team["team_id"], {}).get("member_count", 0),
+                "captain_name": team_meta.get(team["team_id"], {}).get("captain_name"),
                 "total_points": totals_by_team_id.get(team["team_id"], 0),
             }
             for team in roster_teams
@@ -93,14 +118,57 @@ def get_phase_scoreboard(phase_key: str) -> dict:
             for e in event_scores
         ]
 
+    entries = ScoreEntry.objects.filter(
+        phase=phase,
+        team_id__in=team_ids,
+    ).select_related(
+        "team", "sub_event", "station_session__station", "created_by",
+    ).order_by("-created_at", "-id")
+
+    detailed_roster = [
+        {
+            **team,
+            "member_count": team_meta.get(team["team_id"], {}).get("member_count", 0),
+            "captain_name": team_meta.get(team["team_id"], {}).get("captain_name"),
+        }
+        for team in roster_teams
+    ]
+
     return {
         "phase_key": phase.key,
         "phase_label": phase.label,
-        "roster_teams": roster_teams,
-        "roster_count": len(roster_teams),
+        "roster_teams": detailed_roster,
+        "roster_count": len(detailed_roster),
         "leaderboard": leaderboard,
         "event_breakdown": event_breakdown,
         "uses_phase_roster": roster_is_strict,
+        "score_entries": [
+            {
+                "id": entry.id,
+                "team_code": entry.team.code,
+                "team_name": entry.team.name,
+                "event_id": entry.sub_event_id,
+                "event_name": entry.sub_event.name,
+                "kind": entry.kind,
+                "points": entry.points,
+                "note": entry.note,
+                "station_session_id": entry.station_session_id,
+                "station_code": entry.station_session.station.code if entry.station_session else None,
+                "station_name": entry.station_session.station.name if entry.station_session else None,
+                "created_by": entry.created_by.username if entry.created_by else None,
+                "created_at": entry.created_at.isoformat(),
+                "updated_at": entry.updated_at.isoformat(),
+            }
+            for entry in entries
+        ],
+        "advancement": {
+            "next_phase_key": advancement_rule.to_phase.key if advancement_rule else (next_phase.key if next_phase else None),
+            "next_phase_label": advancement_rule.to_phase.label if advancement_rule else (next_phase.label if next_phase else None),
+            "mode": advancement_rule.mode if advancement_rule else AdvancementRule.MODE_TOP_N,
+            "slots": advancement_rule.slots if advancement_rule else 0,
+            "last_published_at": advancement_rule.last_published_at.isoformat() if advancement_rule and advancement_rule.last_published_at else None,
+            "published_by": advancement_rule.published_by.username if advancement_rule and advancement_rule.published_by else None,
+        },
     }
 
 
@@ -179,6 +247,8 @@ def set_advancement_rule(
     slots: int = 0,
 ) -> AdvancementRule:
     """Create or update an advancement rule."""
+    if mode not in (AdvancementRule.MODE_TOP_N, AdvancementRule.MODE_MANUAL):
+        raise ValueError("invalid_mode")
     from_phase = ProgramPhase.objects.get(key=from_phase_key)
     to_phase = ProgramPhase.objects.get(key=to_phase_key)
 
@@ -190,7 +260,11 @@ def set_advancement_rule(
     return rule
 
 
-def publish_advancement(from_phase_key: str, published_by: Account) -> dict:
+def publish_advancement(
+    from_phase_key: str,
+    published_by: Account,
+    manual_team_codes: list[str] | None = None,
+) -> dict:
     """
     Publish advancement: promote top N teams from from_phase to to_phase roster.
     Returns summary of promoted teams.
@@ -219,7 +293,25 @@ def publish_advancement(from_phase_key: str, published_by: Account) -> dict:
         key=lambda item: (-item["total"], item["team_code"]),
     )
 
-    if rule.mode == AdvancementRule.MODE_TOP_N and rule.slots > 0:
+    if rule.mode == AdvancementRule.MODE_MANUAL:
+        requested_codes = []
+        seen_codes = set()
+        for code in manual_team_codes or []:
+            normalized = str(code or "").strip()
+            if normalized and normalized not in seen_codes:
+                requested_codes.append(normalized)
+                seen_codes.add(normalized)
+
+        if not requested_codes:
+            raise ValueError("manual_team_codes_required")
+
+        ranked_by_code = {team["team_code"]: team for team in ranked_teams}
+        missing_codes = [code for code in requested_codes if code not in ranked_by_code]
+        if missing_codes:
+            raise ValueError("manual_team_not_in_phase")
+
+        top_teams = [ranked_by_code[code] for code in requested_codes]
+    elif rule.mode == AdvancementRule.MODE_TOP_N and rule.slots > 0:
         top_teams = ranked_teams[:rule.slots]
     else:
         top_teams = ranked_teams

@@ -132,8 +132,10 @@ def list_broadcasts(limit: int = 50) -> list[dict]:
             "id": b.id,
             "title": b.title,
             "target": b.target,
+            "target_payload": b.target_payload,
             "status": b.status,
             "sent_by": b.sent_by.username if b.sent_by else None,
+            "created_at": b.created_at.isoformat(),
             "sent_at": b.sent_at.isoformat() if b.sent_at else None,
             "error": b.error,
         }
