@@ -6,6 +6,7 @@ import DiscordPage from './DiscordPage.jsx'
 import AccountsPage from './AccountsPage.jsx'
 import EventManagementPage from './EventManagementPage.jsx'
 import ScoreManagementPage from './ScoreManagementPage.jsx'
+import SettingsPage from './SettingsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
 
@@ -226,7 +227,7 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
 // ─────────────────────────────────────────────────────────────────────
 // Header
 // ─────────────────────────────────────────────────────────────────────
-function Header({ title, onMenu, currentPhaseLabel, user }) {
+function Header({ title, onMenu, currentPhaseLabel, user, onSettings, settingsActive }) {
   return (
     <header className="sticky top-0 z-30 border-b border-stone bg-paper/85 backdrop-blur">
       <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6">
@@ -244,7 +245,16 @@ function Header({ title, onMenu, currentPhaseLabel, user }) {
             <span className="hidden sm:inline">Phase:</span> {currentPhaseLabel}
           </div>
 
-          <button type="button" className="rounded-lg border border-stone bg-white p-2 text-ink/45 transition hover:text-ink" title="Cài đặt hệ thống">
+          <button
+            type="button"
+            onClick={onSettings}
+            className={`rounded-lg border p-2 transition ${
+              settingsActive
+                ? 'border-trail/30 bg-trail/10 text-trail'
+                : 'border-stone bg-white text-ink/45 hover:text-ink'
+            }`}
+            title="Cài đặt"
+          >
             <Icon name="gear" />
           </button>
 
@@ -805,6 +815,7 @@ function AdminDashboard() {
     stations: 'Quản lý trạm',
     discord: 'Quản lý Discord',
     accounts: 'Quản lý tài khoản',
+    settings: 'Cài đặt',
   }
   const tabIcon = { events: 'ticket', teams: 'users', scores: 'check', stations: 'flag', discord: 'chat', accounts: 'userCircle' }
 
@@ -827,6 +838,8 @@ function AdminDashboard() {
             onMenu={() => setSidebarOpen(true)}
             currentPhaseLabel={currentPhaseLabel}
             user={user}
+            onSettings={() => setActiveTab('settings')}
+            settingsActive={activeTab === 'settings'}
           />
 
           <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
@@ -884,6 +897,8 @@ function AdminDashboard() {
               <DiscordPage />
             ) : activeTab === 'accounts' ? (
               <AccountsPage />
+            ) : activeTab === 'settings' ? (
+              <SettingsPage />
             ) : (
               <PlaceholderPage title={titles[activeTab]} icon={tabIcon[activeTab]} />
             )}

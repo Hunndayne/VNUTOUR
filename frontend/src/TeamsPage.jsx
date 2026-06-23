@@ -68,6 +68,16 @@ function MemberCard({ member }) {
                 {member.phone && <span>{member.phone}</span>}
               </p>
             )}
+            {member.email_mismatch && (
+              <p className="mt-1.5 rounded-md bg-gold/10 px-2 py-1 text-[11px] leading-relaxed text-[#9A6B12]">
+                ⚠ Thành viên đã tạo tài khoản với email khác
+                {member.form_email && (
+                  <> (bạn nhập <span className="font-mono">{member.form_email}</span>,
+                  {' '}tài khoản dùng <span className="font-mono">{member.account_email}</span>)</>
+                )}
+                . Thông tin đã được cập nhật theo tài khoản.
+              </p>
+            )}
           </div>
 
           <div className="shrink-0 flex flex-col items-end gap-1 pt-0.5">

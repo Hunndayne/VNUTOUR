@@ -12,6 +12,7 @@ from django.db import IntegrityError, transaction
 
 from api.models import (
     Account, Participant, Team, TeamMembership, ProgramPhase, SystemSetting,
+    MssvLinkAudit,
 )
 
 
@@ -223,9 +224,14 @@ def get_team_members(team: Team) -> list[dict]:
     result = []
     for m in memberships:
         p = m.participant
-        has_account = Account.objects.filter(
+        account = Account.objects.filter(
             mssv=p.mssv, is_active=True,
-        ).exists()
+        ).only("email").first()
+        # The override replaces participant.email with the account email, so the
+        # original (captain-entered) email survives only in the audit trail.
+        last_override = MssvLinkAudit.objects.filter(
+            mssv=p.mssv, action=MssvLinkAudit.ACTION_OVERWRITTEN,
+        ).order_by("-created_at").first()
         result.append({
             "mssv": p.mssv,
             "full_name": p.full_name,
@@ -237,24 +243,82 @@ def get_team_members(team: Team) -> list[dict]:
             "discord_id": p.discord_id,
             "is_captain": m.is_captain,
             "team_number": m.team_number,
-            "has_account": has_account,
+            "has_account": account is not None,
+            "account_email": account.email if account else None,
+            "email_mismatch": last_override is not None,
+            "form_email": last_override.old_email if last_override else None,
         })
     return result
 
 
-def link_account_profile(account: Account) -> Optional[Participant]:
+def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optional[str]]:
     """Link Account.mssv <-> Participant.account so the FK is not left dangling.
 
     Used after a participant fills in their mssv (incl. the post-Google-signup
     supplementary-info page) and when an owner creates their team.
+
+    When the account's email differs from the email the team captain originally
+    entered into the form, the participant info is overwritten (account is the
+    source of truth) and an MssvLinkAudit row is recorded for in-app + Discord
+    notification. Returns (participant, status) where status is one of:
+      None         — no participant for this mssv, or nothing changed
+      "linked"     — first-time link, no info conflict
+      "overwritten"— linked and participant info overwritten (email differed)
+      "mssv_claimed_by_other" — blocked: mssv already held by another account
     """
     if not account or not account.mssv:
-        return None
+        return None, None
+
     participant = Participant.objects.filter(mssv=account.mssv).first()
-    if participant and participant.account_id != account.id:
+    if not participant:
+        return None, None
+
+    # Already linked to this same account — idempotent no-op.
+    if participant.account_id == account.id:
+        return participant, None
+
+    # Rare: mssv previously claimed by a different account (e.g. mssv reassigned).
+    # Do not silently steal the linkage — block and record for review.
+    if participant.account_id and participant.account_id != account.id:
+        MssvLinkAudit.objects.create(
+            mssv=account.mssv,
+            participant=participant,
+            account=account,
+            prev_account_id=participant.account_id,
+            action=MssvLinkAudit.ACTION_BLOCKED,
+            old_email=participant.email,
+            new_email=account.email,
+        )
+        return participant, "mssv_claimed_by_other"
+
+    # Fresh link. Detect whether the account contradicts the form data.
+    old_email = participant.email
+    email_differs = bool(
+        account.email and old_email and account.email.strip().lower() != old_email.strip().lower()
+    )
+
+    with transaction.atomic():
         participant.account = account
-        participant.save(update_fields=["account", "updated_at"])
-    return participant
+        update_fields = ["account", "updated_at"]
+        if account.email and account.email != participant.email:
+            participant.email = account.email
+            update_fields.append("email")
+        if account.full_name and account.full_name != participant.full_name:
+            participant.full_name = account.full_name
+            update_fields.append("full_name")
+        participant.save(update_fields=update_fields)
+
+        if email_differs:
+            MssvLinkAudit.objects.create(
+                mssv=account.mssv,
+                participant=participant,
+                account=account,
+                action=MssvLinkAudit.ACTION_OVERWRITTEN,
+                old_email=old_email,
+                new_email=account.email,
+            )
+
+    return participant, ("overwritten" if email_differs else "linked")
 
 
 def get_team_for_participant(mssv: str) -> Optional[Team]:

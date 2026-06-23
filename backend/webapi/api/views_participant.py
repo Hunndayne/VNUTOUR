@@ -4,9 +4,10 @@ Participant self-service views — §9.2
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
 from api.models import Account, Participant, Team, TeamMembership
+from api.services.registration_service import validate_account_mssv_claim
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -50,33 +51,43 @@ def me_profile_view(request: HttpRequest):
         if not mssv:
             return JsonResponse({"error": "missing_mssv"}, status=400)
 
-        # Update account mssv if changed
-        if mssv != (acc.mssv or ""):
-            try:
-                acc.mssv = mssv
-                acc.save(update_fields=["mssv"])
-            except IntegrityError:
-                return JsonResponse({"error": "mssv_taken"}, status=409)
+        claim_error = validate_account_mssv_claim(acc, mssv)
+        if claim_error:
+            return JsonResponse({"error": claim_error}, status=409)
 
-        # Update/full_name on account
-        if data.get("full_name"):
-            acc.full_name = data["full_name"]
-            acc.save(update_fields=["full_name"])
+        try:
+            with transaction.atomic():
+                previous_mssv = acc.mssv
+                account_updates = []
+                if mssv != (acc.mssv or ""):
+                    acc.mssv = mssv
+                    account_updates.append("mssv")
+                if data.get("full_name"):
+                    acc.full_name = data["full_name"]
+                    account_updates.append("full_name")
+                if account_updates:
+                    acc.save(update_fields=account_updates)
 
-        # Upsert participant profile and link it back to the account so the
-        # Account <-> Participant FK is never left dangling.
-        participant, _ = Participant.objects.update_or_create(
-            mssv=mssv,
-            defaults={
-                "account": acc,
-                "full_name": data.get("full_name") or acc.full_name or "",
-                "email": data.get("email") or acc.email,
-                "phone": data.get("phone"),
-                "faculty": data.get("faculty"),
-                "school": data.get("school"),
-                "facebook": data.get("facebook"),
-            },
-        )
+                if previous_mssv != acc.mssv:
+                    Participant.objects.filter(account=acc).exclude(mssv=acc.mssv).update(account=None)
+
+                # Upsert participant profile and link it back to the account so
+                # the Account <-> Participant FK is never left dangling.
+                participant, _ = Participant.objects.update_or_create(
+                    mssv=mssv,
+                    defaults={
+                        "account": acc,
+                        "full_name": data.get("full_name") or acc.full_name or "",
+                        "email": data.get("email") or acc.email,
+                        "phone": data.get("phone"),
+                        "faculty": data.get("faculty"),
+                        "school": data.get("school"),
+                        "facebook": data.get("facebook"),
+                    },
+                )
+        except IntegrityError:
+            return JsonResponse({"error": "mssv_taken"}, status=409)
+
         return JsonResponse({
             "mssv": participant.mssv,
             "full_name": participant.full_name,

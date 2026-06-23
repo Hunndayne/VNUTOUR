@@ -25,6 +25,10 @@ class Account(models.Model):
     token = models.CharField(max_length=128, null=True, blank=True, unique=True)
     mssv = models.CharField(max_length=20, null=True, blank=True, unique=True)
     full_name = models.CharField(max_length=255, null=True, blank=True)
+    phone = models.CharField(max_length=20, null=True, blank=True)
+    school = models.CharField(max_length=255, null=True, blank=True)
+    faculty = models.CharField(max_length=255, null=True, blank=True)
+    avatar = models.CharField(max_length=500, null=True, blank=True)
     google_sub = models.CharField(max_length=255, null=True, blank=True, unique=True)
     last_login = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -53,6 +57,10 @@ class Participant(models.Model):
     faculty = models.CharField(max_length=255, null=True, blank=True)
     school = models.CharField(max_length=255, null=True, blank=True)
     facebook = models.CharField(max_length=255, null=True, blank=True)
+    cccd = models.CharField(max_length=20, null=True, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    # Admin-defined fields that are not first-class columns live here.
+    extra = models.JSONField(null=True, blank=True)
     discord_id = models.BigIntegerField(null=True, blank=True, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -108,6 +116,7 @@ class Team(models.Model):
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
     qr_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    payment_proof = models.CharField(max_length=500, null=True, blank=True)
     provision_state = models.CharField(
         max_length=10, choices=PROVISION_CHOICES, default=PROVISION_NONE,
     )
@@ -624,3 +633,52 @@ class SystemSetting(models.Model):
 
     def __str__(self) -> str:
         return f"{self.key}"
+
+
+# =====================================================================
+# 16. MssvLinkAudit
+# =====================================================================
+
+class MssvLinkAudit(models.Model):
+    """Audit trail for Account<->Participant linkage by MSSV.
+
+    Recorded when an account claims a participant (by matching MSSV) and the
+    account info differs from what was originally entered in the team form, or
+    when a claim is blocked because the participant is already linked to another
+    account. Doubles as a queue the Discord bot polls (`discord_notified`).
+    """
+
+    ACTION_LINKED = "linked"          # first link, no info conflict
+    ACTION_OVERWRITTEN = "overwritten"  # linked + participant info overwritten
+    ACTION_BLOCKED = "blocked"        # claim rejected (mssv held by other account)
+    ACTION_CHOICES = [
+        (ACTION_LINKED, "Linked"),
+        (ACTION_OVERWRITTEN, "Overwritten"),
+        (ACTION_BLOCKED, "Blocked"),
+    ]
+
+    mssv = models.CharField(max_length=20)
+    participant = models.ForeignKey(
+        Participant, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="link_audits",
+    )
+    account = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="link_audits",
+    )
+    prev_account = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="link_audits_displaced",
+    )
+    action = models.CharField(max_length=12, choices=ACTION_CHOICES)
+    old_email = models.EmailField(max_length=255, null=True, blank=True)
+    new_email = models.EmailField(max_length=255, null=True, blank=True)
+    discord_notified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mssv_link_audit"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.mssv} {self.action} ({self.old_email} -> {self.new_email})"
