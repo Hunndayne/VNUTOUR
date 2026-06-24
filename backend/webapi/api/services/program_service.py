@@ -4,8 +4,10 @@ Program service — phase management, sub-events, rosters.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
+
+from django.utils.dateparse import parse_date, parse_datetime
 
 from api.models import ProgramPhase, SubEvent, PhaseRoster, Team
 
@@ -62,11 +64,43 @@ def update_phase_dates(phase_key: str, start_date=None, end_date=None) -> Progra
     """Update start/end dates for a fixed phase."""
     phase = ProgramPhase.objects.get(key=phase_key)
     if start_date is not None:
-        phase.start_date = start_date
+        phase.start_date = _coerce_date(start_date)
     if end_date is not None:
-        phase.end_date = end_date
+        phase.end_date = _coerce_date(end_date)
     phase.save(update_fields=["start_date", "end_date", "updated_at"])
     return phase
+
+
+def _coerce_date(value) -> Optional[date]:
+    if value in ("", None):
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        parsed = parse_date(value)
+        if parsed:
+            return parsed
+    return value
+
+
+def _coerce_datetime(value):
+    if value in ("", None):
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, str):
+        parsed_datetime = parse_datetime(value)
+        if parsed_datetime:
+            return parsed_datetime
+        parsed_date = parse_date(value)
+        if parsed_date:
+            return datetime.combine(parsed_date, datetime.min.time())
+        return value
+    return value
 
 
 def get_current_phase() -> Optional[ProgramPhase]:
@@ -77,6 +111,9 @@ def get_current_phase() -> Optional[ProgramPhase]:
 def create_sub_event(phase_key: str, name: str, **kwargs) -> SubEvent:
     """Create a sub-event within a phase."""
     phase = ProgramPhase.objects.get(key=phase_key)
+    for field in ("start_date", "end_date"):
+        if field in kwargs:
+            kwargs[field] = _coerce_datetime(kwargs[field])
     se = SubEvent(phase=phase, name=name, **kwargs)
     se.save()
     return se
@@ -87,6 +124,8 @@ def update_sub_event(event_id: int, **kwargs) -> SubEvent:
     se = SubEvent.objects.get(id=event_id)
     for field, value in kwargs.items():
         if hasattr(se, field) and value is not None:
+            if field in ("start_date", "end_date"):
+                value = _coerce_datetime(value)
             setattr(se, field, value)
     se.save()
     return se

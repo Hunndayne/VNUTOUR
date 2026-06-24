@@ -200,6 +200,11 @@ def _validate_person(schema: dict, data: dict, who: str) -> Tuple[dict, dict, Op
     return columns, extra, None
 
 
+def validate_person_submission(data: dict, who: str = "participant") -> Tuple[dict, dict, Optional[str]]:
+    """Validate one person against the active registration schema."""
+    return _validate_person(get_schema(), data or {}, who)
+
+
 def _normalize_date(value) -> Optional[str]:
     """Accept YYYY-MM-DD (HTML date input) and return it, else None."""
     if isinstance(value, str):

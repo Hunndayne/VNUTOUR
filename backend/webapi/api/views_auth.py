@@ -107,6 +107,15 @@ def me_view(request: HttpRequest):
                         raise MssvClaimError("mssv_taken")
                 elif "mssv" in updates:
                     Participant.objects.filter(account=acc).update(account=None)
+
+                sync_keys = {"full_name", "phone", "school", "faculty"} & set(updates)
+                if sync_keys and acc.mssv:
+                    participant = Participant.objects.filter(mssv=acc.mssv).first()
+                    if participant:
+                        p_fields = list(sync_keys)
+                        for key in p_fields:
+                            setattr(participant, key, updates[key])
+                        participant.save(update_fields=p_fields + ["updated_at"])
         except MssvClaimError as e:
             return JsonResponse({"error": e.code}, status=409)
         except IntegrityError:

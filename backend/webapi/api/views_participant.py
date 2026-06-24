@@ -7,7 +7,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
 
 from api.models import Account, Participant, Team, TeamMembership
-from api.services.registration_service import validate_account_mssv_claim
+from api.services.registration_service import (
+    get_schema, validate_account_mssv_claim, validate_person_submission,
+)
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -34,6 +36,9 @@ def me_profile_view(request: HttpRequest):
                 "faculty": participant.faculty,
                 "school": participant.school,
                 "facebook": participant.facebook,
+                "cccd": participant.cccd,
+                "date_of_birth": participant.date_of_birth.isoformat() if participant.date_of_birth else None,
+                "extra": participant.extra or {},
                 "discord_id": participant.discord_id,
             } if participant else None,
             "account_mssv": acc.mssv,
@@ -55,6 +60,13 @@ def me_profile_view(request: HttpRequest):
         if claim_error:
             return JsonResponse({"error": claim_error}, status=409)
 
+        columns, extra, schema_error = validate_person_submission(
+            {**data, "mssv": mssv, "email": data.get("email") or acc.email},
+            "profile",
+        )
+        if schema_error:
+            return JsonResponse({"error": schema_error}, status=400)
+
         try:
             with transaction.atomic():
                 previous_mssv = acc.mssv
@@ -65,6 +77,10 @@ def me_profile_view(request: HttpRequest):
                 if data.get("full_name"):
                     acc.full_name = data["full_name"]
                     account_updates.append("full_name")
+                for fld in ("phone", "school", "faculty"):
+                    if fld in columns:
+                        setattr(acc, fld, columns[fld])
+                        account_updates.append(fld)
                 if account_updates:
                     acc.save(update_fields=account_updates)
 
@@ -77,12 +93,15 @@ def me_profile_view(request: HttpRequest):
                     mssv=mssv,
                     defaults={
                         "account": acc,
-                        "full_name": data.get("full_name") or acc.full_name or "",
-                        "email": data.get("email") or acc.email,
-                        "phone": data.get("phone"),
-                        "faculty": data.get("faculty"),
-                        "school": data.get("school"),
-                        "facebook": data.get("facebook"),
+                        "full_name": columns.get("full_name") or acc.full_name or "",
+                        "email": columns.get("email") or acc.email,
+                        "phone": columns.get("phone"),
+                        "faculty": columns.get("faculty"),
+                        "school": columns.get("school"),
+                        "facebook": columns.get("facebook"),
+                        "cccd": columns.get("cccd"),
+                        "date_of_birth": columns.get("date_of_birth"),
+                        "extra": extra or None,
                     },
                 )
         except IntegrityError:
@@ -96,6 +115,9 @@ def me_profile_view(request: HttpRequest):
             "faculty": participant.faculty,
             "school": participant.school,
             "facebook": participant.facebook,
+            "cccd": participant.cccd,
+            "date_of_birth": participant.date_of_birth.isoformat() if participant.date_of_birth else None,
+            "extra": participant.extra or {},
             "discord_id": participant.discord_id,
         })
 
@@ -128,6 +150,7 @@ def my_team_view(request: HttpRequest):
                 "approval_note": team.approval_note,
                 "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
                 "qr_token": team.qr_token,
+                "payment_proof": team.payment_proof,
             },
             "members": get_team_members(team),
             "editable": team_is_editable(team),
@@ -186,11 +209,14 @@ def my_team_view(request: HttpRequest):
             return JsonResponse({"error": "missing_team_name"}, status=400)
 
         team.name = new_name
-        team.save(update_fields=["name", "updated_at"])
+        if "payment_proof" in data:
+            team.payment_proof = str((data.get("payment_proof") or "").strip()) or None
+        team.save(update_fields=["name", "payment_proof", "updated_at"])
         return JsonResponse({
             "code": team.code,
             "name": team.name,
             "approval_status": team.approval_status,
+            "payment_proof": team.payment_proof,
         })
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
@@ -212,14 +238,32 @@ def my_team_submit_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    success, err = submit_team(membership.team)
+    team = membership.team
+    schema = get_schema()
+    members = get_team_members(team)
+    expected_size = int(schema.get("team_size") or 5)
+    if len(members) != expected_size:
+        return JsonResponse({"error": f"team_size_mismatch:expected_{expected_size}"}, status=409)
+
+    for field in schema.get("team_fields", []):
+        if field.get("enabled", True) and field.get("required") and field.get("key") == "payment_proof":
+            if not team.payment_proof:
+                return JsonResponse({"error": "missing:team:payment_proof"}, status=400)
+
+    for index, member in enumerate(members, start=1):
+        payload = {**member, **(member.get("extra") or {})}
+        _, _, schema_error = validate_person_submission(payload, "captain" if member.get("is_captain") else f"member_{index}")
+        if schema_error:
+            return JsonResponse({"error": schema_error}, status=400)
+
+    success, err = submit_team(team)
     if not success:
         return JsonResponse({"error": err}, status=409)
 
     return JsonResponse({
-        "code": membership.team.code,
-        "approval_status": membership.team.approval_status,
-        "submitted_at": membership.team.submitted_at.isoformat() if membership.team.submitted_at else None,
+        "code": team.code,
+        "approval_status": team.approval_status,
+        "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
     })
 
 
@@ -247,15 +291,22 @@ def my_team_members_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
+    columns, extra, schema_error = validate_person_submission(data, "member")
+    if schema_error:
+        return JsonResponse({"error": schema_error}, status=400)
+
     participant, err = add_member(
         team,
-        mssv=str((data.get("mssv") or "").strip()),
-        full_name=data.get("full_name"),
-        email=data.get("email"),
-        phone=data.get("phone"),
-        faculty=data.get("faculty"),
-        school=data.get("school"),
-        facebook=data.get("facebook"),
+        mssv=columns.get("mssv"),
+        full_name=columns.get("full_name"),
+        email=columns.get("email"),
+        phone=columns.get("phone"),
+        faculty=columns.get("faculty"),
+        school=columns.get("school"),
+        facebook=columns.get("facebook"),
+        cccd=columns.get("cccd"),
+        date_of_birth=columns.get("date_of_birth"),
+        extra=extra,
     )
     if err:
         return JsonResponse({"error": err}, status=400)
@@ -288,14 +339,24 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
+        columns, extra, schema_error = validate_person_submission(
+            {**data, "mssv": mssv},
+            "member",
+        )
+        if schema_error:
+            return JsonResponse({"error": schema_error}, status=400)
+
         participant, err = update_member(
             team, mssv,
-            full_name=data.get("full_name"),
-            email=data.get("email"),
-            phone=data.get("phone"),
-            faculty=data.get("faculty"),
-            school=data.get("school"),
-            facebook=data.get("facebook"),
+            full_name=columns.get("full_name"),
+            email=columns.get("email"),
+            phone=columns.get("phone"),
+            faculty=columns.get("faculty"),
+            school=columns.get("school"),
+            facebook=columns.get("facebook"),
+            cccd=columns.get("cccd"),
+            date_of_birth=columns.get("date_of_birth"),
+            extra=extra,
         )
         if err:
             return JsonResponse({"error": err}, status=404)
@@ -307,6 +368,9 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
             "faculty": participant.faculty,
             "school": participant.school,
             "facebook": participant.facebook,
+            "cccd": participant.cccd,
+            "date_of_birth": participant.date_of_birth.isoformat() if participant.date_of_birth else None,
+            "extra": participant.extra or {},
         })
 
     if request.method == "DELETE":

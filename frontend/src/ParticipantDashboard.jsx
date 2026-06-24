@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
@@ -68,6 +68,9 @@ const EMPTY_PROFILE = {
   faculty: '',
   school: '',
   facebook: '',
+  cccd: '',
+  date_of_birth: '',
+  extra: {},
 }
 
 function normalizeProfile(authMe, profilePayload) {
@@ -80,6 +83,9 @@ function normalizeProfile(authMe, profilePayload) {
     faculty: profile?.faculty || '',
     school: profile?.school || '',
     facebook: profile?.facebook || '',
+    cccd: profile?.cccd || '',
+    date_of_birth: profile?.date_of_birth || '',
+    extra: profile?.extra || {},
   }
 }
 
@@ -93,6 +99,7 @@ function normalizeTeam(teamPayload, teamDetail = null) {
     approval_note: teamDetail?.approval_note || teamPayload.team.approval_note || '',
     submitted_at: teamDetail?.submitted_at || teamPayload.team.submitted_at || null,
     qr_token: teamPayload.team.qr_token || null,
+    payment_proof: teamDetail?.payment_proof || teamPayload.team.payment_proof || '',
   }
 }
 
@@ -104,13 +111,35 @@ function blankMember() {
     phone: '',
     faculty: '',
     school: '',
+    cccd: '',
+    date_of_birth: '',
     has_account: false,
     is_captain: false,
+    extra: {},
   }
 }
 
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
+  if (code?.startsWith('missing:')) {
+    const [, who, field] = code.split(':')
+    const whoLabel = who === 'team'
+      ? 'đội'
+      : who === 'captain'
+        ? 'đội trưởng'
+        : who?.startsWith('member_')
+          ? `thành viên ${who.split('_')[1]}`
+          : 'hồ sơ'
+    return `Vui lòng điền đủ trường ${field} cho ${whoLabel}.`
+  }
+  if (code?.startsWith('invalid_date:')) {
+    const [, who] = code.split(':')
+    return `Ngày sinh của ${who || 'thành viên'} chưa hợp lệ.`
+  }
+  if (code?.startsWith('team_size_mismatch:')) {
+    const expected = code.split('expected_')[1] || MAX_MEMBERS
+    return `Đội cần đủ ${expected} thành viên trước khi gửi duyệt.`
+  }
   const map = {
     missing_mssv: 'Bạn cần cập nhật MSSV trước khi tiếp tục.',
     mssv_taken: 'MSSV này đã được dùng bởi tài khoản khác.',
@@ -167,6 +196,109 @@ function Field({ label, value, onChange, disabled = false, placeholder = '' }) {
         className="mt-1 w-full rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm text-[#20312B] outline-none transition placeholder:text-[#20312B]/25 focus:border-[#1F7A6B]/40 focus:ring-2 focus:ring-[#1F7A6B]/10 disabled:bg-[#F3F4F1] disabled:text-[#20312B]/45"
       />
     </label>
+  )
+}
+
+const optValue = (o) => (typeof o === 'object' ? o.value : o)
+const optLabel = (o) => (typeof o === 'object' ? o.label : o)
+
+function schemaValue(data, key) {
+  return data?.[key] ?? data?.extra?.[key] ?? ''
+}
+
+function isSchemaHidden(field, data) {
+  const c = field.conditional
+  return Boolean(c && c.hide && (schemaValue(data, c.watch) || '') === c.equals)
+}
+
+function buildSchemaPatch(fields, key, value) {
+  const patch = { [key]: value }
+  for (const field of fields) {
+    const c = field.conditional
+    if (c && c.watch === key) {
+      patch[field.key] = value === c.equals && 'set' in c ? c.set : ''
+    }
+  }
+  return patch
+}
+
+function SchemaField({ field, value, onChange, disabled = false }) {
+  const id = `participant-${field.key}`
+  const values = (field.options || []).map(optValue)
+  const isOther = field.type === 'select' && value && !values.includes(value)
+  const baseClass = 'mt-1 w-full rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm text-[#20312B] outline-none transition placeholder:text-[#20312B]/25 focus:border-[#1F7A6B]/40 focus:ring-2 focus:ring-[#1F7A6B]/10 disabled:bg-[#F3F4F1] disabled:text-[#20312B]/45'
+
+  return (
+    <label htmlFor={id} className="block">
+      <span className="text-xs font-medium text-ink/50">
+        {field.label}
+        {field.required && <span className="text-[#D6492B]"> *</span>}
+      </span>
+      {field.help && <span className="mt-1 block text-[11px] leading-relaxed text-ink/40">{field.help}</span>}
+      {field.type === 'select' ? (
+        <div className="space-y-2">
+          <select
+            id={id}
+            disabled={disabled}
+            className={baseClass}
+            value={values.includes(value) ? value : (isOther ? '__other__' : '')}
+            onChange={(e) => onChange(e.target.value === '__other__' ? ' ' : e.target.value)}
+          >
+            <option value="" disabled>-- Chọn --</option>
+            {(field.options || []).map((option) => (
+              <option key={optValue(option)} value={optValue(option)}>{optLabel(option)}</option>
+            ))}
+            {field.allow_other && <option value="__other__">Khác...</option>}
+          </select>
+          {field.allow_other && isOther && (
+            <input
+              className={baseClass}
+              disabled={disabled}
+              placeholder="Nhập giá trị khác"
+              value={String(value).trim()}
+              onChange={(e) => onChange(e.target.value)}
+            />
+          )}
+        </div>
+      ) : field.type === 'file' ? (
+        <input
+          id={id}
+          type="url"
+          disabled={disabled}
+          className={baseClass}
+          placeholder="Dán link ảnh minh chứng"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <input
+          id={id}
+          type={field.type === 'date' ? 'date' : field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text'}
+          disabled={disabled || field.key === 'mssv' && disabled}
+          className={baseClass}
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </label>
+  )
+}
+
+function PersonSchemaFields({ fields, data, onPatch, disabled = false, lockMssv = false }) {
+  const visible = fields.filter((field) => !isSchemaHidden(field, data))
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {visible.map((field) => (
+        <div key={field.key} className={field.key === 'full_name' || field.help ? 'sm:col-span-2' : ''}>
+          <SchemaField
+            field={field}
+            value={schemaValue(data, field.key)}
+            disabled={disabled || (lockMssv && field.key === 'mssv')}
+            onChange={(value) => onPatch(buildSchemaPatch(fields, field.key, value))}
+          />
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -276,7 +408,7 @@ function ProgressTrail({ profile, team, members }) {
   )
 }
 
-function MemberDrawer({ form, editing, saving, onChange, onClose, onSave }) {
+function MemberDrawer({ form, fields, editing, saving, onChange, onClose, onSave }) {
   if (!form) return null
 
   return (
@@ -296,20 +428,12 @@ function MemberDrawer({ form, editing, saving, onChange, onClose, onSave }) {
         </div>
 
         <form className="flex-1 space-y-4 overflow-y-auto px-5 py-5" onSubmit={onSave}>
-          <Field
-            label="MSSV"
-            value={form.mssv}
-            onChange={(v) => onChange({ ...form, mssv: v })}
-            placeholder="Nhập MSSV"
-            disabled={editing}
+          <PersonSchemaFields
+            fields={fields}
+            data={form}
+            lockMssv={editing}
+            onPatch={(patch) => onChange({ ...form, ...patch })}
           />
-          <Field label="Họ và tên" value={form.full_name} onChange={(v) => onChange({ ...form, full_name: v })} placeholder="Nhập họ tên" />
-          <Field label="Email" value={form.email} onChange={(v) => onChange({ ...form, email: v })} placeholder="name@example.edu.vn" />
-          <Field label="Số điện thoại" value={form.phone} onChange={(v) => onChange({ ...form, phone: v })} placeholder="09..." />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Khoa" value={form.faculty} onChange={(v) => onChange({ ...form, faculty: v })} placeholder="CNPM" />
-            <Field label="Trường" value={form.school} onChange={(v) => onChange({ ...form, school: v })} placeholder="UIT" />
-          </div>
           <label className="flex items-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm text-[#20312B]/65">
             <input
               type="checkbox"
@@ -382,6 +506,7 @@ function ParticipantDashboard() {
   const [team, setTeam] = useState(null)
   const [members, setMembers] = useState([])
   const [teamNameDraft, setTeamNameDraft] = useState('')
+  const [paymentProofDraft, setPaymentProofDraft] = useState('')
   const [drawer, setDrawer] = useState(null)
   const [memberForm, setMemberForm] = useState(null)
   const [editable, setEditable] = useState(true)
@@ -389,11 +514,13 @@ function ParticipantDashboard() {
   const [busyAction, setBusyAction] = useState('')
   const [apiError, setApiError] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [registrationSchema, setRegistrationSchema] = useState(null)
 
   const loadDashboard = async () => {
     const me = await apiRequest('/auth/me')
     const profilePayload = await apiRequest('/me/profile')
     const teamPayload = await apiRequest('/my-team')
+    const schemaPayload = await apiRequest('/register/schema', { auth: false })
     let teamDetail = null
 
     if (teamPayload?.team?.code) {
@@ -405,8 +532,10 @@ function ParticipantDashboard() {
     const normalizedTeam = normalizeTeam(teamPayload, teamDetail)
     setTeam(normalizedTeam)
     setTeamNameDraft(normalizedTeam?.team_name || '')
+    setPaymentProofDraft(normalizedTeam?.payment_proof || '')
     setMembers(Array.isArray(teamDetail?.members) ? teamDetail.members : Array.isArray(teamPayload?.members) ? teamPayload.members : [])
     setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
+    setRegistrationSchema(schemaPayload)
   }
 
   useEffect(() => {
@@ -440,6 +569,15 @@ function ParticipantDashboard() {
   const provision = PROVISION[team?.provision_state || 'none']
   const nextAction = useMemo(() => getNextAction(profile, team, members), [profile, team, members])
   const accountCount = members.filter((member) => member.has_account).length
+  const personFields = useMemo(
+    () => (registrationSchema?.person_fields || []).filter((field) => field.enabled !== false),
+    [registrationSchema],
+  )
+  const teamFields = useMemo(
+    () => (registrationSchema?.team_fields || []).filter((field) => field.enabled !== false),
+    [registrationSchema],
+  )
+  const maxMembers = registrationSchema?.team_size || MAX_MEMBERS
 
   const openMemberDrawer = (index = null) => {
     const base = index === null ? blankMember() : members[index]
@@ -455,18 +593,21 @@ function ParticipantDashboard() {
   const saveTeamNameIfNeeded = async () => {
     if (!team || !editable) return
     const nextName = teamNameDraft.trim()
-    if (!nextName || nextName === team.team_name) return
+    const nextPaymentProof = paymentProofDraft.trim()
+    if (!nextName) return
+    if (nextName === team.team_name && nextPaymentProof === (team.payment_proof || '')) return
 
     const payload = await apiRequest('/my-team', {
       method: 'PATCH',
-      body: { team_name: nextName },
+      body: { team_name: nextName, payment_proof: nextPaymentProof },
     })
     setTeam((current) => (
       current
-        ? { ...current, team_name: payload.name || nextName }
+        ? { ...current, team_name: payload.name || nextName, payment_proof: payload.payment_proof || nextPaymentProof }
         : current
     ))
     setTeamNameDraft(payload.name || nextName)
+    setPaymentProofDraft(payload.payment_proof || nextPaymentProof)
   }
 
   const withBusy = async (actionKey, task) => {
@@ -694,8 +835,18 @@ function ParticipantDashboard() {
                   />
                   <Field label="Mã đội" value={team.team_id} disabled onChange={() => {}} />
                 </div>
+                {teamFields.some((field) => field.key === 'payment_proof') && (
+                  <div className="mt-3">
+                    <SchemaField
+                      field={teamFields.find((field) => field.key === 'payment_proof')}
+                      value={paymentProofDraft}
+                      disabled={!editable}
+                      onChange={setPaymentProofDraft}
+                    />
+                  </div>
+                )}
 
-                {editable && teamNameDraft !== team.team_name && (
+                {editable && (teamNameDraft !== team.team_name || paymentProofDraft !== (team.payment_proof || '')) && (
                   <div className="mt-3 flex justify-end">
                     <button
                       type="button"
@@ -712,10 +863,10 @@ function ParticipantDashboard() {
                 <div className="mt-5 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/70 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-ink">Tiến độ thành viên</p>
-                    <p className="font-mono text-xs text-ink/45">{members.length}/{MAX_MEMBERS}</p>
+                    <p className="font-mono text-xs text-ink/45">{members.length}/{maxMembers}</p>
                   </div>
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-                    <div className="h-full" style={{ width: `${Math.min(100, (members.length / MAX_MEMBERS) * 100)}%`, backgroundColor: status.color }} />
+                    <div className="h-full" style={{ width: `${Math.min(100, (members.length / maxMembers) * 100)}%`, backgroundColor: status.color }} />
                   </div>
                   <p className="mt-2 text-xs text-ink/45">
                     {accountCount}/{members.length || 0} thành viên đã có tài khoản web.
@@ -735,7 +886,7 @@ function ParticipantDashboard() {
                   <button
                     type="button"
                     onClick={() => openMemberDrawer()}
-                    disabled={!editable || members.length >= MAX_MEMBERS || Boolean(busyAction)}
+                    disabled={!editable || members.length >= maxMembers || Boolean(busyAction)}
                     className={SECONDARY_BUTTON}
                   >
                     <Icon name="plus" className="h-4 w-4" />
@@ -810,15 +961,12 @@ function ParticipantDashboard() {
                 </div>
                 {profileSaved && <Badge label="Đã lưu" cls="bg-[#1F7A6B]/12 text-[#1F7A6B]" />}
               </div>
-              <div className="mt-4 space-y-3">
-                <Field label="Họ và tên" value={profile.full_name} onChange={(v) => setProfile((p) => ({ ...p, full_name: v }))} />
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                  <Field label="MSSV" value={profile.mssv} onChange={(v) => setProfile((p) => ({ ...p, mssv: v }))} />
-                  <Field label="Số điện thoại" value={profile.phone} onChange={(v) => setProfile((p) => ({ ...p, phone: v }))} />
-                </div>
-                <Field label="Email" value={profile.email} onChange={(v) => setProfile((p) => ({ ...p, email: v }))} />
-                <Field label="Khoa" value={profile.faculty} onChange={(v) => setProfile((p) => ({ ...p, faculty: v }))} />
-                <Field label="Facebook" value={profile.facebook} onChange={(v) => setProfile((p) => ({ ...p, facebook: v }))} />
+              <div className="mt-4">
+                <PersonSchemaFields
+                  fields={personFields}
+                  data={profile}
+                  onPatch={(patch) => setProfile((p) => ({ ...p, ...patch }))}
+                />
               </div>
               <button
                 type="submit"
@@ -874,6 +1022,7 @@ function ParticipantDashboard() {
 
       <MemberDrawer
         form={memberForm}
+        fields={personFields}
         editing={drawer?.index !== null}
         saving={busyAction === 'save-member'}
         onChange={setMemberForm}
@@ -885,3 +1034,4 @@ function ParticipantDashboard() {
 }
 
 export default ParticipantDashboard
+

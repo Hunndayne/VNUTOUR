@@ -76,6 +76,9 @@ def add_member(
     faculty: str | None = None,
     school: str | None = None,
     facebook: str | None = None,
+    cccd: str | None = None,
+    date_of_birth=None,
+    extra: dict | None = None,
     is_captain: bool = False,
 ) -> Tuple[Optional[Participant], Optional[str]]:
     """Add a participant to a team. Returns (participant, None) or (None, error_code)."""
@@ -96,17 +99,28 @@ def add_member(
     if existing_member and existing_member.team_id != team.id:
         return None, "mssv_in_other_team"
 
-    # Get or create participant
+    defaults = {}
+    for key, value in {
+        "full_name": full_name,
+        "email": email,
+        "phone": phone,
+        "faculty": faculty,
+        "school": school,
+        "facebook": facebook,
+        "cccd": cccd,
+        "date_of_birth": date_of_birth,
+        "extra": extra,
+    }.items():
+        if value is not None:
+            defaults[key] = value
+    if "full_name" not in defaults:
+        defaults["full_name"] = ""
+
+    # Get or create participant without clearing existing registration fields
+    # when the caller only has partial account data (e.g. captain team create).
     participant, _ = Participant.objects.update_or_create(
         mssv=mssv,
-        defaults={
-            "full_name": full_name or "",
-            "email": email or None,
-            "phone": phone or None,
-            "faculty": faculty or None,
-            "school": school or None,
-            "facebook": facebook or None,
-        },
+        defaults=defaults,
     )
 
     # Create or reuse membership. We already verified the participant is not in
@@ -136,6 +150,9 @@ def update_member(
     faculty: str | None = None,
     school: str | None = None,
     facebook: str | None = None,
+    cccd: str | None = None,
+    date_of_birth=None,
+    extra: dict | None = None,
 ) -> Tuple[Optional[Participant], Optional[str]]:
     """Update a participant who belongs to `team`. Returns (participant, error)."""
     mssv = (mssv or "").strip()
@@ -149,6 +166,7 @@ def update_member(
     fields = {
         "full_name": full_name, "email": email, "phone": phone,
         "faculty": faculty, "school": school, "facebook": facebook,
+        "cccd": cccd, "date_of_birth": date_of_birth, "extra": extra,
     }
     changed = []
     for field, value in fields.items():
@@ -240,6 +258,9 @@ def get_team_members(team: Team) -> list[dict]:
             "faculty": p.faculty,
             "school": p.school,
             "facebook": p.facebook,
+            "cccd": p.cccd,
+            "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,
+            "extra": p.extra or {},
             "discord_id": p.discord_id,
             "is_captain": m.is_captain,
             "team_number": m.team_number,
