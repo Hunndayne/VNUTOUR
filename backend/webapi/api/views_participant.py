@@ -6,10 +6,11 @@ from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
 
-from api.models import Account, Participant, Team, TeamMembership
+from api.models import Account, Participant, Team, TeamMembership, PhaseRoster, ProgramPhase, Station, SubEvent
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
 )
+from api.services.program_service import get_current_sub_event
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -18,12 +19,144 @@ from api.services.team_service import (
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
+def _prepare_member_submission(data: dict, who: str):
+    """Merge trusted existing profile data before validating a team member form."""
+    payload = dict(data or {})
+    mssv = str((payload.get("mssv") or "").strip())
+    email = str((payload.get("email") or "").strip())
+    if not mssv:
+        return {}, {}, "missing:%s:mssv" % who
+    if not email:
+        return {}, {}, "missing:%s:email" % who
+
+    account = Account.objects.filter(mssv=mssv, is_active=True).first()
+    participant = Participant.objects.filter(mssv=mssv).first()
+    if account:
+        if account.email.strip().lower() != email.lower():
+            return {}, {}, "registration_mismatch"
+        for key in ("full_name", "email", "phone", "school", "faculty"):
+            value = getattr(account, key, None)
+            if value and not str((payload.get(key) or "")).strip():
+                payload[key] = value
+    elif participant:
+        registered_email = (participant.email or "").strip().lower()
+        if registered_email and registered_email != email.lower():
+            return {}, {}, "registration_mismatch"
+
+    if participant:
+        for key in ("full_name", "email", "phone", "school", "faculty", "facebook", "cccd", "date_of_birth"):
+            value = getattr(participant, key, None)
+            if value and not payload.get(key):
+                payload[key] = value.isoformat() if key == "date_of_birth" else value
+        if participant.extra:
+            for key, value in participant.extra.items():
+                if value and not payload.get(key):
+                    payload[key] = value
+
+    return validate_person_submission(payload, who)
+
+
+def _member_resolution(data: dict):
+    payload = dict(data or {})
+    mssv = str((payload.get("mssv") or "").strip())
+    email = str((payload.get("email") or "").strip())
+    if not mssv:
+        return None, "missing:member:mssv"
+    if not email:
+        return None, "missing:member:email"
+
+    # Block if this MSSV is already in a submitted (pending/approved) team
+    submitted_member = TeamMembership.objects.filter(
+        participant__mssv=mssv,
+        team__approval_status__in=[Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED],
+    ).select_related("team").first()
+    if submitted_member:
+        return None, "mssv_in_submitted_team"
+
+    account = Account.objects.filter(mssv=mssv, is_active=True).first()
+    participant = Participant.objects.filter(mssv=mssv).first()
+    if account:
+        if account.email.strip().lower() != email.lower():
+            return None, "registration_mismatch"
+        for key in ("full_name", "email", "phone", "school", "faculty"):
+            value = getattr(account, key, None)
+            if value:
+                payload[key] = value
+    elif participant:
+        registered_email = (participant.email or "").strip().lower()
+        if registered_email and registered_email != email.lower():
+            return None, "registration_mismatch"
+
+    if participant:
+        for key in ("full_name", "email", "phone", "school", "faculty", "facebook", "date_of_birth"):
+            value = getattr(participant, key, None)
+            if value:
+                payload[key] = value.isoformat() if key == "date_of_birth" else value
+        if participant.extra:
+            for key, value in participant.extra.items():
+                if value:
+                    payload[key] = value
+
+    fields = []
+    for field in get_schema().get("person_fields", []):
+        if not field.get("enabled", True):
+            continue
+        if field.get("key") == "cccd" and participant and participant.cccd:
+            continue
+        fields.append(field)
+
+    safe_profile = {
+        key: payload.get(key) or ""
+        for key in ("mssv", "email", "full_name", "phone", "school", "faculty", "facebook", "date_of_birth")
+    }
+    for key, value in payload.items():
+        if key not in safe_profile and key != "cccd":
+            safe_profile[key] = value
+    return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
+
+
+def _has_submission_config(config: dict | None) -> bool:
+    config = config or {}
+    return bool(
+        config.get("form", {}).get("enabled")
+        or config.get("quiz", {}).get("enabled")
+        or config.get("attachment", {}).get("enabled")
+    )
+
+
+def _station_form_payload(station: Station) -> dict:
+    phase = station.sub_event.phase
+    event = station.sub_event
+    return {
+        "station_id": station.id,
+        "station_code": station.code,
+        "station_name": station.name,
+        "station_location": station.location,
+        "event_id": event.id,
+        "event_name": event.name,
+        "phase_key": phase.key,
+        "phase_label": phase.label,
+        "submission_config": station.submission_config or {},
+    }
+
+
+def _registration_phase_open() -> bool:
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    return bool(current_phase and current_phase.key == "registration")
+
+
+def _registration_closed_response():
+    return JsonResponse({"error": "registration_closed"}, status=409)
+
+
 @csrf_exempt
 def me_profile_view(request: HttpRequest):
     """GET/PATCH the logged-in user's participant profile."""
     acc, err = _auth_or_401(request)
     if err:
         return err
+    if acc.mssv:
+        link_account_profile(acc)
 
     if request.method == "GET":
         participant = Participant.objects.filter(mssv=acc.mssv).first() if acc.mssv else None
@@ -132,6 +265,8 @@ def my_team_view(request: HttpRequest):
         return err
     if acc.role != Account.ROLE_PARTICIPANT:
         return JsonResponse({"error": "forbidden"}, status=403)
+    if acc.mssv:
+        link_account_profile(acc)
 
     if request.method == "GET":
         membership = TeamMembership.objects.filter(
@@ -157,6 +292,8 @@ def my_team_view(request: HttpRequest):
         })
 
     if request.method == "POST":
+        if not _registration_phase_open():
+            return _registration_closed_response()
         # A captain must have completed their own profile first (mssv). For
         # Google signups this is enforced by the supplementary-info page.
         if not acc.mssv:
@@ -179,7 +316,16 @@ def my_team_view(request: HttpRequest):
             return JsonResponse({"error": err}, status=400)
 
         # Add creator as member + captain, then link the profile to the account
-        add_member(team, acc.mssv, full_name=acc.full_name, email=acc.email, is_captain=True)
+        add_member(
+            team,
+            acc.mssv,
+            full_name=acc.full_name,
+            email=acc.email,
+            phone=acc.phone,
+            faculty=acc.faculty,
+            school=acc.school,
+            is_captain=True,
+        )
         link_account_profile(acc)
 
         return JsonResponse({
@@ -190,6 +336,8 @@ def my_team_view(request: HttpRequest):
         }, status=201)
 
     if request.method == "PATCH":
+        if not _registration_phase_open():
+            return _registration_closed_response()
         membership = TeamMembership.objects.filter(
             participant__mssv=acc.mssv, is_captain=True,
         ).select_related("team").first()
@@ -231,6 +379,8 @@ def my_team_submit_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    if not _registration_phase_open():
+        return _registration_closed_response()
 
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
@@ -241,7 +391,7 @@ def my_team_submit_view(request: HttpRequest):
     team = membership.team
     schema = get_schema()
     members = get_team_members(team)
-    expected_size = int(schema.get("team_size") or 5)
+    expected_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
     if len(members) != expected_size:
         return JsonResponse({"error": f"team_size_mismatch:expected_{expected_size}"}, status=409)
 
@@ -268,6 +418,36 @@ def my_team_submit_view(request: HttpRequest):
 
 
 @csrf_exempt
+def my_team_member_resolve_view(request: HttpRequest):
+    """POST: resolve a member by MSSV + email without exposing sensitive CCCD."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if not _registration_phase_open():
+        return _registration_closed_response()
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not team_is_editable(membership.team):
+        return JsonResponse({"error": "team_locked"}, status=409)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    payload, error = _member_resolution(data)
+    if error:
+        return JsonResponse({"error": error}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
 def my_team_members_view(request: HttpRequest):
     """POST: add member to own team."""
     if request.method != "POST":
@@ -276,6 +456,8 @@ def my_team_members_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    if not _registration_phase_open():
+        return _registration_closed_response()
 
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
@@ -291,7 +473,7 @@ def my_team_members_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    columns, extra, schema_error = validate_person_submission(data, "member")
+    columns, extra, schema_error = _prepare_member_submission(data, "member")
     if schema_error:
         return JsonResponse({"error": schema_error}, status=400)
 
@@ -323,6 +505,8 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    if not _registration_phase_open():
+        return _registration_closed_response()
 
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
@@ -339,10 +523,7 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
-        columns, extra, schema_error = validate_person_submission(
-            {**data, "mssv": mssv},
-            "member",
-        )
+        columns, extra, schema_error = _prepare_member_submission({**data, "mssv": mssv}, "member")
         if schema_error:
             return JsonResponse({"error": schema_error}, status=400)
 
@@ -404,4 +585,110 @@ def my_team_qr_view(request: HttpRequest):
     return JsonResponse({
         "team_code": team.code,
         "qr_payload": f"t:{team.qr_token}",
+    })
+
+
+def my_team_forms_view(request: HttpRequest):
+    """GET forms the participant's team is allowed to access by phase roster/current phase."""
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    current_phase_key = current_phase.key if current_phase else None
+    current_event = get_current_sub_event()
+
+    team_phase_keys = set(
+        PhaseRoster.objects.filter(team=team).values_list("phase__key", flat=True)
+    )
+    phases_with_roster = set(
+        PhaseRoster.objects.values_list("phase__key", flat=True).distinct()
+    )
+
+    stations = Station.objects.select_related("sub_event__phase").filter(active=True).order_by(
+        "sub_event__phase__order", "sub_event__order", "order", "id"
+    )
+
+    accessible_forms = []
+    for station in stations:
+        if not _has_submission_config(station.submission_config):
+            continue
+
+        phase_key = station.sub_event.phase.key
+        if phase_key in phases_with_roster:
+            if phase_key not in team_phase_keys:
+                continue
+        elif current_phase_key and phase_key != current_phase_key:
+            continue
+        if current_event and station.sub_event_id != current_event.id:
+            continue
+
+        accessible_forms.append(_station_form_payload(station))
+
+    return JsonResponse({
+        "team_code": team.code,
+        "current_phase": current_phase_key,
+        "current_sub_event_id": current_event.id if current_event else None,
+        "accessible_forms": accessible_forms,
+    })
+
+
+def my_experience_view(request: HttpRequest):
+    """GET participant-facing current phase/event context."""
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    team = membership.team if membership else None
+
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    current_event = get_current_sub_event()
+    current_phase_key = current_phase.key if current_phase else None
+
+    in_current_phase = False
+    if team and current_phase:
+        if PhaseRoster.objects.filter(phase=current_phase).exists():
+            in_current_phase = PhaseRoster.objects.filter(phase=current_phase, team=team).exists()
+        else:
+            in_current_phase = current_phase.key == "registration"
+
+    open_forms = []
+    if team and current_event and current_phase and current_event.phase_id == current_phase.id and in_current_phase:
+        stations = Station.objects.select_related("sub_event__phase").filter(
+            sub_event=current_event,
+            active=True,
+            checkin_policy=Station.POLICY_FREE_PLAY,
+        ).order_by("order", "id")
+        for station in stations:
+            if _has_submission_config(station.submission_config):
+                open_forms.append(_station_form_payload(station))
+
+    return JsonResponse({
+        "current_phase": current_phase_key,
+        "current_phase_label": current_phase.label if current_phase else None,
+        "current_sub_event": {
+            "id": current_event.id,
+            "name": current_event.name,
+            "type": current_event.type,
+            "note": current_event.note,
+            "uses_stations": current_event.uses_stations,
+            "phase_key": current_event.phase.key,
+        } if current_event else None,
+        "team_in_current_phase": in_current_phase,
+        "registration_open": current_phase_key == "registration",
+        "open_forms": open_forms,
     })

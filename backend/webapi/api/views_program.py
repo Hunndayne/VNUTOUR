@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from api.models import ProgramPhase, SubEvent
 from api.services.program_service import (
     get_program, set_current_phase, update_phase_dates,
-    create_sub_event, update_sub_event, delete_sub_event,
+    create_sub_event, update_sub_event, delete_sub_event, set_current_sub_event,
 )
 from .views_shared import _json_body, _require_role
 
@@ -44,6 +44,35 @@ def current_phase_view(request: HttpRequest):
         return JsonResponse({"current_phase": phase.key})
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
+
+
+@csrf_exempt
+def current_sub_event_view(request: HttpRequest):
+    """PUT: set current sub-event inside the current phase."""
+    acc, err = _require_role(request, "admin")
+    if err:
+        return err
+
+    if request.method != "PUT":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    event_id = data.get("event_id") or data.get("current_sub_event_id")
+    if not event_id:
+        return JsonResponse({"error": "missing_event_id"}, status=400)
+
+    try:
+        sub_event = set_current_sub_event(int(event_id))
+        return JsonResponse({"current_sub_event_id": sub_event.id})
+    except SubEvent.DoesNotExist:
+        return JsonResponse({"error": "event_not_found"}, status=404)
+    except ValueError as exc:
+        if str(exc) == "event_not_in_current_phase":
+            return JsonResponse({"error": "event_not_in_current_phase"}, status=409)
+        raise
 
 
 @csrf_exempt

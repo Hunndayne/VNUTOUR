@@ -9,14 +9,16 @@ from typing import Optional
 
 from django.utils.dateparse import parse_date, parse_datetime
 
-from api.models import ProgramPhase, SubEvent, PhaseRoster, Team
+from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting
 
 
 def get_program() -> dict:
     """Return the full program structure: phases + sub-events."""
     phases = ProgramPhase.objects.order_by("order")
+    current_event = get_current_sub_event()
     result = {
         "current_phase": None,
+        "current_sub_event_id": current_event.id if current_event else None,
         "phases": [],
     }
     for phase in phases:
@@ -41,6 +43,7 @@ def get_program() -> dict:
                     "uses_stations": se.uses_stations,
                     "note": se.note,
                     "order": se.order,
+                    "is_current": bool(current_event and current_event.id == se.id),
                 }
                 for se in sub_events
             ],
@@ -117,6 +120,30 @@ def create_sub_event(phase_key: str, name: str, **kwargs) -> SubEvent:
     se = SubEvent(phase=phase, name=name, **kwargs)
     se.save()
     return se
+
+
+def get_current_sub_event() -> Optional[SubEvent]:
+    setting = SystemSetting.objects.filter(key="current_sub_event_id").first()
+    if not setting or setting.value in (None, ""):
+        return None
+    try:
+        event_id = int(setting.value)
+    except (TypeError, ValueError):
+        return None
+    return SubEvent.objects.filter(id=event_id).select_related("phase").first()
+
+
+def set_current_sub_event(event_id: int) -> Optional[SubEvent]:
+    sub_event = SubEvent.objects.select_related("phase").get(id=event_id)
+    current_phase = get_current_phase()
+    if current_phase and sub_event.phase_id != current_phase.id:
+      raise ValueError("event_not_in_current_phase")
+
+    SystemSetting.objects.update_or_create(
+        key="current_sub_event_id",
+        defaults={"value": sub_event.id},
+    )
+    return sub_event
 
 
 def update_sub_event(event_id: int, **kwargs) -> SubEvent:

@@ -118,6 +118,7 @@ function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
           <div className="flex flex-wrap items-center gap-2">
             <Badge label={typeMeta.label} cls={typeMeta.cls} />
             {subEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+            {subEvent.isCurrent && <Badge label="Đang mở" cls="bg-trail/12 text-trail" />}
           </div>
           <h3 className="mt-2 truncate text-base font-semibold text-ink">{subEvent.name}</h3>
           <p className="mt-1 text-xs text-ink/45">
@@ -265,9 +266,11 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
 
 function EventManagementPage({
   currentPhase,
+  currentSubEventId,
   phaseSchedule,
   subEventsByPhase,
   onSetCurrentPhase,
+  onSetCurrentSubEvent,
   onUpdatePhaseSchedule,
   onCreateSubEvent,
   onUpdateSubEvent,
@@ -439,11 +442,37 @@ function EventManagementPage({
                   <div className="flex items-center gap-2">
                     <PhaseEventBadge type={selectedSubEvent.type} />
                     {selectedSubEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+                    {selectedSubEvent.isCurrent && <Badge label="Đang mở cho thí sinh" cls="bg-trail/12 text-trail" />}
                   </div>
                 </div>
               </div>
 
               <div className="p-5">
+                {selectedPhase === currentPhase && (
+                  <div className="mb-4 rounded-lg border border-stone bg-paper px-4 py-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Event hiện tại</p>
+                        <p className="mt-1 text-sm text-ink/60">
+                          Chỉ event đang mở trong phase hiện tại mới được hiển thị trên dashboard participant.
+                        </p>
+                      </div>
+                      {!selectedSubEvent.isCurrent ? (
+                        <button
+                          type="button"
+                          onClick={() => onSetCurrentSubEvent(selectedSubEvent.id)}
+                          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.9]"
+                        >
+                          Mở event này
+                        </button>
+                      ) : (
+                        <span className="rounded-full bg-trail/12 px-3 py-1.5 text-xs font-semibold text-trail">
+                          Đang là event hiện tại
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <SubEventEditor
                   key={`${selectedSubEvent.id}-${detailSeed}`}
                   initialEvent={selectedSubEvent}

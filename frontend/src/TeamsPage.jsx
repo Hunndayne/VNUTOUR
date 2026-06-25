@@ -68,6 +68,18 @@ function MemberCard({ member }) {
                 {member.phone && <span>{member.phone}</span>}
               </p>
             )}
+            {(member.school || member.cccd || member.date_of_birth) && (
+              <p className="mt-1 text-[11px] leading-relaxed text-ink/40">
+                {member.school && <span className="mr-3">{member.school}</span>}
+                {member.cccd && <span className="mr-3">CCCD: {member.cccd}</span>}
+                {member.date_of_birth && <span>Ngày sinh: {member.date_of_birth}</span>}
+              </p>
+            )}
+            {member.extra && Object.keys(member.extra).length > 0 && (
+              <p className="mt-1 text-[11px] leading-relaxed text-ink/35">
+                {Object.entries(member.extra).map(([key, value]) => `${key}: ${value}`).join(' · ')}
+              </p>
+            )}
             {member.email_mismatch && (
               <p className="mt-1.5 rounded-md bg-gold/10 px-2 py-1 text-[11px] leading-relaxed text-[#9A6B12]">
                 ⚠ Thành viên đã tạo tài khoản với email khác
@@ -174,6 +186,25 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
                 <QuickStat label="Discord" value={String(withDiscord)} done={withDiscord > 0} accent="discord" />
               </div>
 
+              <div className="px-4 pb-4">
+                <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">
+                  Minh chứng thanh toán
+                </p>
+                <div className={`${CARD} px-4 py-3 text-sm`}>
+                  {team.paymentProof ? (
+                    <a
+                      href={team.paymentProof}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-trail underline underline-offset-4"
+                    >
+                      Mở minh chứng
+                    </a>
+                  ) : (
+                    <span className="text-ink/35">Chưa có minh chứng.</span>
+                  )}
+                </div>
+              </div>
               <div className="px-4 pb-5">
                 <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">
                   Thành viên
@@ -371,6 +402,7 @@ function TeamsPage() {
           provision: detail.provision_state || 'none',
           submittedAt: detail.submitted_at,
           note: detail.approval_note || '',
+          paymentProof: detail.payment_proof || '',
           members: detail.members || [],
         })
       } catch (error) {
@@ -599,3 +631,4 @@ function TeamsPage() {
 }
 
 export default TeamsPage
+

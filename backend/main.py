@@ -1,6 +1,12 @@
 """
 VnuTourBot - Discord Bot for VNU Tour Management
-Main entry point (starts Discord bot and Django API together)
+Main entry point.
+
+Can start:
+- Django API only
+- Django API + Discord bot
+
+Set RUN_DISCORD_BOT=1 to enable the bot. Default is API-only for local dev.
 """
 import asyncio
 import sys
@@ -20,6 +26,10 @@ except Exception:
     pass
 
 from src.bot import VnuTourBot
+
+
+def _should_run_bot() -> bool:
+    return os.getenv("RUN_DISCORD_BOT", "0").lower() in {"1", "true", "yes", "on"}
 
 
 def _start_django_if_enabled():
@@ -62,6 +72,14 @@ def main():
     try:
         # Start web API in background
         dj_proc = _start_django_if_enabled()
+
+        if not _should_run_bot():
+            print("[MAIN] RUN_DISCORD_BOT is off. Django API is running without Discord bot.")
+            if dj_proc is None:
+                print("[MAIN] Nothing else to run. Exiting.")
+                return
+            dj_proc.wait()
+            return
 
         # Create and run bot
         bot = VnuTourBot()

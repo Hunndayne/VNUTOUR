@@ -110,6 +110,9 @@ def teams_collection_view(request: HttpRequest):
                 owner_account.mssv,
                 full_name=owner_account.full_name or owner_account.username,
                 email=owner_account.email,
+                phone=owner_account.phone,
+                faculty=owner_account.faculty,
+                school=owner_account.school,
                 is_captain=True,
             )
             if member_err:
@@ -144,6 +147,7 @@ def team_item_view(request: HttpRequest, team_key: str):
             "owner_username": team.owner_account.username if team.owner_account else None,
             "approval_status": team.approval_status,
             "approval_note": team.approval_note,
+            "payment_proof": team.payment_proof,
             "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
             "reviewed_by": team.reviewed_by.username if team.reviewed_by else None,
             "reviewed_at": team.reviewed_at.isoformat() if team.reviewed_at else None,

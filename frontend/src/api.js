@@ -143,6 +143,7 @@ export function normalizeProgramForFrontend(programPayload = {}) {
 
   return {
     currentPhase: programPayload.current_phase || 'registration',
+    currentSubEventId: programPayload.current_sub_event_id ? String(programPayload.current_sub_event_id) : '',
     phaseSchedule: Object.fromEntries(
       FIXED_PHASES.map((phaseInfo) => {
         const phase = phaseMap.get(phaseInfo.key)
@@ -169,6 +170,7 @@ export function normalizeProgramForFrontend(programPayload = {}) {
             usesStations: Boolean(subEvent.uses_stations),
             note: subEvent.note || '',
             order: subEvent.order ?? 0,
+            isCurrent: Boolean(subEvent.is_current),
           })),
         ]
       }),

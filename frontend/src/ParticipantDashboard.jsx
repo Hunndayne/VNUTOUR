@@ -148,6 +148,7 @@ function explainApiError(error) {
     team_locked: 'Đội đã khóa chỉnh sửa.',
     team_full: 'Đội đã đủ số lượng thành viên.',
     mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
+    mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
     no_team: 'Bạn chưa có đội.',
     already_has_team: 'Tài khoản này đã có đội.',
@@ -285,7 +286,11 @@ function SchemaField({ field, value, onChange, disabled = false }) {
 }
 
 function PersonSchemaFields({ fields, data, onPatch, disabled = false, lockMssv = false }) {
-  const visible = fields.filter((field) => !isSchemaHidden(field, data))
+  const priority = { mssv: 0, email: 1 }
+  const visible = fields
+    .filter((field) => !isSchemaHidden(field, data))
+    .slice()
+    .sort((a, b) => (priority[a.key] ?? 10) - (priority[b.key] ?? 10))
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {visible.map((field) => (
@@ -409,7 +414,50 @@ function ProgressTrail({ profile, team, members }) {
 }
 
 function MemberDrawer({ form, fields, editing, saving, onChange, onClose, onSave }) {
+  const [resolveKey, setResolveKey] = useState('')
+  const [resolveError, setResolveError] = useState('')
+
+  useEffect(() => {
+    if (!form) return
+    const mssv = String(form.mssv || '').trim()
+    const email = String(form.email || '').trim()
+    const key = `${mssv}|${email}`
+    if (!mssv || !email || key === resolveKey) return
+
+    setResolveError('')
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      try {
+        const payload = await apiRequest('/my-team/members/resolve', {
+          method: 'POST',
+          body: { mssv, email },
+        })
+        if (cancelled) return
+        setResolveKey(key)
+        setResolveError('')
+        onChange({
+          ...form,
+          ...(payload.profile || {}),
+          has_account: Boolean(payload.has_account),
+          resolved_fields: payload.fields || fields,
+        })
+      } catch (err) {
+        if (cancelled) return
+        setResolveKey(key)
+        setResolveError(explainApiError(err))
+      }
+    }, 350)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [form?.mssv, form?.email, resolveKey, fields, form, onChange])
+
   if (!form) return null
+  const identityFields = fields.filter((field) => field.key === 'mssv' || field.key === 'email')
+  const visibleFields = form.resolved_fields || identityFields
 
   return (
     <div className="fixed inset-0 z-50">
@@ -428,22 +476,21 @@ function MemberDrawer({ form, fields, editing, saving, onChange, onClose, onSave
         </div>
 
         <form className="flex-1 space-y-4 overflow-y-auto px-5 py-5" onSubmit={onSave}>
+          {resolveError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {resolveError}
+            </div>
+          )}
           <PersonSchemaFields
-            fields={fields}
+            fields={visibleFields}
             data={form}
             lockMssv={editing}
-            onPatch={(patch) => onChange({ ...form, ...patch })}
+            onPatch={(patch) => onChange({
+              ...form,
+              ...patch,
+              ...(('mssv' in patch || 'email' in patch) ? { resolved_fields: null, has_account: false } : {}),
+            })}
           />
-          <label className="flex items-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm text-[#20312B]/65">
-            <input
-              type="checkbox"
-              checked={form.has_account}
-              disabled
-              readOnly
-              className="h-4 w-4 rounded border-[#DCD8CC] text-[#1F7A6B] focus:ring-[#1F7A6B]/20"
-            />
-            Thành viên đã có tài khoản web
-          </label>
         </form>
 
         <div className="border-t border-[#DCD8CC] bg-white px-5 py-4">
@@ -495,6 +542,86 @@ function LoadingState() {
   )
 }
 
+function EventExperienceCard({ experience }) {
+  const currentEvent = experience?.current_sub_event
+  if (!currentEvent) {
+    return (
+      <div className={`${PARTICIPANT_CARD} p-5`}>
+        <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Đang mở</p>
+        <h2 className="mt-1 font-display text-xl font-bold text-ink">Chưa mở event cho phase này</h2>
+        <p className="mt-3 text-sm leading-6 text-ink/55">
+          BTC chưa chọn event hiện tại. Dashboard sẽ cập nhật ngay khi admin mở event phù hợp.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
+      <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="px-5 py-6 sm:px-7">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge label={experience.current_phase_label || 'Phase hiện tại'} cls="bg-trail/12 text-trail" />
+            <Badge label={currentEvent.type} cls="bg-gold/15 text-[#9A6B12]" />
+          </div>
+          <h1 className="mt-4 max-w-2xl font-display text-3xl font-bold tracking-normal text-ink sm:text-4xl">
+            {currentEvent.name}
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/55 sm:text-base">
+            {currentEvent.note || 'Nội dung của event đang mở sẽ hiển thị ở đây cho thí sinh thuộc phase hiện tại.'}
+          </p>
+        </div>
+
+        <div className="border-t border-[#DCD8CC] bg-[#F3F4F1]/65 p-5 lg:border-l lg:border-t-0">
+          <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Quyền tham gia</p>
+          <h2 className="mt-2 font-display text-xl font-bold text-ink">
+            {experience.team_in_current_phase ? 'Đội của bạn đang trong phase này' : 'Đội của bạn không thuộc phase này'}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-ink/55">
+            {experience.team_in_current_phase
+              ? 'Bạn chỉ nhìn thấy nội dung của event hiện tại và các form đang mở trong event đó.'
+              : 'Nếu đội không nằm trong roster của phase hiện tại, các form và nội dung thi sẽ không được mở.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OpenFormsCard({ forms }) {
+  return (
+    <div className={`${PARTICIPANT_CARD} p-5`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Form đang mở</p>
+          <h2 className="mt-1 font-display text-lg font-bold text-ink">Biểu mẫu tự do vào chơi</h2>
+        </div>
+        <span className="font-mono text-xs text-ink/40">{forms.length} form</span>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {forms.map((form) => (
+          <a
+            key={form.station_id}
+            href={`/form?stationId=${form.station_id}`}
+            className="block rounded-lg border border-[#DCD8CC] bg-white px-4 py-3 transition hover:bg-[#F3F4F1]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-ink">{form.station_name}</p>
+                <p className="mt-1 text-xs text-ink/45">{form.station_location || form.event_name}</p>
+              </div>
+              <span className="rounded-full bg-[#1F7A6B]/12 px-2.5 py-1 text-xs font-semibold text-[#1F7A6B]">
+                Mở form
+              </span>
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ParticipantDashboard() {
   const [user, setUser] = useState(() => getStoredUser() || {
     username: 'participant',
@@ -515,12 +642,14 @@ function ParticipantDashboard() {
   const [apiError, setApiError] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [registrationSchema, setRegistrationSchema] = useState(null)
+  const [experience, setExperience] = useState(null)
 
   const loadDashboard = async () => {
     const me = await apiRequest('/auth/me')
     const profilePayload = await apiRequest('/me/profile')
     const teamPayload = await apiRequest('/my-team')
     const schemaPayload = await apiRequest('/register/schema', { auth: false })
+    const experiencePayload = await apiRequest('/me/experience')
     let teamDetail = null
 
     if (teamPayload?.team?.code) {
@@ -536,6 +665,7 @@ function ParticipantDashboard() {
     setMembers(Array.isArray(teamDetail?.members) ? teamDetail.members : Array.isArray(teamPayload?.members) ? teamPayload.members : [])
     setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
     setRegistrationSchema(schemaPayload)
+    setExperience(experiencePayload)
   }
 
   useEffect(() => {
@@ -569,6 +699,8 @@ function ParticipantDashboard() {
   const provision = PROVISION[team?.provision_state || 'none']
   const nextAction = useMemo(() => getNextAction(profile, team, members), [profile, team, members])
   const accountCount = members.filter((member) => member.has_account).length
+  const registrationOpen = experience?.registration_open !== false
+  const currentPhase = experience?.current_phase || 'registration'
   const personFields = useMemo(
     () => (registrationSchema?.person_fields || []).filter((field) => field.enabled !== false),
     [registrationSchema],
@@ -577,7 +709,7 @@ function ParticipantDashboard() {
     () => (registrationSchema?.team_fields || []).filter((field) => field.enabled !== false),
     [registrationSchema],
   )
-  const maxMembers = registrationSchema?.team_size || MAX_MEMBERS
+  const maxMembers = registrationSchema?.team_size_max || registrationSchema?.team_size || MAX_MEMBERS
 
   const openMemberDrawer = (index = null) => {
     const base = index === null ? blankMember() : members[index]
@@ -650,7 +782,7 @@ function ParticipantDashboard() {
 
   const saveMember = async (event) => {
     event?.preventDefault?.()
-    if (!memberForm?.mssv || !memberForm?.full_name) return
+    if (!memberForm?.mssv || !memberForm?.email) return
 
     await withBusy('save-member', async () => {
       if (drawer?.index === null) {
@@ -691,6 +823,7 @@ function ParticipantDashboard() {
   })
 
   const handleNextAction = () => {
+    if (!registrationOpen) return
     if (nextAction.kind === 'create-team') createTeam()
     if (nextAction.kind === 'add-member') openMemberDrawer()
     if (nextAction.kind === 'submit') submitTeam()
@@ -769,45 +902,54 @@ function ParticipantDashboard() {
           <SettingsPage />
         ) : (
           <>
-        <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
-          <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
-            <div className="px-5 py-6 sm:px-7">
-              <div className="flex flex-wrap items-center gap-2">
-                {team ? <Badge label={status.label} cls={status.cls} /> : <Badge label="Chưa có đội" cls="bg-[#20312B]/[0.07] text-[#20312B]/50" />}
-                {team && <span className="font-mono text-xs text-ink/35">{team.team_id}</span>}
+        {registrationOpen ? (
+          <>
+            <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
+              <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
+                <div className="px-5 py-6 sm:px-7">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {team ? <Badge label={status.label} cls={status.cls} /> : <Badge label="Chưa có đội" cls="bg-[#20312B]/[0.07] text-[#20312B]/50" />}
+                    {team && <span className="font-mono text-xs text-ink/35">{team.team_id}</span>}
+                  </div>
+                  <h1 className="mt-4 max-w-2xl font-display text-3xl font-bold tracking-normal text-ink sm:text-4xl">
+                    {team ? team.team_name : 'Bắt đầu đăng ký đội VNUTour'}
+                  </h1>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/55 sm:text-base">
+                    Quản lý hồ sơ, danh sách thành viên và trạng thái duyệt trong một nơi để đội trưởng luôn biết bước tiếp theo.
+                  </p>
+                </div>
+
+                <div className="border-t border-[#DCD8CC] bg-[#F3F4F1]/65 p-5 lg:border-l lg:border-t-0">
+                  <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Việc cần làm</p>
+                  <h2 className="mt-2 font-display text-xl font-bold text-ink">{nextAction.title}</h2>
+                  <p className="mt-2 text-sm leading-6 text-ink/55">{nextAction.body}</p>
+                  <button
+                    type="button"
+                    onClick={handleNextAction}
+                    disabled={Boolean(busyAction)}
+                    className={`mt-5 w-full ${PRIMARY_BUTTON}`}
+                  >
+                    {nextAction.action}
+                    <Icon name="chevronR" className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
-              <h1 className="mt-4 max-w-2xl font-display text-3xl font-bold tracking-normal text-ink sm:text-4xl">
-                {team ? team.team_name : 'Bắt đầu đăng ký đội VNUTour'}
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/55 sm:text-base">
-                Quản lý hồ sơ, danh sách thành viên và trạng thái duyệt trong một nơi để đội trưởng luôn biết bước tiếp theo.
-              </p>
-            </div>
+            </section>
 
-            <div className="border-t border-[#DCD8CC] bg-[#F3F4F1]/65 p-5 lg:border-l lg:border-t-0">
-              <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Việc cần làm</p>
-              <h2 className="mt-2 font-display text-xl font-bold text-ink">{nextAction.title}</h2>
-              <p className="mt-2 text-sm leading-6 text-ink/55">{nextAction.body}</p>
-              <button
-                type="button"
-                onClick={handleNextAction}
-                disabled={Boolean(busyAction)}
-                className={`mt-5 w-full ${PRIMARY_BUTTON}`}
-              >
-                {nextAction.action}
-                <Icon name="chevronR" className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <ProgressTrail profile={profile} team={team} members={members} />
+            <ProgressTrail profile={profile} team={team} members={members} />
+          </>
+        ) : (
+          <>
+            <EventExperienceCard experience={experience} />
+            {experience?.open_forms?.length > 0 ? <OpenFormsCard forms={experience.open_forms} /> : null}
+          </>
+        )}
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
-            {!team ? (
+            {registrationOpen && !team ? (
               <EmptyTeamCard busy={busyAction === 'create-team'} onCreate={createTeam} />
-            ) : (
+            ) : registrationOpen && team ? (
               <div className={`${PARTICIPANT_CARD} p-5`}>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -826,13 +968,15 @@ function ParticipantDashboard() {
                   </div>
                 )}
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_160px]">
-                  <Field
-                    label="Tên đội"
-                    value={teamNameDraft}
-                    disabled={!editable}
-                    onChange={setTeamNameDraft}
-                  />
+                <div className={`mt-5 ${members.length === maxMembers ? 'grid gap-3 sm:grid-cols-[1fr_160px]' : ''}`}>
+                  {members.length === maxMembers && (
+                    <Field
+                      label="Tên đội"
+                      value={teamNameDraft}
+                      disabled={!editable}
+                      onChange={setTeamNameDraft}
+                    />
+                  )}
                   <Field label="Mã đội" value={team.team_id} disabled onChange={() => {}} />
                 </div>
                 {teamFields.some((field) => field.key === 'payment_proof') && (
@@ -894,8 +1038,19 @@ function ParticipantDashboard() {
                   </button>
                 </div>
               </div>
+            ) : (
+              <div className={`${PARTICIPANT_CARD} p-5`}>
+                <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Phase hiện tại</p>
+                <h2 className="mt-1 font-display text-lg font-bold text-ink">
+                  {experience?.current_phase_label || currentPhase}
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-ink/55">
+                  Giai đoạn đăng ký đã đóng. Participant dashboard hiện ưu tiên nội dung thi đấu của event đang mở thay vì các thao tác tạo đội và gửi duyệt.
+                </p>
+              </div>
             )}
 
+            {registrationOpen ? (
             <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div className="flex items-center justify-between border-b border-[#DCD8CC] px-5 py-4">
                 <div>
@@ -950,9 +1105,11 @@ function ParticipantDashboard() {
                 )}
               </div>
             </div>
+            ) : null}
           </div>
 
           <aside className="space-y-5">
+            {registrationOpen ? (
             <form className={`${PARTICIPANT_CARD} p-5`} onSubmit={saveProfile}>
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -977,6 +1134,7 @@ function ParticipantDashboard() {
                 {busyAction === 'save-profile' ? 'Đang lưu...' : 'Lưu hồ sơ'}
               </button>
             </form>
+            ) : null}
 
             <div className={`${PARTICIPANT_CARD} p-5`}>
               <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Ngày thi</p>
@@ -1034,4 +1192,3 @@ function ParticipantDashboard() {
 }
 
 export default ParticipantDashboard
-

@@ -24,6 +24,22 @@ def _get_setting(key: str, default=None):
         return default
 
 
+def _sync_participant_from_account(participant: Participant, account: Account) -> list[str]:
+    changed = []
+    for participant_field, account_field in (
+        ("email", "email"),
+        ("full_name", "full_name"),
+        ("phone", "phone"),
+        ("school", "school"),
+        ("faculty", "faculty"),
+    ):
+        value = getattr(account, account_field, None)
+        if value and getattr(participant, participant_field) != value:
+            setattr(participant, participant_field, value)
+            changed.append(participant_field)
+    return changed
+
+
 def create_team(
     name: str,
     owner_account: Account | None = None,
@@ -92,7 +108,18 @@ def add_member(
     if current_count >= max_members:
         return None, "team_full"
 
-    # Check if participant already in another team
+    # Check if participant is already in a submitted (pending/approved) team
+    submitted_member = TeamMembership.objects.filter(
+        participant__mssv=mssv,
+        team__approval_status__in=[Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED],
+    ).select_related("team").first()
+    if submitted_member:
+        if submitted_member.team_id != team.id:
+            return None, "mssv_in_submitted_team"
+        # Same team already submitted — can't add more members
+        return None, "team_locked"
+
+    # Check if participant already in another (draft/rejected) team
     existing_member = TeamMembership.objects.filter(
         participant__mssv=mssv,
     ).select_related("team").first()
@@ -244,7 +271,10 @@ def get_team_members(team: Team) -> list[dict]:
         p = m.participant
         account = Account.objects.filter(
             mssv=p.mssv, is_active=True,
-        ).only("email").first()
+        ).only("email", "full_name", "phone", "school", "faculty", "mssv").first()
+        if account:
+            link_account_profile(account)
+            p.refresh_from_db()
         # The override replaces participant.email with the account email, so the
         # original (captain-entered) email survives only in the audit trail.
         last_override = MssvLinkAudit.objects.filter(
@@ -294,8 +324,12 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
     if not participant:
         return None, None
 
-    # Already linked to this same account — idempotent no-op.
+    # Already linked to this same account, but still keep account-owned fields
+    # in sync because team membership views read from Participant.
     if participant.account_id == account.id:
+        changed = _sync_participant_from_account(participant, account)
+        if changed:
+            participant.save(update_fields=changed + ["updated_at"])
         return participant, None
 
     # Rare: mssv previously claimed by a different account (e.g. mssv reassigned).
@@ -321,12 +355,7 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
     with transaction.atomic():
         participant.account = account
         update_fields = ["account", "updated_at"]
-        if account.email and account.email != participant.email:
-            participant.email = account.email
-            update_fields.append("email")
-        if account.full_name and account.full_name != participant.full_name:
-            participant.full_name = account.full_name
-            update_fields.append("full_name")
+        update_fields.extend(_sync_participant_from_account(participant, account))
         participant.save(update_fields=update_fields)
 
         if email_differs:

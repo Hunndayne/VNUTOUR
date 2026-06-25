@@ -13,6 +13,8 @@ const STAGES = [
 function explain(code, schema) {
   if (!code) return ''
   const [kind, who, key] = code.split(':')
+  const minTeamSize = schema?.team_size_min || 1
+  const maxTeamSize = schema?.team_size_max || schema?.team_size || 5
   const labelOf = (k) =>
     schema?.person_fields?.find((f) => f.key === k)?.label || k
   const whoLabel = (w) =>
@@ -24,7 +26,9 @@ function explain(code, schema) {
     case 'invalid_date': return `Ngày sinh của ${whoLabel(who)} chưa hợp lệ.`
     case 'mssv_in_other_team': return `MSSV ${who} đã thuộc một đội khác.`
     case 'duplicate_mssv_in_team': return 'Có MSSV bị trùng giữa các thành viên trong đội.'
-    case 'team_size_mismatch': return `Đội cần đủ ${schema?.team_size || 5} thành viên.`
+    case 'team_size_mismatch': return `Đội cần đủ ${maxTeamSize} thành viên.`
+    case 'team_size_out_of_range': return `Số người tham gia phải từ ${minTeamSize} đến ${maxTeamSize}.`
+    case 'team_too_large': return 'Số người tham gia không được vượt quá ' + maxTeamSize + '.'
     default: return 'Có lỗi xảy ra, vui lòng kiểm tra lại thông tin.'
   }
 }
@@ -197,22 +201,44 @@ export default function RegisterPage() {
   const [teamName, setTeamName] = useState('')
   const [paymentProof, setPaymentProof] = useState('')
   const [captain, setCaptain] = useState({})
-  const [members, setMembers] = useState([]) // length = team_size - 1
+  const [members, setMembers] = useState([]) // length = teamMemberCount - 1
   const [openMember, setOpenMember] = useState(0) // 0 = captain
+  const [teamMemberCount, setTeamMemberCount] = useState(1)
 
   useEffect(() => {
     apiRequest('/register/schema', { auth: false })
       .then((s) => {
         setSchema(s)
-        setMembers(Array.from({ length: (s.team_size || 5) - 1 }, () => ({})))
       })
       .catch(() => setLoadError(true))
   }, [])
+
+  // Sync members array when teamMemberCount changes
+  useEffect(() => {
+    if (!schema) return
+    const capacity = teamMemberCount - 1 // non-captain slots needed
+    setMembers((prev) => {
+      if (prev.length === capacity) return prev
+      // Preserve existing data; add empty slots at the end
+      if (capacity > prev.length) {
+        return [...prev, ...Array.from({ length: capacity - prev.length }, () => ({}))]
+      }
+      return prev.slice(0, capacity)
+    })
+  }, [teamMemberCount, schema])
 
   const personFields = useMemo(
     () => (schema?.person_fields || []).filter((f) => f.enabled !== false),
     [schema],
   )
+  const minTeamSize = schema?.team_size_min || 1
+  const maxTeamSize = schema?.team_size_max || schema?.team_size || 5
+  const showTeamName = teamMemberCount === maxTeamSize
+
+  useEffect(() => {
+    if (!schema) return
+    setTeamMemberCount((count) => Math.min(maxTeamSize, Math.max(minTeamSize, count)))
+  }, [schema, minTeamSize, maxTeamSize])
 
   const teamDoneCount = useMemo(() => {
     if (!schema) return 0
@@ -268,7 +294,7 @@ export default function RegisterPage() {
       } else {
         const payload = await apiRequest('/register/team', {
           auth: false, method: 'POST',
-          body: { team_name: teamName, payment_proof: paymentProof, captain, members },
+          body: { team_name: showTeamName ? teamName : '', payment_proof: paymentProof, captain, members },
         })
         setDone(payload)
       }
@@ -318,7 +344,7 @@ export default function RegisterPage() {
           />
           <ModeCard
             title={`Đăng ký theo đội`}
-            desc={`Một đội đủ ${schema.team_size || 5} thành viên. Đội trưởng đứng ra ghi danh cho cả đội.`}
+            desc={`Đội từ ${minTeamSize} đến ${maxTeamSize} thành viên. Đội trưởng đứng ra ghi danh cho cả đội.`}
             icon="users"
             onClick={() => setMode('team')}
           />
@@ -344,15 +370,20 @@ export default function RegisterPage() {
               {/* Team identity */}
               <div className="rounded-2xl border border-stone bg-white p-6">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {(schema.team_fields || []).map((tf) => (
-                    <div key={tf.key} className={tf.help ? 'sm:col-span-2' : ''}>
-                      <Field
-                        field={tf}
-                        value={tf.key === 'team_name' ? teamName : paymentProof}
-                        onChange={(v) => tf.key === 'team_name' ? setTeamName(v) : setPaymentProof(v)}
-                      />
-                    </div>
-                  ))}
+                  {schema.team_fields?.map((tf) => {
+                    if (tf.key === 'team_name') {
+                      return showTeamName ? (
+                        <div key={tf.key} className={tf.help ? 'sm:col-span-2' : ''}>
+                          <Field field={tf} value={teamName} onChange={(v) => setTeamName(v)} />
+                        </div>
+                      ) : null
+                    }
+                    return (
+                      <div key={tf.key} className={tf.help ? 'sm:col-span-2' : ''}>
+                        <Field field={tf} value={paymentProof} onChange={(v) => setPaymentProof(v)} />
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -360,9 +391,23 @@ export default function RegisterPage() {
               <div className="rounded-2xl border border-stone bg-white p-6">
                 <div className="mb-4 flex items-center justify-between gap-4">
                   <h2 className="font-display text-lg font-semibold text-ink">Hộ chiếu đội</h2>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-xs text-ink/45">{teamDoneCount}/{schema.team_size || 5}</span>
-                    <ProgressTrail total={schema.team_size || 5} done={teamDoneCount} />
+                  <div className="flex shrink-0 items-center gap-3">
+                    {/* Member count selector */}
+                    <label className="text-[13px] text-ink/60">
+                      Số người:{' '}
+                      <select
+                        value={teamMemberCount}
+                        onChange={(e) => setTeamMemberCount(Number(e.target.value))}
+                        className="rounded border border-stone bg-paper/60 px-2 py-1 text-xs outline-none"
+                      >
+                        {Array.from({ length: maxTeamSize - minTeamSize + 1 }).map((_, i) => {
+                          const val = minTeamSize + i
+                          return <option key={val} value={val}>{val}</option>
+                        })}
+                      </select>
+                    </label>
+                    <span className="font-mono text-xs text-ink/45">{teamDoneCount}/{teamMemberCount}</span>
+                    <ProgressTrail total={teamMemberCount} done={teamDoneCount} />
                   </div>
                 </div>
 

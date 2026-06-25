@@ -118,11 +118,12 @@ def default_schema() -> dict:
         "version": 1,
         "fee_note": "Lệ phí tham gia: 25.000 VNĐ/sinh viên.",
         "modes": ["individual", "team"],
-        "team_size": 5,
+        "team_size_min": 1,
+        "team_size_max": 5,
         "person_fields": person_fields,
         "team_fields": [
             {"key": "team_name", "label": "Tên đội", "type": "text", "required": True, "enabled": True,
-             "help": "Tên đội không dài quá 5 từ, lịch sự và vui vẻ."},
+             "help": "Tên đội không dài quá 5 từ, lịch sự và vui vẻ.", "show_when_at_max_size": True},
             {"key": "payment_proof", "label": "Ảnh minh chứng thanh toán", "type": "file",
              "required": True, "enabled": True, "help": "Momo / Internet Banking."},
         ],
@@ -247,8 +248,6 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     """
     schema = get_schema()
     team_name = (data.get("team_name") or "").strip()
-    if not team_name:
-        return None, "missing:team:team_name"
 
     captain_data = data.get("captain") or {}
     members_data = data.get("members") or []
@@ -264,10 +263,16 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
             return None, err
         validated_members.append((cols, ex))
 
-    # Enforce team size from schema (captain + members).
-    expected = schema.get("team_size", 5)
-    if 1 + len(validated_members) != expected:
-        return None, f"team_size_mismatch:expected_{expected}"
+    # Enforce team size range from schema (captain + members).
+    min_size = schema.get("team_size_min", 1) if isinstance(schema, dict) else 1
+    max_size = schema.get("team_size_max", 5) if isinstance(schema, dict) else 5
+    total_members = len(validated_members) + 1
+    if total_members < min_size or total_members > max_size:
+        return None, f"team_size_out_of_range:{min_size}-{max_size}"
+    if total_members == max_size and not team_name:
+        return None, "missing:team:team_name"
+    if not team_name:
+        team_name = f"Pending team {cap_cols['mssv']}"
 
     # Reject duplicate MSSV within the same submission.
     all_mssv = [cap_cols["mssv"]] + [c["mssv"] for c, _ in validated_members]

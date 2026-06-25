@@ -768,6 +768,14 @@ function AdminDashboard() {
     await loadProgram()
   })
 
+  const setCurrentSubEvent = (eventId) => withBusy(`current-sub-event:${eventId}`, async () => {
+    await apiRequest('/program/current-sub-event', {
+      method: 'PUT',
+      body: { event_id: eventId },
+    })
+    await loadProgram()
+  })
+
   const createSubEventInPhase = (phaseKey, draft) => withBusy(`create-event:${phaseKey}`, async () => {
     await apiRequest(`/program/phases/${phaseKey}/sub-events`, {
       method: 'POST',
@@ -868,9 +876,11 @@ function AdminDashboard() {
             ) : activeTab === 'events' ? (
               <EventManagementPage
                 currentPhase={programState.currentPhase}
+                currentSubEventId={programState.currentSubEventId}
                 phaseSchedule={programState.phaseSchedule}
                 subEventsByPhase={programState.subEventsByPhase}
                 onSetCurrentPhase={setCurrentPhase}
+                onSetCurrentSubEvent={setCurrentSubEvent}
                 onUpdatePhaseSchedule={updatePhaseSchedule}
                 onCreateSubEvent={createSubEventInPhase}
                 onUpdateSubEvent={updateSubEventInPhase}

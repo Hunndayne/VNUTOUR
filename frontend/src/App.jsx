@@ -4,6 +4,7 @@ import CheckinPage from './CheckinPage.jsx'
 import LoginPage from './LoginPage.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import ParticipantDashboard from './ParticipantDashboard.jsx'
+import FormResponses from './FormResponses.jsx'
 import { getStoredAuthToken, getStoredUser, redirectByRole } from './api.js'
 
 function App() {
@@ -57,6 +58,18 @@ function App() {
         <CheckinPage />
       </div>
     )
+  }
+
+  if (path === '/form') {
+    if (!isAuthenticated) {
+      window.location.replace('/')
+      return null
+    }
+    if (user.role !== 'participant') {
+      redirectByRole(user.role)
+      return null
+    }
+    return <FormResponses />
   }
 
   if (path === '/' || path === '/landing') {
