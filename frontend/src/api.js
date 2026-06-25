@@ -1,6 +1,10 @@
 import { FIXED_PHASES } from './adminProgram.js'
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://10.147.17.251:8080/api'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+
+if (!API_BASE_URL) {
+  throw new Error('missing_vite_api_base_url')
+}
 
 const AUTH_TOKEN_KEY = 'authToken'
 const USER_KEY = 'user'

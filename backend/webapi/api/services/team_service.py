@@ -11,7 +11,7 @@ from typing import Optional, Tuple, List
 from django.db import IntegrityError, transaction
 
 from api.models import (
-    Account, Participant, Team, TeamMembership, ProgramPhase, SystemSetting,
+    Account, Participant, Team, TeamMembership, ProgramPhase, PhaseRoster, SystemSetting,
     MssvLinkAudit,
 )
 
@@ -40,6 +40,31 @@ def _sync_participant_from_account(participant: Participant, account: Account) -
     return changed
 
 
+def _ensure_default_qualifying_roster(team: Team) -> None:
+    """Approved registration teams are placed into qualifying by default."""
+    phase = ProgramPhase.objects.filter(key="qualifying").first()
+    if not phase:
+        return
+    PhaseRoster.objects.update_or_create(
+        phase=phase,
+        team=team,
+        defaults={
+            "origin": PhaseRoster.ORIGIN_APPROVED,
+            "qualified_from_phase": None,
+            "note": "Auto-added when team was approved from registration.",
+        },
+    )
+
+
+def ensure_default_phase_roster_for_team(team: Team) -> None:
+    """Backfill roster defaults for already-approved legacy teams."""
+    if not team or team.approval_status != Team.APPROVAL_APPROVED:
+        return
+    if PhaseRoster.objects.filter(team=team).exists():
+        return
+    _ensure_default_qualifying_roster(team)
+
+
 def create_team(
     name: str,
     owner_account: Account | None = None,
@@ -64,6 +89,8 @@ def create_team(
 
     try:
         team.save()
+        if auto_approve:
+            _ensure_default_qualifying_roster(team)
         return team, None
     except IntegrityError:
         return None, "team_code_conflict"
@@ -247,6 +274,7 @@ def approve_team(team: Team, reviewer: Account) -> Team:
         "approval_status", "approval_note", "reviewed_by", "reviewed_at",
         "provision_state", "updated_at",
     ])
+    _ensure_default_qualifying_roster(team)
     return team
 
 

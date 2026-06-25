@@ -14,7 +14,7 @@ from api.services.program_service import get_current_sub_event
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
-    link_account_profile,
+    link_account_profile, ensure_default_phase_roster_for_team,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -277,6 +277,7 @@ def my_team_view(request: HttpRequest):
             return JsonResponse({"team": None, "members": []})
 
         team = membership.team
+        ensure_default_phase_roster_for_team(team)
         return JsonResponse({
             "team": {
                 "code": team.code,
@@ -576,6 +577,7 @@ def my_team_qr_view(request: HttpRequest):
         return JsonResponse({"error": "no_team"}, status=404)
 
     team = membership.team
+    ensure_default_phase_roster_for_team(team)
     if team.approval_status != Team.APPROVAL_APPROVED:
         return JsonResponse({"error": "team_not_approved"}, status=403)
 
@@ -603,6 +605,7 @@ def my_team_forms_view(request: HttpRequest):
         return JsonResponse({"error": "no_team"}, status=404)
 
     team = membership.team
+    ensure_default_phase_roster_for_team(team)
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
     current_phase_key = current_phase.key if current_phase else None
     current_event = get_current_sub_event()
@@ -654,6 +657,8 @@ def my_experience_view(request: HttpRequest):
         participant__mssv=acc.mssv,
     ).select_related("team").first()
     team = membership.team if membership else None
+    if team:
+        ensure_default_phase_roster_for_team(team)
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
     current_event = get_current_sub_event()
