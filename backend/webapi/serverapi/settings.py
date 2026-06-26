@@ -88,3 +88,11 @@ CORS_ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "0") == "1"
 _cors_allowed = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
 if _cors_allowed:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_allowed.split(",") if o.strip()]
+
+# Email / SMTP
+EMAIL_HOST = os.environ.get("SMTP_HOST", "")
+EMAIL_PORT = int(os.environ.get("SMTP_PORT", "587"))
+EMAIL_USE_TLS = os.environ.get("SMTP_USE_TLS", "1") == "1"
+EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+EMAIL_FROM = os.environ.get("SMTP_FROM", "noreply@vnutour.vn")

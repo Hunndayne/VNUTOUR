@@ -5,7 +5,9 @@ Discord service — provisioning status, retry, broadcasts.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
+
+from django.db.models import Q
 
 from api.models import Account, Team, DiscordBroadcast, Participant, TeamMembership
 
@@ -73,12 +75,35 @@ def mark_provision_failed(team_code: str, error: str) -> Team:
     return team
 
 
-def list_members() -> list[dict]:
-    """Return the web<->Discord mapping for every team member."""
+def list_members(query: str = "", linked: str = "all", limit: int = 200) -> tuple[list[dict], dict[str, int]]:
+    """Return the web<->Discord mapping for team members with server-side filtering."""
     memberships = TeamMembership.objects.select_related(
         "participant", "team",
-    ).order_by("team__code")
-    return [
+    )
+
+    query = (query or "").strip()
+    if query:
+        memberships = memberships.filter(
+            Q(participant__mssv__icontains=query)
+            | Q(participant__full_name__icontains=query)
+            | Q(team__code__icontains=query)
+            | Q(team__name__icontains=query)
+            | Q(participant__discord_id__icontains=query)
+        )
+
+    counts = {
+        "all": memberships.count(),
+        "linked": memberships.exclude(participant__discord_id__isnull=True).count(),
+        "unlinked": memberships.filter(participant__discord_id__isnull=True).count(),
+    }
+
+    if linked == "linked":
+        memberships = memberships.exclude(participant__discord_id__isnull=True)
+    elif linked == "unlinked":
+        memberships = memberships.filter(participant__discord_id__isnull=True)
+
+    memberships = memberships.order_by("team__code", "participant__mssv")[:limit]
+    return ([
         {
             "mssv": m.participant.mssv,
             "full_name": m.participant.full_name,
@@ -88,7 +113,7 @@ def list_members() -> list[dict]:
             "linked": m.participant.discord_id is not None,
         }
         for m in memberships
-    ]
+    ], counts)
 
 
 def sync_member(mssv: str) -> Tuple[Optional[Participant], Optional[str]]:

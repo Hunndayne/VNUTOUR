@@ -32,9 +32,12 @@ def _resolve_team_from_scan(raw_code: str) -> Team | None:
 def create_station(sub_event_id: int, code: str, name: str, **kwargs) -> Station:
     """Create a station for a sub-event."""
     sub_event = SubEvent.objects.get(id=sub_event_id)
-    station = Station(sub_event=sub_event, code=code, name=name, **kwargs)
-    station.save()
-    return station
+    try:
+        station = Station(sub_event=sub_event, code=code, name=name, **kwargs)
+        station.save()
+        return station
+    except IntegrityError as exc:
+        raise ValueError("duplicate_station_code") from exc
 
 
 def update_station(station_id: int, **kwargs) -> Station:

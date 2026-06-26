@@ -258,7 +258,24 @@ def admin_accounts_view(request: HttpRequest):
         return err
 
     if request.method == "GET":
-        qs = Account.objects.all().order_by("username")
+        qs = Account.objects.all()
+        q = str((request.GET.get("q") or "").strip())
+        if q:
+            qs = qs.filter(
+                Q(username__icontains=q)
+                | Q(email__icontains=q)
+                | Q(mssv__icontains=q)
+                | Q(full_name__icontains=q),
+            )
+
+        counts = {
+            "all": qs.count(),
+            "admin": qs.filter(role=Account.ROLE_ADMIN).count(),
+            "collab": qs.filter(role=Account.ROLE_COLLAB).count(),
+            "participant": qs.filter(role=Account.ROLE_PARTICIPANT).count(),
+            "inactive": qs.filter(is_active=False).count(),
+        }
+
         role = request.GET.get("role")
         if role:
             qs = qs.filter(role=role)
@@ -267,6 +284,7 @@ def admin_accounts_view(request: HttpRequest):
             qs = qs.filter(is_active=True)
         elif active == "0":
             qs = qs.filter(is_active=False)
+        qs = qs.order_by("username")
 
         try:
             page = max(1, int(request.GET.get("page", "1")))
@@ -292,6 +310,7 @@ def admin_accounts_view(request: HttpRequest):
                 }
                 for a in qs[offset:offset + limit]
             ],
+            "counts": counts,
             "page": page, "limit": limit, "total": total,
         })
 

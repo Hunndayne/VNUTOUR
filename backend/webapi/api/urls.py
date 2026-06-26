@@ -14,6 +14,7 @@ from .urls_checkin import urlpatterns as checkin_patterns
 from .urls_score import urlpatterns as score_patterns
 from .urls_discord import urlpatterns as discord_patterns
 from .urls_dashboard import urlpatterns as dashboard_patterns
+from .urls_email import urlpatterns as email_patterns
 
 urlpatterns = (
     auth_patterns
@@ -26,4 +27,5 @@ urlpatterns = (
     + score_patterns
     + discord_patterns
     + dashboard_patterns
+    + email_patterns
 )

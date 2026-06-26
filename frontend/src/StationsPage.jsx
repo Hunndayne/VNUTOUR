@@ -158,6 +158,7 @@ function createSubmissionConfig(submission = {}) {
 function createBlankStation() {
   return {
     id: '',
+    code: '',
     order: 0,
     name: '',
     location: '',
@@ -694,6 +695,7 @@ function stationFromApi(station, sessions = []) {
   const { teamsHere, teamsDone } = mapSessionsToStationState(sessions)
   return createStation({
     id: String(station.id),
+    code: station.code || '',
     order: station.order ?? 0,
     name: station.name || '',
     location: station.location || '',
@@ -737,7 +739,7 @@ async function fetchStationsForEvent(phaseKey, eventId) {
 function makeStationId(phase, stations) {
   const prefix = PHASE_PREFIX[phase] ?? 'ST'
   const nextNumber = stations.reduce((max, station) => {
-    const matched = String(station.id).match(/(\d+)$/)
+    const matched = String(station.code || station.id || '').match(/(\d+)$/)
     return Math.max(max, matched ? Number(matched[1]) : 0)
   }, 0) + 1
 

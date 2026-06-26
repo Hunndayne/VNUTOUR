@@ -70,7 +70,14 @@ def members_view(request: HttpRequest):
     acc, err = _require_role(request, Account.ROLE_ADMIN)
     if err:
         return err
-    return JsonResponse({"items": list_members()})
+    q = str((request.GET.get("q") or "").strip())
+    linked = str((request.GET.get("linked") or "all").strip())
+    try:
+        limit = max(1, min(200, int(request.GET.get("limit", "100"))))
+    except Exception:
+        limit = 100
+    items, counts = list_members(query=q, linked=linked, limit=limit)
+    return JsonResponse({"items": items, "counts": counts})
 
 
 @csrf_exempt

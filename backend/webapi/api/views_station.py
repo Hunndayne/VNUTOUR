@@ -61,15 +61,21 @@ def station_create_view(request: HttpRequest, event_id: int):
     if not code or not name:
         return JsonResponse({"error": "missing_code_or_name"}, status=400)
 
-    station = create_station(
-        event_id, code, name,
-        location=data.get("location"),
-        order=data.get("order", 0),
-        checkin_policy=data.get("checkin_policy", "staff_scan"),
-        capacity_mode=data.get("capacity_mode", "unlimited"),
-        max_concurrent_teams=data.get("max_concurrent_teams"),
-        submission_config=data.get("submission_config"),
-    )
+    try:
+        station = create_station(
+            event_id, code, name,
+            location=data.get("location"),
+            order=data.get("order", 0),
+            active=data.get("active", True),
+            checkin_policy=data.get("checkin_policy", "staff_scan"),
+            capacity_mode=data.get("capacity_mode", "unlimited"),
+            max_concurrent_teams=data.get("max_concurrent_teams"),
+            submission_config=data.get("submission_config"),
+        )
+    except ValueError as exc:
+        if str(exc) == "duplicate_station_code":
+            return JsonResponse({"error": "duplicate_station_code"}, status=409)
+        raise
     return JsonResponse({
         "id": station.id, "code": station.code, "name": station.name,
     }, status=201)

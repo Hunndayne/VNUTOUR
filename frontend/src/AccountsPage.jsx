@@ -43,8 +43,10 @@ function normalizeAccount(account) {
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([])
+  const [counts, setCounts] = useState({ all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -54,9 +56,23 @@ export default function AccountsPage() {
   const [editForm, setEditForm] = useState({ email: '', mssv: '', fullName: '', role: 'participant', password: '', isActive: true })
 
   const loadAccounts = useCallback(async () => {
-    const payload = await apiRequest('/admin/accounts?limit=200')
+    const params = new URLSearchParams({ limit: '200' })
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim())
+    if (filter === 'inactive') {
+      params.set('active', '0')
+    } else {
+      params.set('active', '1')
+      if (filter !== 'all') params.set('role', filter)
+    }
+    const payload = await apiRequest(`/admin/accounts?${params.toString()}`)
     setAccounts((payload.items || []).map(normalizeAccount))
-  }, [])
+    setCounts(payload.counts || { all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
+  }, [debouncedSearch, filter])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 250)
+    return () => window.clearTimeout(timer)
+  }, [search])
 
   useEffect(() => {
     let cancelled = false
@@ -85,32 +101,7 @@ export default function AccountsPage() {
     }
   }, [loadAccounts])
 
-  const counts = {
-    all: accounts.length,
-    admin: accounts.filter(a => a.role === 'admin').length,
-    collab: accounts.filter(a => a.role === 'collab').length,
-    participant: accounts.filter(a => a.role === 'participant').length,
-    inactive: accounts.filter(a => !a.isActive).length,
-  }
-
-  const filtered = useMemo(() => (
-    accounts
-      .filter(a => {
-        if (filter === 'inactive') return !a.isActive
-        if (filter !== 'all' && a.role !== filter) return false
-        return true
-      })
-      .filter(a => {
-        if (!search.trim()) return true
-        const q = search.toLowerCase()
-        return (
-          a.username.toLowerCase().includes(q) ||
-          a.email.toLowerCase().includes(q) ||
-          (a.mssv || '').toLowerCase().includes(q) ||
-          (a.fullName || '').toLowerCase().includes(q)
-        )
-      })
-  ), [accounts, filter, search])
+  const filtered = useMemo(() => accounts, [accounts])
 
   const withBusy = async (busyKey, task) => {
     setBusy(busyKey)

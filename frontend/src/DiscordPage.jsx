@@ -244,36 +244,51 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
 
 function MembersTab({ members, busyKey, onSync }) {
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [selectedMember, setSelectedMember] = useState(null)
+  const [items, setItems] = useState(members.items || [])
+  const [counts, setCounts] = useState(members.counts || { all: 0, linked: 0, unlinked: 0 })
+  const [loading, setLoading] = useState(false)
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return members.filter((member) => {
-      if (filter === 'linked' && !member.linked) return false
-      if (filter === 'unlinked' && member.linked) return false
-      if (!q) return true
-      return [
-        member.fullName,
-        member.mssv,
-        member.teamCode,
-        member.teamName,
-        member.discordId,
-      ].some(value => String(value || '').toLowerCase().includes(q))
-    })
-  }, [filter, members, search])
+  useEffect(() => {
+    setItems(members.items || [])
+    setCounts(members.counts || { all: 0, linked: 0, unlinked: 0 })
+  }, [members])
 
-  const linkedCount = members.filter(member => member.linked).length
-  const unlinkedCount = members.length - linkedCount
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 250)
+    return () => window.clearTimeout(timer)
+  }, [search])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadMembers = async () => {
+      try {
+        setLoading(true)
+        const params = new URLSearchParams({ limit: '100' })
+        if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim())
+        if (filter !== 'all') params.set('linked', filter)
+        const payload = await apiRequest(`/discord/members?${params.toString()}`)
+        if (cancelled) return
+        setItems((payload.items || []).map(normalizeMember))
+        setCounts(payload.counts || { all: 0, linked: 0, unlinked: 0 })
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void loadMembers()
+    return () => { cancelled = true }
+  }, [debouncedSearch, filter])
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex overflow-hidden rounded-lg border border-stone text-sm">
           {[
-            { key: 'all', label: `Tat ca (${members.length})` },
-            { key: 'linked', label: `Da lien ket (${linkedCount})` },
-            { key: 'unlinked', label: `Chua lien ket (${unlinkedCount})` },
+            { key: 'all', label: `Tat ca (${counts.all || 0})` },
+            { key: 'linked', label: `Da lien ket (${counts.linked || 0})` },
+            { key: 'unlinked', label: `Chua lien ket (${counts.unlinked || 0})` },
           ].map((tab, index) => (
             <button
               key={tab.key}
@@ -314,7 +329,7 @@ function MembersTab({ members, busyKey, onSync }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-stone/60">
-              {filtered.length > 0 ? filtered.map((member) => {
+              {items.length > 0 ? items.map((member) => {
                 const syncKey = `member:${member.mssv}`
                 return (
                   <tr key={member.mssv} className="transition hover:bg-paper/50">
@@ -359,7 +374,7 @@ function MembersTab({ members, busyKey, onSync }) {
               }) : (
                 <tr>
                   <td colSpan={4} className="px-5 py-12 text-center text-sm text-ink/35">
-                    Khong co thanh vien nao khop bo loc hien tai.
+                    {loading ? 'Dang tai thanh vien...' : 'Khong co thanh vien nao khop bo loc hien tai.'}
                   </td>
                 </tr>
               )}
@@ -666,7 +681,7 @@ export default function DiscordPage() {
   const [apiError, setApiError] = useState('')
   const [status, setStatus] = useState({ provisioning: { pending: 0, failed: 0, done: 0 } })
   const [queue, setQueue] = useState([])
-  const [members, setMembers] = useState([])
+  const [members, setMembers] = useState({ items: [], counts: { all: 0, linked: 0, unlinked: 0 } })
   const [teams, setTeams] = useState([])
   const [broadcasts, setBroadcasts] = useState([])
 
@@ -674,14 +689,17 @@ export default function DiscordPage() {
     const [statusPayload, queuePayload, membersPayload, broadcastsPayload, teamsPayload] = await Promise.all([
       apiRequest('/discord/status'),
       apiRequest('/discord/provisioning-queue'),
-      apiRequest('/discord/members'),
+      apiRequest('/discord/members?limit=100'),
       apiRequest('/discord/broadcasts'),
       apiRequest('/teams?limit=200'),
     ])
 
     setStatus(statusPayload || { provisioning: { pending: 0, failed: 0, done: 0 } })
     setQueue(queuePayload?.queue || [])
-    setMembers((membersPayload?.items || []).map(normalizeMember))
+    setMembers({
+      items: (membersPayload?.items || []).map(normalizeMember),
+      counts: membersPayload?.counts || { all: 0, linked: 0, unlinked: 0 },
+    })
     setBroadcasts((broadcastsPayload?.items || []).map(item => ({
       id: item.id,
       title: item.title || '',
@@ -790,9 +808,9 @@ export default function DiscordPage() {
 
   const counts = useMemo(() => ({
     overview: queue.length,
-    members: members.length,
+    members: members.counts?.all || 0,
     channels: teams.length,
-  }), [members.length, queue.length, teams.length])
+  }), [members.counts, queue.length, teams.length])
 
   return (
     <div className="space-y-5">
