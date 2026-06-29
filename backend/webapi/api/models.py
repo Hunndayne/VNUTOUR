@@ -328,7 +328,33 @@ class Station(models.Model):
 
 
 # =====================================================================
-# 9. EventCheckIn
+# 9. StationAssignment
+# =====================================================================
+
+class StationAssignment(models.Model):
+    collab = models.ForeignKey(
+        Account, on_delete=models.CASCADE, related_name="station_assignments",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="assignments",
+    )
+    shift_start = models.DateTimeField(null=True, blank=True)
+    shift_end = models.DateTimeField(null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "station_assignment"
+        ordering = ["station__sub_event", "station__order", "collab__username"]
+
+    def __str__(self) -> str:
+        return f"{self.collab.username} -> {self.station.code}"
+
+
+# =====================================================================
+# 10. EventCheckIn
 # =====================================================================
 
 class EventCheckIn(models.Model):
@@ -376,7 +402,7 @@ class EventCheckIn(models.Model):
 
 
 # =====================================================================
-# 10. StationSession
+# 11. StationSession
 # =====================================================================
 
 class StationSession(models.Model):
@@ -441,7 +467,7 @@ class StationSession(models.Model):
 
 
 # =====================================================================
-# 11. ScoreEntry
+# 12. ScoreEntry
 # =====================================================================
 
 class ScoreEntry(models.Model):
@@ -487,7 +513,7 @@ class ScoreEntry(models.Model):
 
 
 # =====================================================================
-# 12. AdvancementRule
+# 13. AdvancementRule
 # =====================================================================
 
 class AdvancementRule(models.Model):
@@ -528,7 +554,7 @@ class AdvancementRule(models.Model):
 
 
 # =====================================================================
-# 13. StationSubmission
+# 14. StationSubmission
 # =====================================================================
 
 class StationSubmission(models.Model):
@@ -572,7 +598,7 @@ class StationSubmission(models.Model):
 
 
 # =====================================================================
-# 14. DiscordBroadcast
+# 15. DiscordBroadcast
 # =====================================================================
 
 class DiscordBroadcast(models.Model):
@@ -620,7 +646,7 @@ class DiscordBroadcast(models.Model):
 
 
 # =====================================================================
-# 15. SystemSetting
+# 16. SystemSetting
 # =====================================================================
 
 class SystemSetting(models.Model):
@@ -636,7 +662,7 @@ class SystemSetting(models.Model):
 
 
 # =====================================================================
-# 16. MssvLinkAudit
+# 17. MssvLinkAudit
 # =====================================================================
 
 class MssvLinkAudit(models.Model):

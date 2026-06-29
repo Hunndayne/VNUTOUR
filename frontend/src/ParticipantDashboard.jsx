@@ -561,8 +561,8 @@ function EventExperienceCard({ experience }) {
       <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="px-5 py-6 sm:px-7">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge label={experience.current_phase_label || 'Phase hiện tại'} cls="bg-trail/12 text-trail" />
             <Badge label={currentEvent.type} cls="bg-gold/15 text-[#9A6B12]" />
+            <Badge label={experience.current_phase_label || 'Phase hiện tại'} cls="bg-trail/12 text-trail" />
           </div>
           <h1 className="mt-4 max-w-2xl font-display text-3xl font-bold tracking-normal text-ink sm:text-4xl">
             {currentEvent.name}

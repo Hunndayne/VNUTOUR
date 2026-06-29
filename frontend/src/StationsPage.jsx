@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 
 const LEGACY_STATIONS_STORAGE_KEY = 'vnutour:admin:stations-by-phase'
 
@@ -2263,6 +2264,12 @@ function StationsPage({
         <SummaryCard value={String(totalScore)} label="Tổng điểm trạm" accent="gold" />
         <SummaryCard value={String(totalDone)} label="Lượt hoàn thành" accent="trail" />
       </div>
+
+      <StationAssignmentsPanel
+        phase={phase}
+        selectedEvent={selectedEvent}
+        stations={stations}
+      />
 
       <div className={`${CARD} px-4 py-3`}>
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">

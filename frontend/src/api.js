@@ -50,7 +50,7 @@ export function redirectByRole(role) {
     return
   }
   if (role === 'collab') {
-    window.location.replace('/checkin')
+    window.location.replace('/coop')
     return
   }
   window.location.replace('/participant')

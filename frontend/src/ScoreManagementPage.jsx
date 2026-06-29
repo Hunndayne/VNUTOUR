@@ -4,36 +4,36 @@ import { Badge, CARD, Icon } from './ui.jsx'
 import { SUB_EVENT_TYPE_META, getPhaseInfo } from './adminProgram.js'
 
 const ENTRY_KIND_META = {
-  station: { label: 'Diem tram', cls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]' },
-  bonus: { label: 'Cong diem', cls: 'bg-gold/15 text-gold' },
-  penalty: { label: 'Tru diem', cls: 'bg-clay/12 text-clay' },
-  manual: { label: 'Dieu chinh', cls: 'bg-ink/[0.07] text-ink/55' },
+  station: { label: 'Điểm trạm', cls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]' },
+  bonus: { label: 'Cộng điểm', cls: 'bg-gold/15 text-gold' },
+  penalty: { label: 'Trừ điểm', cls: 'bg-clay/12 text-clay' },
+  manual: { label: 'Điều chỉnh', cls: 'bg-ink/[0.07] text-ink/55' },
 }
 
 const ROSTER_ORIGIN_META = {
-  approved: { label: 'Dang ky da duyet', cls: 'bg-ink/[0.07] text-ink/55' },
-  qualified: { label: 'Qua phase truoc', cls: 'bg-trail/12 text-trail' },
-  wildcard: { label: 'Dac cach BTC', cls: 'bg-gold/15 text-gold' },
+  approved: { label: 'Đăng ký đã duyệt', cls: 'bg-ink/[0.07] text-ink/55' },
+  qualified: { label: 'Qua phase trước', cls: 'bg-trail/12 text-trail' },
+  wildcard: { label: 'Đặc cách BTC', cls: 'bg-gold/15 text-gold' },
 }
 
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   const map = {
-    forbidden: 'Ban khong co quyen thao tac diem.',
-    invalid_json: 'Du lieu gui len khong hop le.',
-    missing_fields: 'Vui long dien du doi, event va so diem.',
-    phase_not_found: 'Khong tim thay phase can thao tac.',
-    event_not_found: 'Khong tim thay event can cong diem.',
-    team_not_found: 'Khong tim thay doi can cong diem.',
-    team_not_in_phase: 'Doi nay hien khong nam trong roster cua phase.',
-    invalid_points: 'So diem khong hop le.',
-    invalid_mode: 'Che do advancement khong hop le.',
-    advancement_rule_not_found: 'Phase nay chua cau hinh phase dich.',
-    manual_team_codes_required: 'Che do chon tay can co danh sach doi duoc chon.',
-    manual_team_not_in_phase: 'Co doi trong danh sach day khong thuoc roster phase.',
-    not_found: 'Khong tim thay dong diem can thao tac.',
+    forbidden: 'Bạn không có quyền thao tác điểm.',
+    invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
+    missing_fields: 'Vui lòng điền đủ đội, event và số điểm.',
+    phase_not_found: 'Không tìm thấy phase cần thao tác.',
+    event_not_found: 'Không tìm thấy event cần cộng điểm.',
+    team_not_found: 'Không tìm thấy đội cần cộng điểm.',
+    team_not_in_phase: 'Đội này hiện không nằm trong roster của phase.',
+    invalid_points: 'Số điểm không hợp lệ.',
+    invalid_mode: 'Chế độ advancement không hợp lệ.',
+    advancement_rule_not_found: 'Phase này chưa cấu hình phase đích.',
+    manual_team_codes_required: 'Chế độ chọn tay cần có danh sách đội được chọn.',
+    manual_team_not_in_phase: 'Có đội trong danh sách đẩy không thuộc roster phase.',
+    not_found: 'Không tìm thấy dòng điểm cần thao tác.',
   }
-  return map[code] || 'Khong the dong bo du lieu diem.'
+  return map[code] || 'Không thể đồng bộ dữ liệu điểm.'
 }
 
 function MetricCard({ value, label, note, accent = 'default' }) {
@@ -391,7 +391,7 @@ export default function ScoreManagementPage({
   if (loading) {
     return (
       <div className={`${CARD} px-5 py-14 text-center text-sm text-ink/35`}>
-        Dang tai bang diem phase...
+        Đang tải bảng điểm phase...
       </div>
     )
   }
@@ -410,12 +410,12 @@ export default function ScoreManagementPage({
             <div className="flex flex-wrap items-center gap-2">
               <Badge label={phaseInfo.label} cls="bg-trail/12 text-trail" />
               {schedule && <Badge label={`${schedule.startDate || '--'} -> ${schedule.endDate || '--'}`} cls="bg-ink/[0.07] text-ink/55" />}
-              {scoreboard.usesPhaseRoster && <Badge label="Dung roster phase" cls="bg-gold/15 text-gold" />}
+              {scoreboard.usesPhaseRoster && <Badge label="Dùng roster phase" cls="bg-gold/15 text-gold" />}
             </div>
-            <h2 className="mt-3 font-display text-2xl font-semibold text-ink">Tong hop diem theo phase</h2>
+            <h2 className="mt-3 font-display text-2xl font-semibold text-ink">Tổng hợp điểm theo phase</h2>
             <p className="mt-2 text-sm leading-6 text-ink/55">
-              Diem tram, diem social, quiz va cac dieu chinh thu cong deu do ve cung mot bang diem phase.
-              Roster phase duoc doc tu backend, va viec day doi sang phase sau se goi advancement API truc tiep.
+              Điểm trạm, điểm social, quiz và các điều chỉnh thủ công đều đổ về cùng một bảng điểm phase.
+              Roster phase được đọc từ backend, và việc đẩy đội sang phase sau sẽ gọi advancement API trực tiếp.
             </p>
           </div>
 
@@ -440,18 +440,18 @@ export default function ScoreManagementPage({
       </section>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard value={String(phaseEvents.length)} label="Event trong phase" note="Lay tu Quan ly su kien." accent="sky" />
-        <MetricCard value={String(totalStationPoints)} label="Tong diem tram" note="Auto tu station session da dong." accent="trail" />
-        <MetricCard value={String(totalManualPoints)} label="Cong tru thu cong" note="Bonus, penalty va dieu chinh." accent="gold" />
-        <MetricCard value={String(scoreboard.roster.length)} label="Doi trong roster" note={scoreboard.usesPhaseRoster ? 'Roster da khoa theo phase' : 'Dang lay tu doi da duyet'} accent="clay" />
+        <MetricCard value={String(phaseEvents.length)} label="Event trong phase" note="Lấy từ Quản lý sự kiện." accent="sky" />
+        <MetricCard value={String(totalStationPoints)} label="Tổng điểm trạm" note="Auto từ station session đã đóng." accent="trail" />
+        <MetricCard value={String(totalManualPoints)} label="Cộng trừ thủ công" note="Bonus, penalty và điều chỉnh." accent="gold" />
+        <MetricCard value={String(scoreboard.roster.length)} label="Đội trong roster" note={scoreboard.usesPhaseRoster ? 'Roster đã khóa theo phase' : 'Đang lấy từ đội đã duyệt'} accent="clay" />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.35fr_minmax(320px,0.95fr)]">
         <section className={`${CARD} px-5 py-4`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Tong hop event</p>
-              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Diem cua tung event con</h3>
+              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Tổng hợp event</p>
+              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Điểm của từng event con</h3>
             </div>
             <Badge label={`${phaseEvents.length} event`} cls="bg-ink/[0.07] text-ink/55" />
           </div>
@@ -463,7 +463,7 @@ export default function ScoreManagementPage({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <EventBadge type={eventItem.type} />
-                      {eventItem.usesStations && <Badge label="Co tram" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+                      {eventItem.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
                     </div>
                     <h4 className="mt-2 text-sm font-semibold text-ink">{eventItem.name}</h4>
                     {eventItem.note && <p className="mt-2 text-sm leading-6 text-ink/50">{eventItem.note}</p>}
@@ -474,21 +474,21 @@ export default function ScoreManagementPage({
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                   <div className="rounded-lg border border-stone bg-paper px-3 py-2">
                     <p className="font-mono text-lg font-bold text-ink">{eventItem.stationPoints}</p>
-                    <p className="mt-1 text-[11px] text-ink/40">Diem tram</p>
+                    <p className="mt-1 text-[11px] text-ink/40">Điểm trạm</p>
                   </div>
                   <div className="rounded-lg border border-stone bg-paper px-3 py-2">
                     <p className="font-mono text-lg font-bold text-ink">{eventItem.extraPoints}</p>
-                    <p className="mt-1 text-[11px] text-ink/40">Cong tru khac</p>
+                    <p className="mt-1 text-[11px] text-ink/40">Cộng trừ khác</p>
                   </div>
                   <div className="rounded-lg border border-stone bg-paper px-3 py-2">
                     <p className="font-mono text-lg font-bold text-ink">{eventItem.touchedTeams}</p>
-                    <p className="mt-1 text-[11px] text-ink/40">Doi da cham diem</p>
+                    <p className="mt-1 text-[11px] text-ink/40">Đội đã chấm điểm</p>
                   </div>
                 </div>
               </div>
             )) : (
               <div className="rounded-xl border border-dashed border-stone bg-paper px-4 py-10 text-sm text-ink/35">
-                Phase nay chua co event nao. Hay tao event o tab Quan ly su kien truoc.
+                Phase này chưa có event nào. Hãy tạo event ở tab Quản lý sự kiện trước.
               </div>
             )}
           </div>
@@ -498,20 +498,20 @@ export default function ScoreManagementPage({
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Advancement</p>
-              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Suat vao phase sau</h3>
+              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Suất vào phase sau</h3>
             </div>
-            {nextPhaseOption && <Badge label={`Dich den · ${nextPhaseOption.label}`} cls="bg-gold/15 text-gold" />}
+            {nextPhaseOption && <Badge label={`Đích đến · ${nextPhaseOption.label}`} cls="bg-gold/15 text-gold" />}
           </div>
 
           {ruleForm.nextPhaseKey ? (
             <>
               <p className="mt-3 text-sm leading-6 text-ink/50">
-                Cau hinh top N hoac chon tay, sau do publish roster sang phase tiep theo.
+                Cấu hình top N hoặc chọn tay, sau đó publish roster sang phase tiếp theo.
               </p>
 
               <div className="mt-4">
                 <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                  Phase dich
+                  Phase đích
                 </label>
                 <select
                   value={ruleForm.nextPhaseKey}
@@ -526,8 +526,8 @@ export default function ScoreManagementPage({
 
               <div className="mt-4 flex flex-wrap gap-2">
                 {[
-                  { key: 'top_n', label: 'Lay top N' },
-                  { key: 'manual', label: 'Chon tay' },
+                  { key: 'top_n', label: 'Lấy top N' },
+                  { key: 'manual', label: 'Chọn tay' },
                 ].map((option) => (
                   <button
                     key={option.key}
@@ -546,7 +546,7 @@ export default function ScoreManagementPage({
 
               <div className="mt-4">
                 <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                  So suat
+                  Số suất
                 </label>
                 <input
                   type="number"
@@ -559,7 +559,7 @@ export default function ScoreManagementPage({
 
               <div className="mt-4 rounded-lg border border-stone bg-paper px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-ink">Preview doi duoc day</p>
+                  <p className="text-sm font-semibold text-ink">Preview đội được đẩy</p>
                   <span className="font-mono text-xs text-ink/40">{qualifiedTeams.length}/{ruleForm.slots}</span>
                 </div>
                 <div className="mt-3 space-y-2">
@@ -572,14 +572,14 @@ export default function ScoreManagementPage({
                       <span className="font-mono text-sm font-semibold text-ink">{team.totalPoints}</span>
                     </div>
                   )) : (
-                    <p className="text-sm text-ink/35">Chua co doi nao du dieu kien de day sang phase sau.</p>
+                    <p className="text-sm text-ink/35">Chưa có đội nào đủ điều kiện để đẩy sang phase sau.</p>
                   )}
                 </div>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs text-ink/40">
-                  Lan publish gan nhat: {formatDateTime(scoreboard.advancement.lastPublishedAt)}
+                  Lần publish gần nhất: {formatDateTime(scoreboard.advancement.lastPublishedAt)}
                   {scoreboard.advancement.publishedBy ? ` · ${scoreboard.advancement.publishedBy}` : ''}
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -589,7 +589,7 @@ export default function ScoreManagementPage({
                     disabled={!ruleForm.nextPhaseKey || busyKey === 'rule:save'}
                     className="rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
                   >
-                    {busyKey === 'rule:save' ? 'Dang luu...' : 'Luu luat'}
+                    {busyKey === 'rule:save' ? 'Đang lưu...' : 'Lưu luật'}
                   </button>
                   <button
                     type="button"
@@ -598,14 +598,14 @@ export default function ScoreManagementPage({
                     className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
                   >
                     <Icon name="link" className="h-4 w-4" />
-                    {busyKey === 'rule:publish' ? 'Dang day...' : `Day ${qualifiedTeamCodes.length} doi`}
+                    {busyKey === 'rule:publish' ? 'Đang đẩy...' : `Đẩy ${qualifiedTeamCodes.length} đội`}
                   </button>
                 </div>
               </div>
             </>
           ) : (
             <p className="mt-3 text-sm leading-6 text-ink/50">
-              Day la phase cuoi, khong co phase dich de publish.
+              Đây là phase cuối, không có phase đích để publish.
             </p>
           )}
         </section>
@@ -616,10 +616,10 @@ export default function ScoreManagementPage({
           <div className="flex flex-col gap-3 border-b border-stone px-5 py-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Leaderboard</p>
-              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Bang xep hang cua phase</h3>
+              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Bảng xếp hạng của phase</h3>
             </div>
             <p className="text-sm text-ink/45">
-              Tong diem duoc tinh truc tiep tu ledger score entries cua backend.
+              Tổng điểm được tính trực tiếp từ ledger score entries của backend.
             </p>
           </div>
 
@@ -627,10 +627,10 @@ export default function ScoreManagementPage({
             <table className="w-full min-w-[860px] text-left">
               <thead>
                 <tr className="border-b border-stone font-mono text-[10px] uppercase tracking-[0.18em] text-ink/35">
-                  <th className="px-5 py-3 font-medium">Hang</th>
-                  <th className="px-4 py-3 font-medium">Doi</th>
-                  <th className="px-4 py-3 font-medium text-right">Tong</th>
-                  <th className="px-4 py-3 font-medium text-center">Chon</th>
+                  <th className="px-5 py-3 font-medium">Hạng</th>
+                  <th className="px-4 py-3 font-medium">Đội</th>
+                  <th className="px-4 py-3 font-medium text-right">Tổng</th>
+                  <th className="px-4 py-3 font-medium text-center">Chọn</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone/60">
@@ -650,7 +650,7 @@ export default function ScoreManagementPage({
                           <p className="mt-0.5 text-xs text-ink/45">
                             {team.teamCode}
                             {team.captainName ? ` · ${team.captainName}` : ''}
-                            {team.memberCount ? ` · ${team.memberCount} thanh vien` : ''}
+                            {team.memberCount ? ` · ${team.memberCount} thành viên` : ''}
                           </p>
                         </div>
                       </td>
@@ -680,7 +680,7 @@ export default function ScoreManagementPage({
                 }) : (
                   <tr>
                     <td colSpan={4} className="px-5 py-14 text-center text-sm text-ink/35">
-                      Chua co doi nao trong roster phase nay.
+                      Chưa có đội nào trong roster phase này.
                     </td>
                   </tr>
                 )}
@@ -693,14 +693,14 @@ export default function ScoreManagementPage({
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Roster phase</p>
-              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Danh sach doi duoc cham</h3>
+              <h3 className="mt-1 font-display text-xl font-semibold text-ink">Danh sách đội được chấm</h3>
             </div>
-            <Badge label={`${scoreboard.roster.length} doi`} cls="bg-ink/[0.07] text-ink/55" />
+            <Badge label={`${scoreboard.roster.length} đội`} cls="bg-ink/[0.07] text-ink/55" />
           </div>
 
           <div className="mt-3 rounded-lg border border-stone bg-paper px-4 py-3 text-sm leading-6 text-ink/50">
-            Roster nay duoc quan ly tu backend: doi da duyet hoac doi duoc publish tu phase truoc se tu dong xuat hien o day.
-            Neu can dac cach/wildcard, nen bo sung endpoint roster rieng o buoc tiep theo.
+            Roster này được quản lý từ backend: đội đã duyệt hoặc đội được publish từ phase trước sẽ tự động xuất hiện ở đây.
+            Nếu cần đặc cách/wildcard, nên bổ sung endpoint roster riêng ở bước tiếp theo.
           </div>
 
           <div className="mt-4 divide-y divide-stone rounded-lg border border-stone">
@@ -713,15 +713,15 @@ export default function ScoreManagementPage({
                 <p className="mt-1 text-xs text-ink/45">
                   {team.teamCode}
                   {team.captainName ? ` · ${team.captainName}` : ''}
-                  {team.memberCount ? ` · ${team.memberCount} thanh vien` : ''}
+                  {team.memberCount ? ` · ${team.memberCount} thành viên` : ''}
                 </p>
                 {team.qualifiedFrom && (
-                  <p className="mt-1 text-xs text-ink/35">Di tu phase: {team.qualifiedFrom}</p>
+                  <p className="mt-1 text-xs text-ink/35">Đi từ phase: {team.qualifiedFrom}</p>
                 )}
               </div>
             )) : (
               <div className="px-4 py-10 text-sm text-ink/35">
-                Chua co doi nao trong roster phase nay.
+                Chưa có đội nào trong roster phase này.
               </div>
             )}
           </div>
@@ -731,15 +731,15 @@ export default function ScoreManagementPage({
       <section className={`${CARD} px-5 py-4`}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Cong tru thu cong</p>
-            <h3 className="mt-1 font-display text-xl font-semibold text-ink">Diem ngoai tram va dieu chinh</h3>
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Cộng trừ thủ công</p>
+            <h3 className="mt-1 font-display text-xl font-semibold text-ink">Điểm ngoài trạm và điều chỉnh</h3>
           </div>
-          <Badge label={`${manualEntries.length} dong`} cls="bg-ink/[0.07] text-ink/55" />
+          <Badge label={`${manualEntries.length} dòng`} cls="bg-ink/[0.07] text-ink/55" />
         </div>
 
         <div className="mt-4 grid gap-3 lg:grid-cols-2">
           <div>
-            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Doi nhan diem</label>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Đội nhận điểm</label>
             <select
               value={entryForm.teamCode}
               onChange={(event) => setEntryForm((current) => ({ ...current, teamCode: event.target.value }))}
@@ -769,7 +769,7 @@ export default function ScoreManagementPage({
           </div>
 
           <div>
-            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Loai diem</label>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Loại điểm</label>
             <select
               value={entryForm.kind}
               onChange={(event) => setEntryForm((current) => ({ ...current, kind: event.target.value }))}
@@ -782,7 +782,7 @@ export default function ScoreManagementPage({
           </div>
 
           <div>
-            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">So diem</label>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Số điểm</label>
             <input
               type="number"
               value={entryForm.points}
@@ -792,20 +792,20 @@ export default function ScoreManagementPage({
           </div>
 
           <div className="lg:col-span-2">
-            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Ghi chu</label>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Ghi chú</label>
             <textarea
               rows={4}
               value={entryForm.note}
               onChange={(event) => setEntryForm((current) => ({ ...current, note: event.target.value }))}
               className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-              placeholder="VD: cong diem social, tru diem nop file muon, dieu chinh BTC."
+              placeholder="VD: cộng điểm social, trừ điểm nộp file muộn, điều chỉnh BTC."
             />
           </div>
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <p className="text-sm text-ink/45">
-            Diem tram se duoc tao tu dong khi dong station session. O day chi them cac dong bonus, penalty va manual.
+            Điểm trạm sẽ được tạo tự động khi đóng station session. Ở đây chỉ thêm các dòng bonus, penalty và manual.
           </p>
           <button
             type="button"
@@ -814,7 +814,7 @@ export default function ScoreManagementPage({
             className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
           >
             <Icon name="plus" className="h-4 w-4" />
-            {busyKey === 'entry:create' ? 'Dang them...' : 'Them dong diem'}
+            {busyKey === 'entry:create' ? 'Đang thêm...' : 'Thêm dòng điểm'}
           </button>
         </div>
 
@@ -841,7 +841,7 @@ export default function ScoreManagementPage({
                   onClick={() => handleDeleteEntry(entry.id)}
                   disabled={busyKey === `entry:${entry.id}`}
                   className="rounded-lg p-1.5 text-ink/30 transition hover:bg-paper hover:text-clay disabled:opacity-40"
-                  title="Xoa dong diem"
+                  title="Xóa dòng điểm"
                 >
                   <Icon name="trash" className="h-4 w-4" />
                 </button>
@@ -849,7 +849,7 @@ export default function ScoreManagementPage({
             </div>
           )) : (
             <div className="px-4 py-10 text-sm text-ink/35">
-              Chua co dong cong tru thu cong nao trong phase nay.
+              Chưa có dòng cộng trừ thủ công nào trong phase này.
             </div>
           )}
         </div>

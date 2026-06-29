@@ -1,10 +1,10 @@
 import LandingPage from './LandingPage.jsx'
 import RegisterPage from './RegisterPage.jsx'
-import CheckinPage from './CheckinPage.jsx'
 import LoginPage from './LoginPage.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import ParticipantDashboard from './ParticipantDashboard.jsx'
 import FormResponses from './FormResponses.jsx'
+import CoopDashboard from './CoopDashboard.jsx'
 import { getStoredAuthToken, getStoredUser, redirectByRole } from './api.js'
 
 function App() {
@@ -41,23 +41,18 @@ function App() {
     return <ParticipantDashboard />
   }
 
-  if (path === '/checkin') {
+  if (path === '/coop' || path === '/checkin') {
     if (!isAuthenticated) {
       window.location.replace('/')
       return null
     }
 
-    return (
-      <div className="relative min-h-screen">
-        <a
-          href="/"
-          className="fixed left-4 top-4 z-[60] rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-slate-800 shadow-lg transition hover:bg-white"
-        >
-          Trang chủ
-        </a>
-        <CheckinPage />
-      </div>
-    )
+    if (!['admin', 'collab'].includes(user.role)) {
+      redirectByRole(user.role)
+      return null
+    }
+
+    return <CoopDashboard />
   }
 
   if (path === '/form') {

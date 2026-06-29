@@ -9,29 +9,29 @@ const STATION_OPS_STORAGE_KEY = 'vnutour:checkin:station-ops'
 
 const MODE_META = {
   event: {
-    label: 'Check-in su kien',
-    hint: 'Quet QR khi doi den ban tiep don hoac vao dia diem su kien.',
+    label: 'Check-in sự kiện',
+    hint: 'Quét QR khi đội đến bàn tiếp đón hoặc vào địa điểm sự kiện.',
     badgeCls: 'bg-trail/12 text-trail',
   },
   station_enter: {
-    label: 'Vao tram',
-    hint: 'Ghi nhan doi bat dau choi tai tram.',
+    label: 'Vào trạm',
+    hint: 'Ghi nhận đội bắt đầu chơi tại trạm.',
     badgeCls: 'bg-gold/15 text-gold',
   },
   station_exit: {
-    label: 'Roi tram',
-    hint: 'Ghi nhan doi da xong tram va roi checkpoint.',
+    label: 'Rời trạm',
+    hint: 'Ghi nhận đội đã xong trạm và rời checkpoint.',
     badgeCls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]',
   },
 }
 
 const CHECKIN_POLICY_META = {
   staff_scan: {
-    label: 'Can coop scan',
+    label: 'Cần coop scan',
     cls: 'bg-gold/15 text-gold',
   },
   free_play: {
-    label: 'Khong can scan',
+    label: 'Không cần scan',
     cls: 'bg-ink/[0.07] text-ink/55',
   },
 }
@@ -250,15 +250,15 @@ function CheckinPage() {
   const validateForm = () => {
     const nextErrors = {}
 
-    if (!formData.username.trim()) nextErrors.username = 'Vui long nhap ten dang nhap'
-    if (!formData.password.trim()) nextErrors.password = 'Vui long nhap mat khau'
-    else if (formData.password.length < 6) nextErrors.password = 'Mat khau phai co it nhat 6 ky tu'
+    if (!formData.username.trim()) nextErrors.username = 'Vui lòng nhập tên đăng nhập'
+    if (!formData.password.trim()) nextErrors.password = 'Vui lòng nhập mật khẩu'
+    else if (formData.password.length < 6) nextErrors.password = 'Mật khẩu phải có ít nhất 6 ký tự'
 
     if (isRegisterMode) {
-      if (!formData.email.trim()) nextErrors.email = 'Vui long nhap email'
-      else if (!/\S+@\S+\.\S+/.test(formData.email)) nextErrors.email = 'Email khong hop le'
+      if (!formData.email.trim()) nextErrors.email = 'Vui lòng nhập email'
+      else if (!/\S+@\S+\.\S+/.test(formData.email)) nextErrors.email = 'Email không hợp lệ'
 
-      if (!formData.secret.trim()) nextErrors.secret = 'Vui long nhap ma secret'
+      if (!formData.secret.trim()) nextErrors.secret = 'Vui lòng nhập mã secret'
     }
 
     setErrors(nextErrors)
@@ -295,10 +295,10 @@ function CheckinPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        if (data.error === 'invalid_credentials') setApiError('Ten dang nhap hoac mat khau khong dung')
-        else if (data.error === 'conflict') setApiError('Ten dang nhap hoac email da ton tai')
-        else if (data.error === 'forbidden') setApiError('Ma secret khong dung hoac khong duoc phep dang ky')
-        else setApiError(`Loi: ${data.error || 'Co loi xay ra'}`)
+        if (data.error === 'invalid_credentials') setApiError('Tên đăng nhập hoặc mật khẩu không đúng')
+        else if (data.error === 'conflict') setApiError('Tên đăng nhập hoặc email đã tồn tại')
+        else if (data.error === 'forbidden') setApiError('Mã secret không đúng hoặc không được phép đăng ký')
+        else setApiError(`Lỗi: ${data.error || 'Có lỗi xảy ra'}`)
         return
       }
 
@@ -310,7 +310,7 @@ function CheckinPage() {
       localStorage.setItem('authToken', data.token)
       localStorage.setItem('user', JSON.stringify(data.user))
     } catch (error) {
-      setApiError(error.name === 'TypeError' ? 'Khong the ket noi toi server API' : `Loi: ${error.message}`)
+      setApiError(error.name === 'TypeError' ? 'Không thể kết nối tới server API' : `Lỗi: ${error.message}`)
     } finally {
       setIsLoading(false)
     }
@@ -352,7 +352,7 @@ function CheckinPage() {
           return {
             checkinId: item.id,
             id: item.team_code || team?.code || team?.team_id || team?.id || item.team_id || item.id,
-            name: team?.team_name || team?.name || item.team_name || item.name || 'Team khong ro',
+            name: team?.team_name || team?.name || item.team_name || item.name || 'Team không rõ',
             members: Array.isArray(members)
               ? members.map(member => member?.full_name || member?.name || member?.mssv || String(member)).join(', ')
               : '',
@@ -401,18 +401,18 @@ function CheckinPage() {
     const data = await response.json()
     if (!response.ok) {
       if (data.error === 'already_checked_in') {
-        throw new Error(`Doi nay da duoc check-in luc ${data.checked_in_display || data.checked_in_at || '--'}`)
+        throw new Error(`Đội này đã được check-in lúc ${data.checked_in_display || data.checked_in_at || '--'}`)
       }
       if (data.error === 'not_found') {
-        throw new Error('Khong tim thay doi voi ma QR nay')
+        throw new Error('Không tìm thấy đội với mã QR này')
       }
       if (data.error === 'team_not_found') {
-        throw new Error('Khong tim thay doi voi ma QR hoac ma doi nay')
+        throw new Error('Không tìm thấy đội với mã QR hoặc mã đội này')
       }
       if (data.error === 'team_not_in_phase') {
-        throw new Error('Doi nay khong nam trong danh sach cua phase hien tai')
+        throw new Error('Đội này không nằm trong danh sách của phase hiện tại')
       }
-      throw new Error(data.error || 'Check-in su kien that bai')
+      throw new Error(data.error || 'Check-in sự kiện thất bại')
     }
 
     const membersArray = Array.isArray(data.members)
@@ -425,23 +425,23 @@ function CheckinPage() {
       phaseKey: programState.currentPhase || 'qualifying',
       teamId,
       teamName,
-      eventName: data.event_name || 'Check-in su kien',
+      eventName: data.event_name || 'Check-in sự kiện',
       timestamp: data.checked_in_display || data.checked_in_at || new Date().toISOString(),
       members: membersArray,
     }
 
     setLastResult(result)
-    setFlashMessage('success', `Da check-in su kien cho ${result.teamName}`)
+    setFlashMessage('success', `Đã check-in sự kiện cho ${result.teamName}`)
     fetchCheckinsData({ force: true })
   }, [authToken, fetchCheckinsData, programState.currentPhase, user])
 
   const handleStationOperation = useCallback((rawCode, action) => {
     if (!selectedStation) {
-      throw new Error('Hay chon tram truoc khi quet')
+      throw new Error('Hãy chọn trạm trước khi quét')
     }
 
     if (selectedStation.checkinPolicy === 'free_play') {
-      throw new Error('Tram nay dang o che do tu do, khong can check-in/check-out boi co-op')
+      throw new Error('Trạm này đang ở chế độ tự do, không cần check-in/check-out bởi co-op')
     }
 
     const payload = parseQrPayload(rawCode)
@@ -451,7 +451,7 @@ function CheckinPage() {
     const eventStations = [...(phaseBucket[selectedEventId] ?? [])]
     const stationIndex = eventStations.findIndex(item => item.id === selectedStation.id)
     if (stationIndex === -1) {
-      throw new Error('Khong tim thay tram trong bo du lieu hien tai')
+      throw new Error('Không tìm thấy trạm trong bộ dữ liệu hiện tại')
     }
 
     const station = { ...eventStations[stationIndex] }
@@ -461,13 +461,13 @@ function CheckinPage() {
 
     if (action === 'enter') {
       if (teamsHere.some(team => team.id === teamId)) {
-        throw new Error(`${teamName} dang o tram nay`)
+        throw new Error(`${teamName} đang ở trạm này`)
       }
       if (teamsDone.some(team => team.id === teamId)) {
-        throw new Error(`${teamName} da duoc checkout khoi tram nay`)
+        throw new Error(`${teamName} đã được checkout khỏi trạm này`)
       }
       if (station.capacityMode === 'limited' && teamsHere.length >= station.maxConcurrentTeams) {
-        throw new Error(`Tram da day ${station.maxConcurrentTeams}/${station.maxConcurrentTeams} doi`)
+        throw new Error(`Trạm đã đầy ${station.maxConcurrentTeams}/${station.maxConcurrentTeams} đội`)
       }
       teamsHere.push({ id: teamId, name: teamName, arrivedAt: formatDateTime(now) })
     }
@@ -475,7 +475,7 @@ function CheckinPage() {
     if (action === 'exit') {
       const currentIndex = teamsHere.findIndex(team => team.id === teamId)
       if (currentIndex === -1) {
-        throw new Error(`${teamName} chua duoc check-in vao tram nay`)
+        throw new Error(`${teamName} chưa được check-in vào trạm này`)
       }
       teamsHere.splice(currentIndex, 1)
       if (!teamsDone.some(team => team.id === teamId)) {
@@ -526,8 +526,8 @@ function CheckinPage() {
       members: [],
     })
     setFlashMessage('success', action === 'enter'
-      ? `Da ghi nhan ${teamName} vao ${selectedStation.name}`
-      : `Da ghi nhan ${teamName} roi ${selectedStation.name}`)
+      ? `Đã ghi nhận ${teamName} vào ${selectedStation.name}`
+      : `Đã ghi nhận ${teamName} rời ${selectedStation.name}`)
   }, [eventCheckins, selectedEventId, selectedPhase, selectedStation, stationOps, stationStore, user])
 
   const handleScan = useCallback(async (rawCode) => {
@@ -578,7 +578,7 @@ function CheckinPage() {
 
     qrScannerRef.current.start().catch((error) => {
       console.error('Camera error:', error)
-      setFlashMessage('error', 'Khong the truy cap camera. Hay cho phep quyen camera hoac dung nhap tay.')
+      setFlashMessage('error', 'Không thể truy cập camera. Hãy cho phép quyền camera hoặc dùng nhập tay.')
     })
 
     return () => {
@@ -600,7 +600,7 @@ function CheckinPage() {
     const resetKey = team.checkinId || team.id || team.name
     if (!resetKey) return
 
-    const confirmed = window.confirm(`Xoa check-in su kien cua ${team.name || team.id || resetKey}?`)
+    const confirmed = window.confirm(`Xóa check-in sự kiện của ${team.name || team.id || resetKey}?`)
     if (!confirmed) return
 
     setDeletingTeamId(resetKey)
@@ -616,10 +616,10 @@ function CheckinPage() {
       const payload = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(payload?.error || `Khong the xoa check-in (${response.status})`)
+        throw new Error(payload?.error || `Không thể xóa check-in (${response.status})`)
       }
 
-      setFlashMessage('success', `Da xoa check-in su kien cua ${team.name || team.id || resetKey}`)
+      setFlashMessage('success', `Đã xóa check-in sự kiện của ${team.name || team.id || resetKey}`)
       fetchCheckinsData({ force: true })
     } catch (error) {
       setFlashMessage('error', error.message)
@@ -647,8 +647,8 @@ function CheckinPage() {
   const stationPolicy = selectedStation ? (CHECKIN_POLICY_META[selectedStation.checkinPolicy] ?? CHECKIN_POLICY_META.staff_scan) : null
   const stationCapacityText = selectedStation
     ? (selectedStation.capacityMode === 'limited'
-      ? `${selectedStation.maxConcurrentTeams} doi toi da`
-      : 'Khong gioi han')
+      ? `${selectedStation.maxConcurrentTeams} đội tối đa`
+      : 'Không giới hạn')
     : '--'
   const statsTeams = checkinStats?.checked_in_teams ?? eventCheckins.length
   const statsParticipants = checkinStats?.checked_in_participants ?? 0
@@ -672,11 +672,11 @@ function CheckinPage() {
                   <img src={logoImage} alt="VNUTour" className="h-14 w-14 rounded-2xl object-contain" />
                   <div>
                     <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">QR operations</p>
-                    <h1 className="mt-1 font-display text-2xl font-semibold text-ink">Check-in su kien va tram choi</h1>
+                    <h1 className="mt-1 font-display text-2xl font-semibold text-ink">Check-in sự kiện và trạm chơi</h1>
                   </div>
                 </div>
                 <p className="mt-4 max-w-2xl text-sm leading-6 text-ink/60">
-                  Muc tieu cua trang nay la giup ban van hanh luong den su kien, vao tram, roi tram, va theo doi cong suat theo checkpoint.
+                  Mục tiêu của trang này là giúp bạn vận hành luồng đến sự kiện, vào trạm, rời trạm, và theo dõi công suất theo checkpoint.
                 </p>
               </div>
 
@@ -693,10 +693,10 @@ function CheckinPage() {
             <section className={`${CARD} px-5 py-5`}>
               <div className="mb-4">
                 <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">
-                  {isRegisterMode ? 'Dang ky tai khoan' : 'Dang nhap van hanh'}
+                  {isRegisterMode ? 'Đăng ký tài khoản' : 'Đăng nhập vận hành'}
                 </p>
                 <h2 className="mt-1 font-display text-xl font-semibold text-ink">
-                  {isRegisterMode ? 'Tao tai khoan check-in' : 'Vao khu dieu phoi QR'}
+                  {isRegisterMode ? 'Tạo tài khoản check-in' : 'Vào khu điều phối QR'}
                 </h2>
               </div>
 
@@ -708,7 +708,7 @@ function CheckinPage() {
                 )}
 
                 <div>
-                  <label htmlFor="username" className="text-sm font-medium text-ink/70">Ten dang nhap</label>
+                  <label htmlFor="username" className="text-sm font-medium text-ink/70">Tên đăng nhập</label>
                   <input
                     id="username"
                     name="username"
@@ -721,7 +721,7 @@ function CheckinPage() {
                 </div>
 
                 <div>
-                  <label htmlFor="password" className="text-sm font-medium text-ink/70">Mat khau</label>
+                  <label htmlFor="password" className="text-sm font-medium text-ink/70">Mật khẩu</label>
                   <input
                     id="password"
                     type="password"
@@ -751,7 +751,7 @@ function CheckinPage() {
                     </div>
 
                     <div>
-                      <label htmlFor="secret" className="text-sm font-medium text-ink/70">Ma secret</label>
+                      <label htmlFor="secret" className="text-sm font-medium text-ink/70">Mã secret</label>
                       <input
                         id="secret"
                         type="password"
@@ -771,12 +771,12 @@ function CheckinPage() {
                   disabled={isLoading}
                   className="w-full rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white transition hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isLoading ? 'Dang xu ly...' : isRegisterMode ? 'Dang ky' : 'Dang nhap'}
+                  {isLoading ? 'Đang xử lý...' : isRegisterMode ? 'Đăng ký' : 'Đăng nhập'}
                 </button>
               </form>
 
               <div className="mt-4 text-center text-sm text-ink/55">
-                {isRegisterMode ? 'Da co tai khoan?' : 'Chua co tai khoan?'}{' '}
+                {isRegisterMode ? 'Đã có tài khoản?' : 'Chưa có tài khoản?'}{' '}
                 <button
                   type="button"
                   onClick={() => {
@@ -787,7 +787,7 @@ function CheckinPage() {
                   }}
                   className="font-semibold text-trail"
                 >
-                  {isRegisterMode ? 'Dang nhap ngay' : 'Dang ky ngay'}
+                  {isRegisterMode ? 'Đăng nhập ngay' : 'Đăng ký ngay'}
                 </button>
               </div>
             </section>
@@ -806,8 +806,8 @@ function CheckinPage() {
               <img src={logoImage} alt="VNUTour" className="h-14 w-14 rounded-2xl object-contain" />
               <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">QR operations</p>
-                <h1 className="mt-1 font-display text-2xl font-semibold text-ink">Ban dieu phoi check-in</h1>
-                <p className="mt-1 text-sm text-ink/55">Cung mot man hinh cho check-in su kien, vao tram va roi tram.</p>
+                <h1 className="mt-1 font-display text-2xl font-semibold text-ink">Bàn điều phối check-in</h1>
+                <p className="mt-1 text-sm text-ink/55">Cùng một màn hình cho check-in sự kiện, vào trạm và rời trạm.</p>
               </div>
             </div>
 
@@ -819,7 +819,7 @@ function CheckinPage() {
                 onClick={refreshProgramAndStations}
                 className="rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
               >
-                Lam moi context
+                Làm mới context
               </button>
               <button
                 type="button"
@@ -827,7 +827,7 @@ function CheckinPage() {
                 className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.92]"
               >
                 <Icon name="close" className="h-4 w-4" />
-                Dang xuat
+                Đăng xuất
               </button>
             </div>
           </div>
@@ -847,8 +847,8 @@ function CheckinPage() {
           <section className="space-y-5">
             <div className={`${CARD} overflow-hidden`}>
               <div className="border-b border-stone px-5 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Mode quet</p>
-                <h2 className="mt-1 font-display text-xl font-semibold text-ink">Chon luong van hanh</h2>
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Mode quét</p>
+                <h2 className="mt-1 font-display text-xl font-semibold text-ink">Chọn luồng vận hành</h2>
               </div>
 
               <div className="grid gap-2 px-4 py-4">
@@ -881,8 +881,8 @@ function CheckinPage() {
             {scannerMode !== 'event' && (
               <div className={`${CARD} overflow-hidden`}>
                 <div className="border-b border-stone px-5 py-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Context tram</p>
-                  <h2 className="mt-1 font-display text-xl font-semibold text-ink">Chon phase, event va tram</h2>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Context trạm</p>
+                  <h2 className="mt-1 font-display text-xl font-semibold text-ink">Chọn phase, event và trạm</h2>
                 </div>
 
                 <div className="space-y-4 px-5 py-4">
@@ -900,7 +900,7 @@ function CheckinPage() {
                   </div>
 
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-ink/70">Event co tram</label>
+                    <label className="mb-1.5 block text-sm font-medium text-ink/70">Event có trạm</label>
                     <select
                       value={selectedEventId}
                       onChange={(event) => setSelectedEventId(event.target.value)}
@@ -909,13 +909,13 @@ function CheckinPage() {
                       {stationEventOptions.length > 0 ? stationEventOptions.map((eventItem) => (
                         <option key={eventItem.id} value={eventItem.id}>{eventItem.name}</option>
                       )) : (
-                        <option value="">Khong co event nao co tram</option>
+                        <option value="">Không có event nào có trạm</option>
                       )}
                     </select>
                   </div>
 
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-ink/70">Tram</label>
+                    <label className="mb-1.5 block text-sm font-medium text-ink/70">Trạm</label>
                     <select
                       value={selectedStationId}
                       onChange={(event) => setSelectedStationId(event.target.value)}
@@ -924,7 +924,7 @@ function CheckinPage() {
                       {stationOptions.length > 0 ? stationOptions.map((station) => (
                         <option key={station.id} value={station.id}>{station.name}</option>
                       )) : (
-                        <option value="">Khong co tram nao</option>
+                        <option value="">Không có trạm nào</option>
                       )}
                     </select>
                   </div>
@@ -932,16 +932,16 @@ function CheckinPage() {
                   {selectedStation && (
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className={`${CARD} px-4 py-3`}>
-                        <p className="text-xs text-ink/40">Chinh sach vao tram</p>
+                        <p className="text-xs text-ink/40">Chính sách vào trạm</p>
                         <div className="mt-2">
                           <Badge label={stationPolicy.label} cls={stationPolicy.cls} />
                         </div>
-                        <p className="mt-2 text-sm text-ink/55">{stationPolicy.label === 'Khong can scan'
-                          ? 'Trang QR se khong bat buoc ghi nhan vao/ra cho tram nay.'
-                          : 'Trang QR duoc dung de ghi nhan doi vao va roi tram.'}</p>
+                        <p className="mt-2 text-sm text-ink/55">{stationPolicy.label === 'Không cần scan'
+                          ? 'Trang QR sẽ không bắt buộc ghi nhận vào/ra cho trạm này.'
+                          : 'Trang QR được dùng để ghi nhận đội vào và rời trạm.'}</p>
                       </div>
                       <div className={`${CARD} px-4 py-3`}>
-                        <p className="text-xs text-ink/40">Cong suat hien tai</p>
+                        <p className="text-xs text-ink/40">Công suất hiện tại</p>
                         <p className="mt-1 font-mono text-lg font-bold text-ink">{selectedStationOccupancy}</p>
                         <p className="mt-1 text-sm text-ink/55">{stationCapacityText}</p>
                       </div>
@@ -954,7 +954,7 @@ function CheckinPage() {
             <div className={`${CARD} overflow-hidden`}>
               <div className="border-b border-stone px-5 py-4">
                 <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Camera scanner</p>
-                <h2 className="mt-1 font-display text-xl font-semibold text-ink">Quet QR</h2>
+                <h2 className="mt-1 font-display text-xl font-semibold text-ink">Quét QR</h2>
               </div>
               <div className="space-y-4 px-5 py-4">
                 <div className="overflow-hidden rounded-xl border border-stone bg-ink">
@@ -962,19 +962,19 @@ function CheckinPage() {
                 </div>
 
                 <form onSubmit={handleManualSubmit} className="space-y-3">
-                  <label className="block text-sm font-medium text-ink/70">Nhap tay ma QR</label>
+                  <label className="block text-sm font-medium text-ink/70">Nhập tay mã QR</label>
                   <div className="flex gap-2">
                     <input
                       value={manualCode}
                       onChange={(event) => setManualCode(event.target.value)}
-                      placeholder="VD: T0007 hoac payload QR"
+                      placeholder="VD: T0007 hoặc payload QR"
                       className="min-w-0 flex-1 rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                     />
                     <button
                       type="submit"
                       className="rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.92]"
                     >
-                      Xac nhan
+                      Xác nhận
                     </button>
                   </div>
                 </form>
@@ -984,17 +984,17 @@ function CheckinPage() {
 
           <section className="space-y-5">
             <div className="grid gap-3 md:grid-cols-4">
-              <MetricCard value={String(statsTeams)} label="Doi da check-in su kien" accent="trail" />
-              <MetricCard value={String(statsParticipants)} label="Nguoi da qua cong" accent="gold" />
-              <MetricCard value={String(stationDirectory.length)} label="Tong tram dang cau hinh" accent="sky" />
-              <MetricCard value={String(stationOpsForSelected.length)} label="Nhat ky tram dang xem" accent="default" />
+              <MetricCard value={String(statsTeams)} label="Đội đã check-in sự kiện" accent="trail" />
+              <MetricCard value={String(statsParticipants)} label="Người đã qua cổng" accent="gold" />
+              <MetricCard value={String(stationDirectory.length)} label="Tổng trạm đang cấu hình" accent="sky" />
+              <MetricCard value={String(stationOpsForSelected.length)} label="Nhật ký trạm đang xem" accent="default" />
             </div>
 
             <div className="grid gap-5 xl:grid-cols-[1.05fr_minmax(320px,0.95fr)]">
               <div className={`${CARD} overflow-hidden`}>
                 <div className="border-b border-stone px-5 py-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Ket qua gan nhat</p>
-                  <h2 className="mt-1 font-display text-xl font-semibold text-ink">Thong tin vua quet</h2>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Kết quả gần nhất</p>
+                  <h2 className="mt-1 font-display text-xl font-semibold text-ink">Thông tin vừa quét</h2>
                 </div>
                 <div className="px-5 py-4">
                   {lastResult ? (
@@ -1005,21 +1005,21 @@ function CheckinPage() {
                       </div>
                       <h3 className="text-lg font-semibold text-ink">{lastResult.teamName}</h3>
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <InfoCell label="Ma doi" value={lastResult.teamId} />
+                        <InfoCell label="Mã đội" value={lastResult.teamId} />
                         <InfoCell label="Phase" value={lastResultPhaseLabel} />
-                        <InfoCell label="Event" value={lastResult.eventName || 'Check-in su kien'} />
-                        <InfoCell label="Tram" value={lastResult.stationName || '--'} />
+                        <InfoCell label="Event" value={lastResult.eventName || 'Check-in sự kiện'} />
+                        <InfoCell label="Trạm" value={lastResult.stationName || '--'} />
                       </div>
                     </div>
                   ) : (
-                    <EmptyBox text="Chua co ket qua quet nao trong phien nay." />
+                    <EmptyBox text="Chưa có kết quả quét nào trong phiên này." />
                   )}
                 </div>
               </div>
 
               <div className={`${CARD} overflow-hidden`}>
                 <div className="border-b border-stone px-5 py-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Nhat ky tram</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Nhật ký trạm</p>
                   <h2 className="mt-1 font-display text-xl font-semibold text-ink">Recent station ops</h2>
                 </div>
                 <div className="px-5 py-4">
@@ -1031,7 +1031,7 @@ function CheckinPage() {
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <Badge
-                                  label={item.action === 'enter' ? 'Vao tram' : 'Roi tram'}
+                                  label={item.action === 'enter' ? 'Vào trạm' : 'Rời trạm'}
                                   cls={item.action === 'enter' ? 'bg-gold/15 text-gold' : 'bg-[#3E7CA8]/12 text-[#3E7CA8]'}
                                 />
                                 <span className="font-mono text-xs text-ink/40">{formatDateTime(item.timestamp)}</span>
@@ -1045,7 +1045,7 @@ function CheckinPage() {
                       ))}
                     </div>
                   ) : (
-                    <EmptyBox text="Chua co thao tac vao/ra tram nao cho tram dang chon." />
+                    <EmptyBox text="Chưa có thao tác vào/ra trạm nào cho trạm đang chọn." />
                   )}
                 </div>
               </div>
@@ -1055,10 +1055,10 @@ function CheckinPage() {
               <div className="border-b border-stone px-5 py-4">
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                   <div>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Check-in su kien</p>
-                    <h2 className="mt-1 font-display text-xl font-semibold text-ink">Danh sach doi da qua cong</h2>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Check-in sự kiện</p>
+                    <h2 className="mt-1 font-display text-xl font-semibold text-ink">Danh sách đội đã qua cổng</h2>
                   </div>
-                  <Badge label={`${statsTeams} doi`} cls="bg-trail/12 text-trail" />
+                  <Badge label={`${statsTeams} đội`} cls="bg-trail/12 text-trail" />
                 </div>
               </div>
               <div className="max-h-[520px] space-y-3 overflow-y-auto px-5 py-4">
@@ -1070,7 +1070,7 @@ function CheckinPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-ink">{team.name}</p>
                           <p className="mt-1 font-mono text-xs text-ink/40">{team.id}</p>
-                          <p className="mt-1 text-sm text-ink/55">{team.members || 'Chua co danh sach thanh vien'}</p>
+                          <p className="mt-1 text-sm text-ink/55">{team.members || 'Chưa có danh sách thành viên'}</p>
                           <p className="mt-1 text-xs text-ink/40">{formatDateTime(team.scannedAt)}</p>
                         </div>
                         {user?.role === 'admin' && (
@@ -1080,14 +1080,14 @@ function CheckinPage() {
                             disabled={isDeleting}
                             className="rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-ink/60 transition hover:bg-paper hover:text-clay disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            {isDeleting ? 'Dang xoa...' : 'Xoa check-in'}
+                            {isDeleting ? 'Đang xóa...' : 'Xóa check-in'}
                           </button>
                         )}
                       </div>
                     </div>
                   )
                 }) : (
-                  <EmptyBox text="Chua co doi nao duoc check-in su kien." />
+                  <EmptyBox text="Chưa có đội nào được check-in sự kiện." />
                 )}
               </div>
             </div>

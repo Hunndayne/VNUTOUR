@@ -10,6 +10,7 @@ from .urls_participant import urlpatterns as participant_patterns
 from .urls_admin import urlpatterns as admin_patterns
 from .urls_program import urlpatterns as program_patterns
 from .urls_station import urlpatterns as station_patterns
+from .urls_assignment import urlpatterns as assignment_patterns
 from .urls_checkin import urlpatterns as checkin_patterns
 from .urls_score import urlpatterns as score_patterns
 from .urls_discord import urlpatterns as discord_patterns
@@ -23,6 +24,7 @@ urlpatterns = (
     + admin_patterns
     + program_patterns
     + station_patterns
+    + assignment_patterns
     + checkin_patterns
     + score_patterns
     + discord_patterns

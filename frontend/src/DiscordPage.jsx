@@ -3,9 +3,9 @@ import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 import { Badge, CARD, Icon, PROVISION } from './ui.jsx'
 
 const SUB_TABS = [
-  { key: 'overview', label: 'Tong quan', icon: 'grid' },
-  { key: 'members', label: 'Thanh vien', icon: 'userCircle' },
-  { key: 'channels', label: 'Kenh & thong bao', icon: 'chat' },
+  { key: 'overview', label: 'Tổng quan', icon: 'grid' },
+  { key: 'members', label: 'Thành viên', icon: 'userCircle' },
+  { key: 'channels', label: 'Kênh & thông báo', icon: 'chat' },
 ]
 
 const BROADCAST_STATUS_META = {
@@ -17,13 +17,13 @@ const BROADCAST_STATUS_META = {
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   const map = {
-    forbidden: 'Ban khong co quyen thao tac Discord.',
-    invalid_json: 'Du lieu gui len khong hop le.',
-    missing_fields: 'Vui long dien du tieu de va noi dung.',
-    team_not_found: 'Khong tim thay doi can dong bo lai.',
-    member_not_found: 'Khong tim thay thanh vien can sync.',
+    forbidden: 'Bạn không có quyền thao tác Discord.',
+    invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
+    missing_fields: 'Vui lòng điền đủ tiêu đề và nội dung.',
+    team_not_found: 'Không tìm thấy đội cần đồng bộ lại.',
+    member_not_found: 'Không tìm thấy thành viên cần sync.',
   }
-  return map[code] || 'Khong the dong bo du lieu Discord.'
+  return map[code] || 'Không thể đồng bộ dữ liệu Discord.'
 }
 
 function toneValueClass(tone) {
@@ -93,7 +93,7 @@ function normalizeTeam(team) {
 function normalizeMember(item) {
   return {
     mssv: item.mssv,
-    fullName: item.full_name || '(Chua dien ten)',
+    fullName: item.full_name || '(Chưa điền tên)',
     teamCode: item.team_code || '',
     teamName: item.team_name || '',
     discordId: item.discord_id ? String(item.discord_id) : '',
@@ -104,18 +104,18 @@ function normalizeMember(item) {
 function targetLabel(item) {
   if (item.target === 'team_ids') {
     const count = Array.isArray(item.targetPayload?.team_codes) ? item.targetPayload.team_codes.length : 0
-    return count > 0 ? `${count} doi cu the` : 'Nhom doi tu chon'
+    return count > 0 ? `${count} đội cụ thể` : 'Nhóm đội tự chọn'
   }
-  if (item.target === 'approved') return 'Doi da duyet'
-  if (item.target === 'pending') return 'Doi chua provision'
-  return 'Tat ca doi'
+  if (item.target === 'approved') return 'Đội đã duyệt'
+  if (item.target === 'pending') return 'Đội chưa provision'
+  return 'Tất cả đội'
 }
 
 function queueBadge(item) {
   if (item.provision_state === 'failed') {
-    return <Badge label="Loi" cls="bg-clay/12 text-clay" />
+    return <Badge label="Lỗi" cls="bg-clay/12 text-clay" />
   }
-  return <Badge label="Dang cho" cls="bg-gold/15 text-gold" />
+  return <Badge label="Đang chờ" cls="bg-gold/15 text-gold" />
 }
 
 function broadcastBadge(status) {
@@ -135,10 +135,10 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-display text-lg font-bold text-ink">VNUTour Discord</h2>
-              <Badge label={`${status.provisioning.done} da xong`} cls="bg-trail/12 text-trail" />
+              <Badge label={`${status.provisioning.done} đã xong`} cls="bg-trail/12 text-trail" />
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/50">
-              Theo doi trang thai provision kenh/role, doi can retry, va lich su thong bao da tao tu trang admin.
+              Theo dõi trạng thái provision kênh/role, đội cần retry, và lịch sử thông báo đã tạo từ trang admin.
             </p>
           </div>
 
@@ -148,25 +148,25 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
             className="inline-flex items-center gap-2 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-medium text-ink/65 transition hover:bg-paper hover:text-ink"
           >
             <Icon name="check" className="h-4 w-4" />
-            Tai lai
+            Tải lại
           </button>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Doi da provision" value={`${status.provisioning.done}`} note={`${linkedChannelTeams.length} doi da co channel id`} tone="trail" />
-        <MetricCard label="Doi trong queue" value={`${status.provisioning.pending}`} note={pendingTeams.length > 0 ? 'Can bot xu ly tiep' : 'Khong co doi cho'} tone="gold" />
-        <MetricCard label="Provision loi" value={`${status.provisioning.failed}`} note={failedTeams.length > 0 ? 'Nen retry sau khi kiem tra bot' : 'Khong co loi ton'} tone="clay" />
-        <MetricCard label="Thong bao gan day" value={`${broadcasts.length}`} note="Lay tu lich su broadcast" tone="sky" />
+        <MetricCard label="Đội đã provision" value={`${status.provisioning.done}`} note={`${linkedChannelTeams.length} đội đã có channel id`} tone="trail" />
+        <MetricCard label="Đội trong queue" value={`${status.provisioning.pending}`} note={pendingTeams.length > 0 ? 'Cần bot xử lý tiếp' : 'Không có đội chờ'} tone="gold" />
+        <MetricCard label="Provision lỗi" value={`${status.provisioning.failed}`} note={failedTeams.length > 0 ? 'Nên retry sau khi kiểm tra bot' : 'Không có lỗi tồn'} tone="clay" />
+        <MetricCard label="Thông báo gần đây" value={`${broadcasts.length}`} note="Lấy từ lịch sử broadcast" tone="sky" />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.2fr_minmax(320px,0.8fr)]">
         <section className={`${CARD} overflow-hidden`}>
           <div className="flex items-center justify-between border-b border-stone px-5 py-3">
             <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">
-              Hang doi provision
+              Hàng đợi provision
             </h3>
-            <span className="font-mono text-xs text-ink/35">{queue.length} doi</span>
+            <span className="font-mono text-xs text-ink/35">{queue.length} đội</span>
           </div>
 
           <div className="divide-y divide-stone/60">
@@ -181,11 +181,11 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
                       {queueBadge(item)}
                     </div>
                     <p className="mt-1 text-xs leading-5 text-ink/45">
-                      {item.provision_last_error || 'Doi dang cho bot tao role/channel tuong ung.'}
+                      {item.provision_last_error || 'Đội đang chờ bot tạo role/channel tương ứng.'}
                     </p>
                     <p className="mt-1 font-mono text-[11px] text-ink/35">
                       Retry: {item.provision_retry_count || 0}
-                      {item.last_provisioned_at ? ` · Lan gan nhat ${formatDateTime(item.last_provisioned_at)}` : ''}
+                      {item.last_provisioned_at ? ` · Lần gần nhất ${formatDateTime(item.last_provisioned_at)}` : ''}
                     </p>
                   </div>
 
@@ -196,13 +196,13 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
                   >
                     <Icon name="check" className="h-4 w-4" />
-                    {busyKey === retryKey ? 'Dang retry...' : 'Retry'}
+                    {busyKey === retryKey ? 'Đang retry...' : 'Retry'}
                   </button>
                 </div>
               )
             }) : (
               <div className="px-5 py-10 text-center text-sm text-ink/35">
-                Queue dang trong. Khong co doi nao can provision them.
+                Queue đang trống. Không có đội nào cần provision thêm.
               </div>
             )}
           </div>
@@ -211,9 +211,9 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
         <section className={`${CARD} overflow-hidden`}>
           <div className="flex items-center justify-between border-b border-stone px-5 py-3">
             <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">
-              Broadcast gan day
+              Broadcast gần đây
             </h3>
-            <span className="font-mono text-xs text-ink/35">{broadcasts.length} muc</span>
+            <span className="font-mono text-xs text-ink/35">{broadcasts.length} mục</span>
           </div>
 
           <div className="divide-y divide-stone/60">
@@ -225,14 +225,14 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
                 </div>
                 <p className="mt-1 text-xs text-ink/45">{targetLabel(item)}</p>
                 <p className="mt-1 font-mono text-[11px] text-ink/35">
-                  Tao luc {formatDateTime(item.createdAt)}
-                  {item.sentAt ? ` · Gui luc ${formatDateTime(item.sentAt)}` : ''}
+                  Tạo lúc {formatDateTime(item.createdAt)}
+                  {item.sentAt ? ` · Gửi lúc ${formatDateTime(item.sentAt)}` : ''}
                 </p>
                 {item.error && <p className="mt-2 text-xs leading-5 text-clay">{item.error}</p>}
               </div>
             )) : (
               <div className="px-5 py-10 text-center text-sm text-ink/35">
-                Chua co broadcast nao duoc tao.
+                Chưa có broadcast nào được tạo.
               </div>
             )}
           </div>
@@ -286,9 +286,9 @@ function MembersTab({ members, busyKey, onSync }) {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex overflow-hidden rounded-lg border border-stone text-sm">
           {[
-            { key: 'all', label: `Tat ca (${counts.all || 0})` },
-            { key: 'linked', label: `Da lien ket (${counts.linked || 0})` },
-            { key: 'unlinked', label: `Chua lien ket (${counts.unlinked || 0})` },
+            { key: 'all', label: `Tất cả (${counts.all || 0})` },
+            { key: 'linked', label: `Đã liên kết (${counts.linked || 0})` },
+            { key: 'unlinked', label: `Chưa liên kết (${counts.unlinked || 0})` },
           ].map((tab, index) => (
             <button
               key={tab.key}
@@ -311,7 +311,7 @@ function MembersTab({ members, busyKey, onSync }) {
             type="text"
             value={search}
             onChange={event => setSearch(event.target.value)}
-            placeholder="Tim theo MSSV, ten, doi..."
+            placeholder="Tìm theo MSSV, tên, đội..."
             className="w-full rounded-lg border border-stone bg-white py-2.5 pl-10 pr-4 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
           />
         </div>
@@ -322,10 +322,10 @@ function MembersTab({ members, busyKey, onSync }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-stone bg-paper/70">
-                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thanh vien</th>
-                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Doi</th>
+                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thành viên</th>
+                <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Đội</th>
                 <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Discord</th>
-                <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tac</th>
+                <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone/60">
@@ -350,11 +350,11 @@ function MembersTab({ members, busyKey, onSync }) {
                     <td className="px-5 py-3.5">
                       {member.linked ? (
                         <div>
-                          <Badge label="Da lien ket" cls="bg-trail/12 text-trail" />
+                          <Badge label="Đã liên kết" cls="bg-trail/12 text-trail" />
                           <p className="mt-1 font-mono text-xs text-ink/35">{member.discordId}</p>
                         </div>
                       ) : (
-                        <Badge label="Chua lien ket" cls="bg-clay/12 text-clay" />
+                        <Badge label="Chưa liên kết" cls="bg-clay/12 text-clay" />
                       )}
                     </td>
                     <td className="px-5 py-3.5">
@@ -365,7 +365,7 @@ function MembersTab({ members, busyKey, onSync }) {
                           disabled={busyKey === syncKey}
                           className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
                         >
-                          {busyKey === syncKey ? 'Dang sync...' : 'Sync'}
+                          {busyKey === syncKey ? 'Đang sync...' : 'Sync'}
                         </button>
                       </div>
                     </td>
@@ -374,7 +374,7 @@ function MembersTab({ members, busyKey, onSync }) {
               }) : (
                 <tr>
                   <td colSpan={4} className="px-5 py-12 text-center text-sm text-ink/35">
-                    {loading ? 'Dang tai thanh vien...' : 'Khong co thanh vien nao khop bo loc hien tai.'}
+                    {loading ? 'Đang tải thành viên...' : 'Không có thành viên nào khớp bộ lọc hiện tại.'}
                   </td>
                 </tr>
               )}
@@ -401,15 +401,15 @@ function MembersTab({ members, busyKey, onSync }) {
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-stone p-3">
-              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Trang thai</p>
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Trạng thái</p>
               <div className="mt-2">
                 {selectedMember.linked
-                  ? <Badge label="Da lien ket Discord" cls="bg-trail/12 text-trail" />
-                  : <Badge label="Chua lien ket Discord" cls="bg-clay/12 text-clay" />}
+                  ? <Badge label="Đã liên kết Discord" cls="bg-trail/12 text-trail" />
+                  : <Badge label="Chưa liên kết Discord" cls="bg-clay/12 text-clay" />}
               </div>
             </div>
             <div className="rounded-lg border border-stone p-3">
-              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Doi</p>
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink/35">Đội</p>
               <p className="mt-2 text-sm text-ink">{selectedMember.teamName || '--'}</p>
               <p className="mt-0.5 font-mono text-xs text-ink/35">{selectedMember.teamCode || '--'}</p>
             </div>
@@ -459,9 +459,9 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
     <div className="space-y-5">
       <div className="flex w-fit overflow-hidden rounded-lg border border-stone text-sm">
         {[
-          { key: 'channels', label: 'Danh sach kenh' },
-          { key: 'compose', label: 'Soan thong bao' },
-          { key: 'history', label: 'Lich su' },
+          { key: 'channels', label: 'Danh sách kênh' },
+          { key: 'compose', label: 'Soạn thông báo' },
+          { key: 'history', label: 'Lịch sử' },
         ].map((item, index) => (
           <button
             key={item.key}
@@ -482,12 +482,12 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-stone bg-paper/70">
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Doi</th>
+                  <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Đội</th>
                   <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Provision</th>
                   <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Text channel</th>
                   <th className="px-5 py-3 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Voice channel</th>
                   <th className="px-5 py-3 text-center font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Members</th>
-                  <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tac</th>
+                  <th className="px-5 py-3 text-right font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone/60">
@@ -520,7 +520,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                               disabled={busyKey === retryKey}
                               className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
                             >
-                              {busyKey === retryKey ? 'Dang retry...' : 'Retry'}
+                              {busyKey === retryKey ? 'Đang retry...' : 'Retry'}
                             </button>
                           )}
                           {team.provisionState === 'done' && (team.textChannelId || team.voiceChannelId) && (
@@ -532,7 +532,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                               }}
                               className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/65 transition hover:bg-paper hover:text-ink"
                             >
-                              Nhac nhanh
+                              Nhắc nhanh
                             </button>
                           )}
                         </div>
@@ -542,7 +542,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                 }) : (
                   <tr>
                     <td colSpan={6} className="px-5 py-12 text-center text-sm text-ink/35">
-                      Chua co doi nao trong he thong.
+                      Chưa có đội nào trong hệ thống.
                     </td>
                   </tr>
                 )}
@@ -556,35 +556,35 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
         <div className={`${CARD} p-5`}>
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tieu de</label>
+              <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tiêu đề</label>
               <input
                 type="text"
                 value={composeForm.title}
                 onChange={event => setComposeForm((current) => ({ ...current, title: event.target.value }))}
                 className="w-full rounded-lg border border-stone bg-white px-4 py-2.5 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
-                placeholder="VD: Nhac lich check-in vong loai"
+                placeholder="VD: Nhắc lịch check-in vòng loại"
               />
             </div>
 
             <div>
-              <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Noi dung</label>
+              <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Nội dung</label>
               <textarea
                 rows={5}
                 value={composeForm.message}
                 onChange={event => setComposeForm((current) => ({ ...current, message: event.target.value }))}
                 className="w-full resize-y rounded-lg border border-stone bg-white px-4 py-3 text-sm leading-6 text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
-                placeholder="Ho tro Markdown o phia Discord bot."
+                placeholder="Hỗ trợ Markdown ở phía Discord bot."
               />
             </div>
 
             <div>
-              <label className="mb-2 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Gui den</label>
+              <label className="mb-2 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Gửi đến</label>
               <div className="grid gap-2 sm:grid-cols-2">
                 {[
-                  { key: 'all', label: 'Tat ca doi' },
-                  { key: 'approved', label: 'Doi da duyet' },
-                  { key: 'pending', label: 'Doi chua provision xong' },
-                  { key: 'team_ids', label: 'Chon doi cu the' },
+                  { key: 'all', label: 'Tất cả đội' },
+                  { key: 'approved', label: 'Đội đã duyệt' },
+                  { key: 'pending', label: 'Đội chưa provision xong' },
+                  { key: 'team_ids', label: 'Chọn đội cụ thể' },
                 ].map((option) => (
                   <button
                     key={option.key}
@@ -604,7 +604,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
 
             {composeForm.target === 'team_ids' && (
               <div className="rounded-lg border border-stone bg-paper px-4 py-3">
-                <p className="mb-2 text-sm font-medium text-ink">Chon doi co channel de gui</p>
+                <p className="mb-2 text-sm font-medium text-ink">Chọn đội có channel để gửi</p>
                 <div className="grid max-h-52 gap-2 overflow-y-auto sm:grid-cols-2">
                   {selectableTeams.length > 0 ? selectableTeams.map((team) => (
                     <label key={team.code} className="flex items-center gap-2 rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink/70">
@@ -617,7 +617,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                       <span className="min-w-0 truncate">{team.code} · {team.name}</span>
                     </label>
                   )) : (
-                    <p className="text-sm text-ink/35">Chua co doi nao san sang nhan thong bao theo kenh rieng.</p>
+                    <p className="text-sm text-ink/35">Chưa có đội nào sẵn sàng nhận thông báo theo kênh riêng.</p>
                   )}
                 </div>
               </div>
@@ -625,7 +625,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
 
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-ink/45">
-                Broadcast hien tao ban nhap trong database; bot se doc queue nay de gui ve Discord.
+                Broadcast hiện tạo bản nháp trong database; bot sẽ đọc queue này để gửi về Discord.
               </p>
               <button
                 type="button"
@@ -639,7 +639,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                 className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
               >
                 <Icon name="chat" className="h-4 w-4" />
-                {busyKey === 'broadcast:create' ? 'Dang tao...' : 'Tao broadcast'}
+                {busyKey === 'broadcast:create' ? 'Đang tạo...' : 'Tạo broadcast'}
               </button>
             </div>
           </div>
@@ -657,14 +657,14 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                 </div>
                 <p className="mt-1 text-xs text-ink/45">{targetLabel(item)}</p>
                 <p className="mt-1 font-mono text-[11px] text-ink/35">
-                  Tao boi {item.sentBy || 'admin'} · {formatDateTime(item.createdAt)}
+                  Tạo bởi {item.sentBy || 'admin'} · {formatDateTime(item.createdAt)}
                   {item.sentAt ? ` · Sent ${formatDateTime(item.sentAt)}` : ''}
                 </p>
                 {item.error && <p className="mt-2 text-xs leading-5 text-clay">{item.error}</p>}
               </div>
             )) : (
               <div className="px-5 py-12 text-center text-sm text-ink/35">
-                Chua co lich su broadcast.
+                Chưa có lịch sử broadcast.
               </div>
             )}
           </div>
@@ -824,7 +824,7 @@ export default function DiscordPage() {
 
       {loading ? (
         <div className={`${CARD} px-5 py-14 text-center text-sm text-ink/35`}>
-          Dang tai du lieu Discord...
+          Đang tải dữ liệu Discord...
         </div>
       ) : (
         <>

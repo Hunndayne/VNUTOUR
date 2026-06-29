@@ -3,24 +3,24 @@ import { Icon, CARD } from './ui.jsx'
 import { apiRequest, getStoredUser, logoutAndRedirect } from './api.js'
 
 const RECIPIENT_OPTIONS = [
-  { value: 'all', label: 'Tat ca tai khoan', desc: 'Gui den moi tai khoan dang hoat dong' },
-  { value: 'participant', label: 'Thi sinh', desc: 'Tai khoan co vai tro participant' },
-  { value: 'collab', label: 'Cong tac vien', desc: 'Tai khoan co vai tro collab' },
-  { value: 'admin', label: 'Quan tri vien', desc: 'Tai khoan co vai tro admin' },
-  { value: 'specific', label: 'Chi dinh cu the', desc: 'Chon tung tai khoan trong danh sach' },
+  { value: 'all', label: 'Tất cả tài khoản', desc: 'Gửi đến mọi tài khoản đang hoạt động' },
+  { value: 'participant', label: 'Thí sinh', desc: 'Tài khoản có vai trò participant' },
+  { value: 'collab', label: 'Cộng tác viên', desc: 'Tài khoản có vai trò collab' },
+  { value: 'admin', label: 'Quản trị viên', desc: 'Tài khoản có vai trò admin' },
+  { value: 'specific', label: 'Chỉ định cụ thể', desc: 'Chọn từng tài khoản trong danh sách' },
 ]
 
 const PLACEHOLDER_KEYS = ['{{ten}}', '{{name}}', '{{full_name}}', '{{ho_ten}}', '{{email}}', '{{username}}', '{{role}}']
 
 function explainApiError(error) {
-  if (error?.data?.error === 'smtp_not_configured') return 'May chu chua duoc cau hinh SMTP.'
-  if (error?.data?.error === 'no_recipients') return 'Khong co nguoi nhan nao.'
-  if (error?.data?.error === 'subject_required') return 'Vui long nhap tieu de email.'
-  if (error?.data?.error === 'html_body_required') return 'Vui long nhap noi dung email.'
-  if (error?.status === 400) return 'Du lieu gui len khong hop le.'
-  if (error?.status === 403) return 'Ban khong co quyen thuc hien hanh dong nay.'
-  if (error?.status === 500) return 'Loi may chu. Vui long thu lai sau.'
-  return 'Co loi xay ra. Vui long thu lai.'
+  if (error?.data?.error === 'smtp_not_configured') return 'Máy chủ chưa được cấu hình SMTP.'
+  if (error?.data?.error === 'no_recipients') return 'Không có người nhận nào.'
+  if (error?.data?.error === 'subject_required') return 'Vui lòng nhập tiêu đề email.'
+  if (error?.data?.error === 'html_body_required') return 'Vui lòng nhập nội dung email.'
+  if (error?.status === 400) return 'Dữ liệu gửi lên không hợp lệ.'
+  if (error?.status === 403) return 'Bạn không có quyền thực hiện hành động này.'
+  if (error?.status === 500) return 'Lỗi máy chủ. Vui lòng thử lại sau.'
+  return 'Có lỗi xảy ra. Vui lòng thử lại.'
 }
 
 function applyPreviewTemplate(source, preview) {
@@ -124,18 +124,18 @@ export default function EmailPage() {
   const handleSend = useCallback(async () => {
     const extEmails = externalEmails.split(/[\n,]/).map((email) => email.trim()).filter(Boolean)
     if (!subject.trim()) {
-      setApiError('Vui long nhap tieu de email.')
+      setApiError('Vui lòng nhập tiêu đề email.')
       return
     }
     if (!htmlBody.trim()) {
-      setApiError('Vui long nhap noi dung email.')
+      setApiError('Vui lòng nhập nội dung email.')
       return
     }
     if (estimatedRecipientCount === 0) {
-      setApiError('Khong co nguoi nhan nao.')
+      setApiError('Không có người nhận nào.')
       return
     }
-    if (!window.confirm(`Ban co chac muon gui email den ${estimatedRecipientCount} nguoi nhan?`)) return
+    if (!window.confirm(`Bạn có chắc muốn gửi email đến ${estimatedRecipientCount} người nhận?`)) return
 
     setBusy('send')
     setApiError(null)
@@ -190,7 +190,7 @@ export default function EmailPage() {
 
       {result && (
         <div className={`${CARD} border-trail/20 bg-trail/10 px-4 py-3 text-sm text-trail`}>
-          Da gui thanh cong {result.sent} / {result.recipients?.length || 0} email{result.personalized ? ' theo mau ca nhan hoa.' : '.'}
+          Đã gửi thành công {result.sent} / {result.recipients?.length || 0} email{result.personalized ? ' theo mẫu cá nhân hóa.' : '.'}
         </div>
       )}
 
@@ -198,7 +198,7 @@ export default function EmailPage() {
         <div className="border-b border-stone px-5 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
             <Icon name="users" className="h-4 w-4" />
-            Nguoi nhan
+            Người nhận
           </h2>
         </div>
         <div className="space-y-4 px-5 py-4">
@@ -235,7 +235,7 @@ export default function EmailPage() {
                   <Icon name="search" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
                   <input
                     type="text"
-                    placeholder="Tim kiem theo ten, email, username..."
+                    placeholder="Tìm kiếm theo tên, email, username..."
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
                     className="w-full rounded-lg border border-stone bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none focus:border-gold"
@@ -246,14 +246,14 @@ export default function EmailPage() {
                   onClick={() => setSelectedUsernames(filteredAccounts.map((account) => account.username))}
                   className="rounded-lg border border-stone px-3 py-2 text-xs text-ink/60 hover:bg-stone/30"
                 >
-                  Chon tat ca
+                  Chọn tất cả
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedUsernames([])}
                   className="rounded-lg border border-stone px-3 py-2 text-xs text-ink/60 hover:bg-stone/30"
                 >
-                  Bo chon
+                  Bỏ chọn
                 </button>
               </div>
 
@@ -279,19 +279,19 @@ export default function EmailPage() {
                   </label>
                 ))}
                 {filteredAccounts.length === 0 && (
-                  <p className="py-4 text-center text-sm text-ink/40">Khong tim thay tai khoan nao.</p>
+                  <p className="py-4 text-center text-sm text-ink/40">Không tìm thấy tài khoản nào.</p>
                 )}
               </div>
-              <div className="text-xs text-ink/40">Da chon {selectedUsernames.length} tai khoan.</div>
+              <div className="text-xs text-ink/40">Đã chọn {selectedUsernames.length} tài khoản.</div>
             </div>
           )}
 
           <div className="space-y-2">
             <label className="text-sm font-medium text-ink">
-              Email ben ngoai <span className="font-normal text-ink/40">(khong co tai khoan trong he thong)</span>
+              Email bên ngoài <span className="font-normal text-ink/40">(không có tài khoản trong hệ thống)</span>
             </label>
             <textarea
-              placeholder="Nhap email, phan cach bang dau phay hoac xuong dong."
+              placeholder="Nhập email, phân cách bằng dấu phẩy hoặc xuống dòng."
               value={externalEmails}
               onChange={(event) => setExternalEmails(event.target.value)}
               rows={3}
@@ -305,15 +305,15 @@ export default function EmailPage() {
         <div className="border-b border-stone px-5 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
             <Icon name="doc" className="h-4 w-4" />
-            Soan email
+            Soạn email
           </h2>
         </div>
         <div className="space-y-4 px-5 py-4">
           <div>
-            <label className="text-sm font-medium text-ink">Tieu de</label>
+            <label className="text-sm font-medium text-ink">Tiêu đề</label>
             <input
               type="text"
-              placeholder="Nhap tieu de email..."
+              placeholder="Nhập tiêu đề email..."
               value={subject}
               onChange={(event) => setSubject(event.target.value)}
               className="mt-1 w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
@@ -321,7 +321,7 @@ export default function EmailPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm text-ink/60">Che do soan thao:</span>
+            <span className="text-sm text-ink/60">Chế độ soạn thảo:</span>
             <button
               type="button"
               onClick={() => setIsHtmlMode(true)}
@@ -338,35 +338,35 @@ export default function EmailPage() {
                 !isHtmlMode ? 'bg-gold text-white' : 'border border-stone text-ink/55 hover:bg-stone/30'
               }`}
             >
-              Van ban thuong
+              Văn bản thường
             </button>
             {isHtmlMode && (
               <span className="text-xs text-ink/40">
-                Co the dung the HTML va placeholder ca nhan hoa.
+                Có thể dùng thẻ HTML và placeholder cá nhân hóa.
               </span>
             )}
           </div>
 
           <div className="rounded-lg border border-stone bg-paper px-4 py-3 text-sm text-ink/70">
-            <p className="font-medium text-ink">Bien ca nhan hoa</p>
+            <p className="font-medium text-ink">Biến cá nhân hóa</p>
             <p className="mt-1 text-xs leading-5 text-ink/50">
-              Dung trong tieu de hoac noi dung: {PLACEHOLDER_KEYS.map((item) => (
+              Dùng trong tiêu đề hoặc nội dung: {PLACEHOLDER_KEYS.map((item) => (
                 <code key={item} className="mr-2">{item}</code>
               ))}
             </p>
             <p className="mt-2 text-xs text-ink/45">
-              Vi du: <code>{'Chuc mung {{ten}}!'}</code>
+              Ví dụ: <code>{'Chúc mừng {{ten}}!'}</code>
             </p>
           </div>
 
           <div>
             <label className="text-sm font-medium text-ink">
-              Noi dung {isHtmlMode ? '(HTML)' : '(van ban thuong)'}
+              Nội dung {isHtmlMode ? '(HTML)' : '(văn bản thường)'}
             </label>
             <textarea
               placeholder={isHtmlMode
-                ? '<h1>Chuc mung {{ten}}</h1><p>Noi dung email...</p>'
-                : 'Nhap noi dung email...'}
+                ? '<h1>Chúc mừng {{ten}}</h1><p>Nội dung email...</p>'
+                : 'Nhập nội dung email...'}
               value={htmlBody}
               onChange={(event) => setHtmlBody(event.target.value)}
               rows={14}
@@ -379,7 +379,7 @@ export default function EmailPage() {
             <div className="border-b border-stone px-4 py-3">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Preview</p>
               <p className="mt-1 text-xs text-ink/45">
-                Dang xem thu voi du lieu cua: <span className="font-medium text-ink">{personalizationPreview.name}</span>
+                Đang xem thử với dữ liệu của: <span className="font-medium text-ink">{personalizationPreview.name}</span>
               </p>
             </div>
 
@@ -387,12 +387,12 @@ export default function EmailPage() {
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Subject</p>
                 <p className="mt-2 text-sm text-ink/70">
-                  {subject.trim() ? applyPreviewTemplate(subject, personalizationPreview) : 'Chua co tieu de de xem truoc.'}
+                  {subject.trim() ? applyPreviewTemplate(subject, personalizationPreview) : 'Chưa có tiêu đề để xem trước.'}
                 </p>
               </div>
 
               <div>
-                <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Noi dung</p>
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Nội dung</p>
                 {htmlBody.trim() ? (
                   isHtmlMode ? (
                     <div
@@ -405,7 +405,7 @@ export default function EmailPage() {
                     </pre>
                   )
                 ) : (
-                  <p className="mt-2 text-sm text-ink/45">Chua co noi dung de xem truoc.</p>
+                  <p className="mt-2 text-sm text-ink/45">Chưa có nội dung để xem trước.</p>
                 )}
               </div>
             </div>
@@ -416,8 +416,8 @@ export default function EmailPage() {
       <div className={`${CARD} flex items-center justify-between px-5 py-4`}>
         <div className="text-sm text-ink/55">
           {estimatedRecipientCount > 0
-            ? `Se gui den ${estimatedRecipientCount} nguoi nhan`
-            : 'Chua co nguoi nhan nao duoc chon'}
+            ? `Sẽ gửi đến ${estimatedRecipientCount} người nhận`
+            : 'Chưa có người nhận nào được chọn'}
         </div>
         <button
           type="button"
@@ -432,12 +432,12 @@ export default function EmailPage() {
           {busy === 'send' ? (
             <>
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Dang gui...
+              Đang gửi...
             </>
           ) : (
             <>
               <Icon name="mail" className="h-4 w-4" />
-              Gui email
+              Gửi email
             </>
           )}
         </button>
