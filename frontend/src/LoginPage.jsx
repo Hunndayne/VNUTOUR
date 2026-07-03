@@ -76,17 +76,15 @@ function LoginPage() {
     return Object.keys(e).length === 0
   }
 
-  const redirectByRole = useCallback((role) => {
-    if (role === 'admin') window.location.replace('/admin')
-    else if (role === 'collab') window.location.replace('/checkin')
-    else window.location.replace('/participant')
+  const redirectToRoot = useCallback(() => {
+    window.location.replace('/')
   }, [])
 
   const persistAndRedirect = useCallback((data) => {
     localStorage.setItem('authToken', data.token)
     localStorage.setItem('user', JSON.stringify(data.user))
-    redirectByRole(data.user.role)
-  }, [redirectByRole])
+    redirectToRoot()
+  }, [redirectToRoot])
 
   // ── Login ───────────────────────────────────────────────────────────
   const handleLogin = async () => {

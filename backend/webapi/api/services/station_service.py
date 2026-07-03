@@ -210,6 +210,48 @@ def exit_station(
     return session, None
 
 
+def set_session_score(
+    session_id: int,
+    operator: Account,
+    score,
+    note: str | None = None,
+) -> Tuple[Optional[StationSession], Optional[str]]:
+    """Set/cập nhật điểm cho một phiên trạm và đồng bộ ScoreEntry tương ứng."""
+    session = StationSession.objects.select_related(
+        "phase", "sub_event", "team", "station",
+    ).filter(id=session_id).first()
+    if not session:
+        return None, "session_not_found"
+
+    try:
+        points = int(score)
+    except (TypeError, ValueError):
+        return None, "invalid_score"
+
+    session.score = points
+    if note is not None:
+        session.note = note
+    session.save(update_fields=["score", "note", "updated_at"])
+
+    entry = ScoreEntry.objects.filter(
+        station_session=session, kind=ScoreEntry.KIND_STATION,
+    ).first()
+    if entry:
+        entry.points = points
+        if note is not None:
+            entry.note = note
+        entry.save(update_fields=["points", "note", "updated_at"])
+    elif points:
+        ScoreEntry.objects.create(
+            phase=session.phase, sub_event=session.sub_event,
+            station_session=session, team=session.team,
+            kind=ScoreEntry.KIND_STATION, points=points,
+            note=note or f"Tram {session.station.code}", created_by=operator,
+        )
+
+    return session, None
+
+
 def list_recent_sessions(event_id: int | None = None, limit: int = 50) -> list[dict]:
     """Return recent station sessions."""
     qs = StationSession.objects.select_related(

@@ -6,9 +6,12 @@ from api.views_checkin import (
     event_checkin_stats_view, event_checkin_reset_view,
     checkin_legacy_view, checkins_legacy_list_view,
     checkins_legacy_stats_view, checkin_legacy_reset_view,
+    checkin_qr_view,
 )
 
 urlpatterns = [
+    path("admin/checkin-qr", checkin_qr_view),
+    path("admin/checkin-qr/", checkin_qr_view),
     path("event-checkins/scan", event_checkin_scan_view),
     path("event-checkins/scan/", event_checkin_scan_view),
     path("event-checkins", event_checkin_list_view),

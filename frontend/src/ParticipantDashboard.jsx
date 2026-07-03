@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
@@ -622,6 +623,41 @@ function OpenFormsCard({ forms }) {
   )
 }
 
+function TeamCheckinQrCard({ qrInfo, teamName }) {
+  const enabled = Boolean(qrInfo?.enabled && qrInfo?.qr_payload)
+  return (
+    <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
+      <div className="grid gap-0 sm:grid-cols-[auto_1fr]">
+        <div className="flex items-center justify-center border-b border-[#DCD8CC] bg-white p-5 sm:border-b-0 sm:border-r">
+          {enabled ? (
+            <div className="rounded-xl border border-[#DCD8CC] bg-white p-3">
+              <QRCodeSVG value={qrInfo.qr_payload} size={172} level="M" />
+            </div>
+          ) : (
+            <div className="flex h-[196px] w-[196px] items-center justify-center rounded-xl border border-dashed border-[#DCD8CC] bg-[#F3F4F1] px-4 text-center text-xs text-ink/40">
+              BTC chưa mở điểm danh
+            </div>
+          )}
+        </div>
+        <div className="p-5">
+          <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">QR điểm danh</p>
+          <h2 className="mt-1 font-display text-xl font-bold text-ink">{teamName || 'Đội của bạn'}</h2>
+          <p className="mt-2 text-sm leading-6 text-ink/55">
+            {enabled
+              ? 'Đưa QR này cho cộng tác viên quét khi check-in sự kiện và tại mỗi trạm. Một QR dùng cho mọi trạm trong phase hiện tại.'
+              : 'Khi BTC mở điểm danh cho phase của đội, mã QR sẽ hiện ở đây. QR được làm mới mỗi lần BTC mở để chống gian lận.'}
+          </p>
+          {enabled && qrInfo.team_code && (
+            <span className="mt-3 inline-flex rounded-full bg-[#1F7A6B]/12 px-3 py-1 font-mono text-xs font-semibold text-[#1F7A6B]">
+              {qrInfo.team_code}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ParticipantDashboard() {
   const [user, setUser] = useState(() => getStoredUser() || {
     username: 'participant',
@@ -643,6 +679,7 @@ function ParticipantDashboard() {
   const [showSettings, setShowSettings] = useState(false)
   const [registrationSchema, setRegistrationSchema] = useState(null)
   const [experience, setExperience] = useState(null)
+  const [qrInfo, setQrInfo] = useState(null)
 
   const loadDashboard = async () => {
     const me = await apiRequest('/auth/me')
@@ -694,6 +731,33 @@ function ParticipantDashboard() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (team?.approval_status !== 'approved') {
+      setQrInfo(null)
+      return undefined
+    }
+    let cancelled = false
+    const loadQr = async () => {
+      try {
+        const payload = await apiRequest('/my-team/qr')
+        if (!cancelled) setQrInfo(payload)
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        setQrInfo({ enabled: false })
+      }
+    }
+    loadQr()
+    const timer = window.setInterval(loadQr, 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [team?.approval_status])
 
   const status = STATUS[team?.approval_status || 'draft']
   const provision = PROVISION[team?.provision_state || 'none']
@@ -902,6 +966,9 @@ function ParticipantDashboard() {
           <SettingsPage />
         ) : (
           <>
+        {team?.approval_status === 'approved' && (
+          <TeamCheckinQrCard qrInfo={qrInfo} teamName={team.team_name} />
+        )}
         {registrationOpen ? (
           <>
             <section className={`${PARTICIPANT_CARD} overflow-hidden`}>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 import { Badge, CARD, Icon } from './ui.jsx'
 
@@ -7,6 +7,7 @@ function explainApiError(error) {
   const map = {
     collab_not_found: 'Không tìm thấy cộng tác viên phù hợp.',
     station_not_found: 'Không tìm thấy trạm để phân công.',
+    duplicate_assignment: 'Cộng tác viên này đã được phân công vào trạm đó.',
     missing_fields: 'Cần chọn cộng tác viên và trạm.',
     forbidden: 'Bạn không có quyền phân công cộng tác viên.',
   }
@@ -59,7 +60,13 @@ function AssignmentRow({ assignment, onDelete, busy }) {
   )
 }
 
-export default function StationAssignmentsPanel({ phase, selectedEvent, stations }) {
+export default function StationAssignmentsPanel({
+  phase,
+  selectedEvent,
+  stations,
+  selectedStation = null,
+  embedded = false,
+}) {
   const [collabs, setCollabs] = useState([])
   const [assignments, setAssignments] = useState([])
   const [loading, setLoading] = useState(true)
@@ -74,8 +81,13 @@ export default function StationAssignmentsPanel({ phase, selectedEvent, stations
   })
 
   const stationOptions = useMemo(
-    () => stations.filter(station => station.active),
-    [stations],
+    () => {
+      if (selectedStation) {
+        return [selectedStation]
+      }
+      return stations.filter(station => station.active)
+    },
+    [selectedStation, stations],
   )
 
   const loadPanel = useCallback(async () => {
@@ -102,8 +114,11 @@ export default function StationAssignmentsPanel({ phase, selectedEvent, stations
     ])
 
     setCollabs(accountsPayload.items || [])
-    setAssignments(assignmentsPayload.items || [])
-  }, [phase, selectedEvent])
+    const nextAssignments = selectedStation
+      ? (assignmentsPayload.items || []).filter((assignment) => String(assignment.station.id) === String(selectedStation.id))
+      : (assignmentsPayload.items || [])
+    setAssignments(nextAssignments)
+  }, [phase, selectedEvent, selectedStation])
 
   useEffect(() => {
     let cancelled = false
@@ -204,24 +219,32 @@ export default function StationAssignmentsPanel({ phase, selectedEvent, stations
     )
   }
 
+  const Wrapper = embedded ? Fragment : 'div'
+  const wrapperProps = embedded ? {} : { className: `${CARD} overflow-hidden` }
+
   return (
-    <div className={`${CARD} overflow-hidden`}>
-      <div className="border-b border-stone px-5 py-4">
+    <Wrapper {...wrapperProps}>
+      <div className={`${embedded ? '' : 'border-b border-stone'} px-5 py-4`}>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="max-w-3xl">
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">
-              Phân công coop theo trạm
+              Phân công coop
             </p>
             <h3 className="mt-2 font-display text-xl font-semibold text-ink">
-              Gán cộng tác viên vào đúng trạm và ca trực
+              {selectedStation ? `Cộng tác viên phụ trách ${selectedStation.name}` : 'Gán cộng tác viên vào đúng trạm và ca trực'}
             </h3>
             <p className="mt-2 text-sm leading-6 text-ink/60">
-              Coop đăng nhập vào màn `/coop` sẽ tự thấy trạm được giao. Nếu không đặt khung giờ, phân công có hiệu lực cho toàn bộ event đang chọn.
+              {selectedStation
+                ? 'Coop đăng nhập vào trang chính sẽ tự thấy trạm này. Nếu không đặt khung giờ, phân công có hiệu lực cho toàn bộ event đang chọn.'
+                : 'Coop đăng nhập vào trang chính sẽ tự thấy trạm được giao. Nếu không đặt khung giờ, phân công có hiệu lực cho toàn bộ event đang chọn.'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <Badge label={selectedEvent.name} cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />
+            {selectedStation && (
+              <Badge label={selectedStation.name} cls="bg-gold/15 text-gold" />
+            )}
             <span className="rounded-full bg-paper px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink/45">
               {assignments.length} phân công
             </span>
@@ -255,22 +278,31 @@ export default function StationAssignmentsPanel({ phase, selectedEvent, stations
               </select>
             </label>
 
-            <label className="space-y-1.5">
-              <span className="block text-sm font-medium text-ink/70">Trạm</span>
-              <select
-                value={form.stationId}
-                onChange={(event) => setForm(current => ({ ...current, stationId: event.target.value }))}
-                className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-              >
-                {stationOptions.length > 0 ? stationOptions.map((station) => (
-                  <option key={station.id} value={station.id}>
-                    {station.name}
-                  </option>
-                )) : (
-                  <option value="">Chưa có trạm hoạt động</option>
-                )}
-              </select>
-            </label>
+            {selectedStation ? (
+              <label className="space-y-1.5">
+                <span className="block text-sm font-medium text-ink/70">Trạm</span>
+                <div className="rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink/70">
+                  {selectedStation.name}
+                </div>
+              </label>
+            ) : (
+              <label className="space-y-1.5">
+                <span className="block text-sm font-medium text-ink/70">Trạm</span>
+                <select
+                  value={form.stationId}
+                  onChange={(event) => setForm(current => ({ ...current, stationId: event.target.value }))}
+                  className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+                >
+                  {stationOptions.length > 0 ? stationOptions.map((station) => (
+                    <option key={station.id} value={station.id}>
+                      {station.name}
+                    </option>
+                  )) : (
+                    <option value="">Chưa có trạm hoạt động</option>
+                  )}
+                </select>
+              </label>
+            )}
 
             <label className="space-y-1.5">
               <span className="block text-sm font-medium text-ink/70">Bắt đầu ca</span>
@@ -335,6 +367,6 @@ export default function StationAssignmentsPanel({ phase, selectedEvent, stations
           )}
         </div>
       </div>
-    </div>
+    </Wrapper>
   )
 }

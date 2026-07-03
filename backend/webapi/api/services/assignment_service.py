@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from django.db import IntegrityError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -75,14 +76,17 @@ def create_assignment(
     if not station:
         raise ValueError("station_not_found")
 
-    assignment = StationAssignment.objects.create(
-        collab=collab,
-        station=station,
-        shift_start=_coerce_datetime(shift_start),
-        shift_end=_coerce_datetime(shift_end),
-        note=(note or "").strip() or None,
-        active=bool(active),
-    )
+    try:
+        assignment = StationAssignment.objects.create(
+            collab=collab,
+            station=station,
+            shift_start=_coerce_datetime(shift_start),
+            shift_end=_coerce_datetime(shift_end),
+            note=(note or "").strip() or None,
+            active=bool(active),
+        )
+    except IntegrityError as exc:
+        raise ValueError("duplicate_assignment") from exc
     return assignment
 
 

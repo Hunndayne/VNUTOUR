@@ -148,9 +148,12 @@ function CoopDashboard() {
   const [lastResult, setLastResult] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [processingScan, setProcessingScan] = useState(false)
+  const [scoreDrafts, setScoreDrafts] = useState({})
+  const [savingScoreId, setSavingScoreId] = useState(null)
   const videoRef = useRef(null)
   const scannerRef = useRef(null)
   const scanHandlerRef = useRef(null)
+  const lastScanRef = useRef({ code: '', at: 0 })
 
   const currentPhase = programState.currentPhase || 'qualifying'
   const phaseInfo = useMemo(
@@ -332,7 +335,8 @@ function CoopDashboard() {
 
         const currentItems = items.filter((assignment) => assignment.active && assignment.is_current)
         const preferredItems = currentItems.length > 0 ? currentItems : items.filter((assignment) => assignment.active)
-        const assignmentEventId = preferredItems[0]?.event?.id
+        const rawAssignmentEventId = preferredItems[0]?.event?.id
+        const assignmentEventId = rawAssignmentEventId != null ? String(rawAssignmentEventId) : ''
 
         if (assignmentEventId && selectedEventId !== assignmentEventId && stationEvents.some((eventItem) => eventItem.id === assignmentEventId)) {
           setSelectedEventId(assignmentEventId)
@@ -420,6 +424,39 @@ function CoopDashboard() {
       setApiError('Không thể tải số liệu realtime của coop.')
     }
   }, [currentPhase, loadLiveData, selectedEventId, selectedStationId])
+
+  const saveSessionScore = useCallback(async (sessionId, rawValue) => {
+    if (!sessionId) return
+    const points = Number(rawValue)
+    if (!Number.isFinite(points)) {
+      setFlashMessage('error', 'Điểm không hợp lệ.')
+      return
+    }
+    setSavingScoreId(sessionId)
+    try {
+      await apiRequest(`/station-sessions/${sessionId}/score`, {
+        method: 'PATCH',
+        body: { score: points },
+      })
+      setScoreDrafts((current) => {
+        const next = { ...current }
+        delete next[sessionId]
+        return next
+      })
+      setFlashMessage('success', `Đã lưu ${points} điểm cho đội.`)
+      await refreshLive()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setFlashMessage('error', error?.data?.error === 'not_assigned_to_station'
+        ? 'Bạn không phụ trách trạm này nên không thể chấm điểm.'
+        : 'Không lưu được điểm.')
+    } finally {
+      setSavingScoreId(null)
+    }
+  }, [refreshLive])
 
   useEffect(() => {
     if (!selectedEventId) return undefined
@@ -511,6 +548,7 @@ function CoopDashboard() {
       eventName: selectedEvent?.name || '',
       stationName: selectedStation.name,
       timestamp: response.entered_at || response.exited_at || new Date().toISOString(),
+      sessionId: action === 'exit' ? response.id : null,
     })
     setFlashMessage(
       'success',
@@ -522,6 +560,10 @@ function CoopDashboard() {
 
   const handleScan = useCallback(async (rawCode) => {
     if (!rawCode || processingScan) return
+
+    const now = Date.now()
+    if (rawCode === lastScanRef.current.code && now - lastScanRef.current.at < 2500) return
+    lastScanRef.current = { code: rawCode, at: now }
 
     setProcessingScan(true)
     setApiError('')
@@ -839,6 +881,19 @@ function CoopDashboard() {
                             <InfoCell label="Event" value={lastResult.eventName || '--'} />
                             <InfoCell label="Trạm" value={lastResult.stationName || '--'} />
                           </div>
+                          {lastResult.kind === 'exit' && lastResult.sessionId && (
+                            <div className="rounded-lg border border-stone bg-paper px-4 py-3">
+                              <p className="text-xs text-ink/40">Chấm điểm cho đội vừa rời trạm</p>
+                              <div className="mt-2">
+                                <ScoreEditor
+                                  value={scoreDrafts[lastResult.sessionId] ?? ''}
+                                  onChange={(value) => setScoreDrafts((current) => ({ ...current, [lastResult.sessionId]: value }))}
+                                  onSave={() => saveSessionScore(lastResult.sessionId, scoreDrafts[lastResult.sessionId] ?? 0)}
+                                  saving={savingScoreId === lastResult.sessionId}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <EmptyBox text="Chưa có kết quả quét nào trong phiên này." />
@@ -905,6 +960,18 @@ function CoopDashboard() {
                             )}
                           </div>
                         </div>
+                        <div className="mt-2 flex items-center justify-between gap-2 border-t border-stone pt-2">
+                          <span className="text-xs text-ink/45">
+                            Điểm: <span className="font-mono font-semibold text-ink">{session.score ?? 0}</span>
+                          </span>
+                          <ScoreEditor
+                            compact
+                            value={scoreDrafts[session.id] ?? String(session.score ?? 0)}
+                            onChange={(value) => setScoreDrafts((current) => ({ ...current, [session.id]: value }))}
+                            onSave={() => saveSessionScore(session.id, scoreDrafts[session.id] ?? session.score ?? 0)}
+                            saving={savingScoreId === session.id}
+                          />
+                        </div>
                       </div>
                     )) : (
                       <EmptyBox text="Chưa có phiên nào cho trạm đang chọn." />
@@ -947,6 +1014,28 @@ function CoopDashboard() {
           </>
         )}
       </main>
+    </div>
+  )
+}
+
+function ScoreEditor({ value, onChange, onSave, saving, compact = false }) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="number"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Điểm"
+        className={`${compact ? 'w-16' : 'w-24'} rounded-lg border border-stone bg-white px-2 py-1.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10`}
+      />
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={saving}
+        className="rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        {saving ? '...' : 'Lưu điểm'}
+      </button>
     </div>
   )
 }

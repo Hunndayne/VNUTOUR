@@ -44,17 +44,11 @@ export function clearStoredSession() {
   window.localStorage.removeItem(USER_KEY)
 }
 
-export function redirectByRole(role) {
-  if (role === 'admin') {
-    window.location.replace('/admin')
-    return
-  }
-  if (role === 'collab') {
-    window.location.replace('/coop')
-    return
-  }
-  window.location.replace('/participant')
+export function redirectToRoot() {
+  window.location.replace('/')
 }
+
+export const redirectByRole = redirectToRoot
 
 export function logoutAndRedirect(path = '/') {
   clearStoredSession()

@@ -5,13 +5,50 @@ Station views — config CRUD + session enter/exit (§9.5, §9.7).
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, Station, SubEvent
+from api.models import Account, Station, SubEvent, StationSession, StationAssignment
 from api.services.station_service import (
     create_station, update_station, delete_station,
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
-    enter_station, exit_station, list_recent_sessions,
+    enter_station, exit_station, list_recent_sessions, set_session_score,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
+
+
+@csrf_exempt
+def station_session_score_view(request: HttpRequest, session_id: int):
+    """PATCH: cập nhật điểm cho phiên trạm (admin, hoặc collab được phân công trạm đó)."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    if "score" not in data:
+        return JsonResponse({"error": "missing_score"}, status=400)
+
+    session = StationSession.objects.select_related("station").filter(id=session_id).first()
+    if not session:
+        return JsonResponse({"error": "session_not_found"}, status=404)
+
+    if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
+        collab=acc, station=session.station,
+    ).exists():
+        return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    updated, err = set_session_score(session_id, acc, data.get("score"), data.get("note"))
+    if err:
+        status = 400 if err == "invalid_score" else 404
+        return JsonResponse({"error": err}, status=status)
+
+    return JsonResponse({
+        "id": updated.id,
+        "team_code": updated.team.code,
+        "score": updated.score,
+    })
 
 
 # =====================================================================

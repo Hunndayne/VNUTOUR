@@ -66,10 +66,10 @@ def admin_station_assignments_view(request: HttpRequest):
         )
     except ValueError as exc:
         code = str(exc)
-        if code == "collab_not_found":
+        if code in ("collab_not_found", "station_not_found"):
             return JsonResponse({"error": code}, status=404)
-        if code == "station_not_found":
-            return JsonResponse({"error": code}, status=404)
+        if code == "duplicate_assignment":
+            return JsonResponse({"error": code}, status=409)
         raise
 
     return JsonResponse(serialize_assignment(assignment), status=201)

@@ -6,7 +6,7 @@ from api.views_station import (
     station_detail_view, occupancy_view,
     station_sessions_history_view,
     station_enter_view, station_exit_view,
-    recent_sessions_view,
+    recent_sessions_view, station_session_score_view,
 )
 
 urlpatterns = [
@@ -24,6 +24,8 @@ urlpatterns = [
     path("station-sessions/enter/", station_enter_view),
     path("station-sessions/exit", station_exit_view),
     path("station-sessions/exit/", station_exit_view),
+    path("station-sessions/<int:session_id>/score", station_session_score_view),
+    path("station-sessions/<int:session_id>/score/", station_session_score_view),
     path("station-sessions", recent_sessions_view),
     path("station-sessions/", recent_sessions_view),
 ]

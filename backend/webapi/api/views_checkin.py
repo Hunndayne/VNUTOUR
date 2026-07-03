@@ -10,7 +10,31 @@ from api.services.checkin_service import (
     scan_event_checkin, list_event_checkins,
     get_checkin_stats, reset_checkin,
 )
+from api.services.checkin_qr_service import get_checkin_qr_state, set_checkin_qr
 from .views_shared import _json_body, _auth_or_401, _require_role
+
+
+@csrf_exempt
+def checkin_qr_view(request: HttpRequest):
+    """GET: current QR check-in toggle state. POST: bật/tắt (admin) + xoay token."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method == "GET":
+        return JsonResponse(get_checkin_qr_state())
+
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    state, rotated, err_code = set_checkin_qr(bool(data.get("enabled")))
+    if err_code:
+        return JsonResponse({"error": err_code}, status=400)
+    return JsonResponse({**state, "rotated_teams": rotated})
 
 
 # =====================================================================

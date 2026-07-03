@@ -331,7 +331,7 @@ export default function FormResponses() {
       />
 
       <div className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <a href="/participant" className="inline-flex items-center gap-2 rounded-full border border-white/35 bg-white/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-white backdrop-blur-sm transition hover:bg-white/15">
+        <a href="/" className="inline-flex items-center gap-2 rounded-full border border-white/35 bg-white/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-white backdrop-blur-sm transition hover:bg-white/15">
           <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
           Participant
         </a>

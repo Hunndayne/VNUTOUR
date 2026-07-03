@@ -3,6 +3,7 @@ import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
+import CheckinQrToggle from './CheckinQrToggle.jsx'
 
 const LEGACY_STATIONS_STORAGE_KEY = 'vnutour:admin:stations-by-phase'
 
@@ -1363,8 +1364,143 @@ function StationFlowOverview({ station }) {
   )
 }
 
-function StationForm({ initial, onSave, onCancel }) {
+function InitialAssignmentFields({ value, onChange, compact = false }) {
+  const [collabs, setCollabs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadCollabs = async () => {
+      try {
+        setLoading(true)
+        const params = new URLSearchParams({
+          role: 'collab',
+          active: '1',
+          limit: '200',
+        })
+        const payload = await apiRequest(`/admin/accounts?${params.toString()}`)
+        if (cancelled) return
+        const items = payload.items || []
+        setCollabs(items)
+        if (!value.collabUsername && items[0]?.username) {
+          onChange({
+            ...value,
+            collabUsername: items[0].username,
+          })
+        }
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        setLoadError('Khong tai duoc danh sach collab.')
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadCollabs()
+    return () => {
+      cancelled = true
+    }
+  }, [onChange, value])
+
+  return (
+    <div className={compact ? 'grid gap-3 sm:grid-cols-2' : `${CARD} p-4`}>
+      {!compact && <SectionTitle title="Cong tac vien phu trach" />}
+
+      {loadError && (
+        <div className={`${compact ? 'sm:col-span-2' : 'mb-3'} rounded-lg border border-clay/20 bg-clay/[0.05] px-3 py-2 text-sm text-clay`}>
+          {loadError}
+        </div>
+      )}
+
+      <div className={compact ? 'contents' : 'grid gap-3 sm:grid-cols-2'}>
+        <div>
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Chon coop
+          </label>
+          <select
+            value={value.collabUsername}
+            onChange={(event) => onChange({
+              ...value,
+              collabUsername: event.target.value,
+            })}
+            disabled={loading || collabs.length === 0}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:text-ink/45"
+          >
+            <option value="">Khong gan coop</option>
+            {collabs.map((collab) => (
+              <option key={collab.username} value={collab.username}>
+                {collab.full_name || collab.username}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Bat dau ca
+          </label>
+          <input
+            type="datetime-local"
+            value={value.shiftStart}
+            onChange={(event) => onChange({
+              ...value,
+              shiftStart: event.target.value,
+            })}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Ket thuc ca
+          </label>
+          <input
+            type="datetime-local"
+            value={value.shiftEnd}
+            onChange={(event) => onChange({
+              ...value,
+              shiftEnd: event.target.value,
+            })}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          />
+        </div>
+
+        <div className="sm:col-span-2">
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Ghi chu ca truc
+          </label>
+          <textarea
+            rows={3}
+            value={value.note}
+            onChange={(event) => onChange({
+              ...value,
+              note: event.target.value,
+            })}
+            placeholder="Vi du: truoc gio xuat phat, uu tien scan vao tram."
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false }) {
   const [form, setForm] = useState(() => createStation(initial))
+  const [initialAssignment, setInitialAssignment] = useState({
+    collabUsername: '',
+    shiftStart: '',
+    shiftEnd: '',
+    note: '',
+  })
 
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
   const updateSubmission = (updater) => {
@@ -1488,6 +1624,7 @@ function StationForm({ initial, onSave, onCancel }) {
       name: form.name.trim(),
       location: form.location.trim(),
       submission: sanitizeSubmission(form.submission),
+      initialAssignment,
     })
   }
 
@@ -1546,6 +1683,14 @@ function StationForm({ initial, onSave, onCancel }) {
             {(CHECKIN_POLICY_META[form.checkinPolicy] ?? CHECKIN_POLICY_META.staff_scan).hint}
           </p>
         </div>
+
+        {allowInitialAssignment && form.checkinPolicy !== 'free_play' && (
+          <InitialAssignmentFields
+            value={initialAssignment}
+            onChange={setInitialAssignment}
+            compact
+          />
+        )}
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
@@ -1794,8 +1939,10 @@ function StationForm({ initial, onSave, onCancel }) {
 
 function StationDrawer({
   station,
+  phase,
   phaseLabel,
   phaseBadgeCls,
+  selectedEvent,
   eventName,
   eventType,
   onClose,
@@ -1848,11 +1995,13 @@ function StationDrawer({
 
         <div className="flex-1 overflow-y-auto">
           {editing ? (
-            <StationForm
-              initial={station}
-              onSave={handleSave}
-              onCancel={() => setEditing(false)}
-            />
+            <div className="space-y-5 py-4">
+              <StationForm
+                initial={station}
+                onSave={handleSave}
+                onCancel={() => setEditing(false)}
+              />
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-3 gap-2 px-4 py-4">
@@ -1871,6 +2020,17 @@ function StationDrawer({
               </div>
 
               <StationFlowOverview station={station} />
+
+              <div className="px-4 pb-4">
+                <StationAssignmentsPanel
+                  phase={phase}
+                  selectedEvent={selectedEvent}
+                  stations={[station]}
+                  selectedStation={station}
+                  embedded
+                />
+              </div>
+
               <StationSubmissionOverview submission={station.submission} />
 
               <div className="px-4 pb-4">
@@ -2177,13 +2337,25 @@ function StationsPage({
       setBusyKey('create')
       setApiError('')
       const code = makeStationId(phase, stations)
-      await apiRequest(`/sub-events/${selectedEventId}/stations`, {
+      const createdStation = await apiRequest(`/sub-events/${selectedEventId}/stations`, {
         method: 'POST',
         body: {
           code,
           ...buildStationPayload(form, stations.length + 1, true),
         },
       })
+      if (form.initialAssignment?.collabUsername && createdStation?.id) {
+        await apiRequest('/admin/station-assignments', {
+          method: 'POST',
+          body: {
+            collab_username: form.initialAssignment.collabUsername,
+            station_id: Number(createdStation.id),
+            shift_start: form.initialAssignment.shiftStart || null,
+            shift_end: form.initialAssignment.shiftEnd || null,
+            note: form.initialAssignment.note?.trim() || '',
+          },
+        })
+      }
       setAdding(false)
       await reloadSelectedEvent()
     } catch (error) {
@@ -2265,11 +2437,7 @@ function StationsPage({
         <SummaryCard value={String(totalDone)} label="Lượt hoàn thành" accent="trail" />
       </div>
 
-      <StationAssignmentsPanel
-        phase={phase}
-        selectedEvent={selectedEvent}
-        stations={stations}
-      />
+      <CheckinQrToggle />
 
       <div className={`${CARD} px-4 py-3`}>
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -2316,6 +2484,7 @@ function StationsPage({
             initial={createBlankStation()}
             onSave={addStation}
             onCancel={() => setAdding(false)}
+            allowInitialAssignment
           />
         </div>
       )}
@@ -2416,8 +2585,10 @@ function StationsPage({
       <StationDrawer
         key={selectedId}
         station={selected}
+        phase={phase}
         phaseLabel={phaseInfo.label}
         phaseBadgeCls={phaseMeta.badgeCls}
+        selectedEvent={selectedEvent}
         eventName={selectedEvent?.name}
         eventType={selectedEvent?.type}
         onClose={() => setSelectedId(null)}

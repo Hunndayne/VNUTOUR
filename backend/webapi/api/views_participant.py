@@ -11,6 +11,7 @@ from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
 )
 from api.services.program_service import get_current_sub_event
+from api.services.checkin_qr_service import team_qr_visible
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -581,10 +582,14 @@ def my_team_qr_view(request: HttpRequest):
     if team.approval_status != Team.APPROVAL_APPROVED:
         return JsonResponse({"error": "team_not_approved"}, status=403)
 
+    if not team_qr_visible(team):
+        return JsonResponse({"enabled": False, "team_code": team.code})
+
     if not team.qr_token:
         team.qr_token = rotate_qr_token(team)
 
     return JsonResponse({
+        "enabled": True,
         "team_code": team.code,
         "qr_payload": f"t:{team.qr_token}",
     })

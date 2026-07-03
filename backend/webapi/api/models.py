@@ -348,6 +348,11 @@ class StationAssignment(models.Model):
     class Meta:
         db_table = "station_assignment"
         ordering = ["station__sub_event", "station__order", "collab__username"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["collab", "station"], name="uq_assignment_collab_station",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.collab.username} -> {self.station.code}"
