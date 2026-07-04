@@ -1384,11 +1384,10 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
         if (cancelled) return
         const items = payload.items || []
         setCollabs(items)
-        if (!value.collabUsername && items[0]?.username) {
-          onChange({
-            ...value,
-            collabUsername: items[0].username,
-          })
+        if (items[0]?.username) {
+          onChange((current) => (current.collabUsername
+            ? current
+            : { ...current, collabUsername: items[0].username }))
         }
       } catch (error) {
         if (cancelled) return
@@ -1396,7 +1395,7 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
           logoutAndRedirect('/')
           return
         }
-        setLoadError('Khong tai duoc danh sach collab.')
+        setLoadError('Không tải được danh sách cộng tác viên.')
       } finally {
         if (!cancelled) {
           setLoading(false)
@@ -1408,11 +1407,12 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
     return () => {
       cancelled = true
     }
-  }, [onChange, value])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className={compact ? 'grid gap-3 sm:grid-cols-2' : `${CARD} p-4`}>
-      {!compact && <SectionTitle title="Cong tac vien phu trach" />}
+      {!compact && <SectionTitle title="Cộng tác viên phụ trách" />}
 
       {loadError && (
         <div className={`${compact ? 'sm:col-span-2' : 'mb-3'} rounded-lg border border-clay/20 bg-clay/[0.05] px-3 py-2 text-sm text-clay`}>
@@ -1423,18 +1423,18 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
       <div className={compact ? 'contents' : 'grid gap-3 sm:grid-cols-2'}>
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Chon coop
+            Chọn coop
           </label>
           <select
             value={value.collabUsername}
-            onChange={(event) => onChange({
-              ...value,
+            onChange={(event) => onChange((current) => ({
+              ...current,
               collabUsername: event.target.value,
-            })}
+            }))}
             disabled={loading || collabs.length === 0}
             className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:text-ink/45"
           >
-            <option value="">Khong gan coop</option>
+            <option value="">Không gán coop</option>
             {collabs.map((collab) => (
               <option key={collab.username} value={collab.username}>
                 {collab.full_name || collab.username}
@@ -1445,46 +1445,46 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Bat dau ca
+            Bắt đầu ca
           </label>
           <input
             type="datetime-local"
             value={value.shiftStart}
-            onChange={(event) => onChange({
-              ...value,
+            onChange={(event) => onChange((current) => ({
+              ...current,
               shiftStart: event.target.value,
-            })}
+            }))}
             className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
           />
         </div>
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Ket thuc ca
+            Kết thúc ca
           </label>
           <input
             type="datetime-local"
             value={value.shiftEnd}
-            onChange={(event) => onChange({
-              ...value,
+            onChange={(event) => onChange((current) => ({
+              ...current,
               shiftEnd: event.target.value,
-            })}
+            }))}
             className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Ghi chu ca truc
+            Ghi chú ca trực
           </label>
           <textarea
             rows={3}
             value={value.note}
-            onChange={(event) => onChange({
-              ...value,
+            onChange={(event) => onChange((current) => ({
+              ...current,
               note: event.target.value,
-            })}
-            placeholder="Vi du: truoc gio xuat phat, uu tien scan vao tram."
+            }))}
+            placeholder="Ví dụ: trước giờ xuất phát, ưu tiên scan vào trạm."
             className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
           />
         </div>

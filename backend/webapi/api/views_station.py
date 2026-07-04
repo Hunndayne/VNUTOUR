@@ -35,7 +35,7 @@ def station_session_score_view(request: HttpRequest, session_id: int):
         return JsonResponse({"error": "session_not_found"}, status=404)
 
     if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
-        collab=acc, station=session.station,
+        collab=acc, station=session.station, active=True,
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
