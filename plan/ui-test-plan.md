@@ -42,6 +42,9 @@ Các path `/admin`, `/coop`, `/participant`, `/checkin` **tự redirect về `/`
 | A4 | `/login` | Đăng nhập Google lần đầu (thiếu MSSV) | Hiện trang bổ sung MSSV trước khi vào | [ ] |
 | A5 | `/login` | Sai mật khẩu | Báo "Tên đăng nhập hoặc mật khẩu không đúng" | [ ] |
 | A6 | Đã đăng nhập | Bấm "Đăng xuất" | Về `/`; token bị xóa; vào lại trang cần auth bị đẩy ra | [ ] |
+| A7 | `/login` → "Đăng ký ngay" | Điền form với **MSSV/email trùng hồ sơ đã đăng ký** → "Tiếp tục" | Sang bước **"Xác nhận thông tin"**: tự hiện hồ sơ match → "Xác nhận & tạo tài khoản" → đăng nhập được | [ ] |
+| A8 | Signup, MSSV **chưa có** hồ sơ đăng ký | "Tiếp tục" | Sang bước **nhập tay** (manual) → "Tạo tài khoản" → tạo tài khoản mới thành công | [ ] |
+| A9 | Signup, MSSV đã đăng ký **với email khác** | Gửi | Báo "MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại." — không tạo tài khoản | [ ] |
 
 ---
 
@@ -57,6 +60,9 @@ Các path `/admin`, `/coop`, `/participant`, `/checkin` **tự redirect về `/`
 | B6 | Đội đã duyệt, **QR chưa mở** | Xem card "QR điểm danh" | Hiện "BTC chưa mở điểm danh" (không có QR) | [ ] |
 | B7 | Đội đã duyệt, **admin đã mở QR** (xem C6) | Tải lại / chờ ~15s | Hiện **mã QR** + mã đội; ghi chú "đưa coop quét" | [ ] |
 | B8 | Checklist/Tiến độ | Quan sát ProgressTrail | Các bước sáng đúng theo trạng thái đội | [ ] |
+| B9 | Đội draft có thành viên | Bấm "Sửa" 1 thành viên → drawer "Sửa thông tin" | **MSSV bị khóa** không sửa được; sửa field khác → lưu OK | [ ] |
+| B10 | Đội draft | Bấm nút xóa (icon "Xóa thành viên") | Thành viên biến mất khỏi danh sách đội | [ ] |
+| B11 | Đội thuộc phase có form trạm đang mở (C13) | Xem card **"Form đang mở"** → bấm "Mở form" | Chuyển đến `/form?stationId=...` đúng trạm (xem mục G) | [ ] |
 
 ---
 
@@ -76,6 +82,12 @@ Các path `/admin`, `/coop`, `/participant`, `/checkin` **tự redirect về `/`
 | C10 | Gửi email | Soạn + gửi email tới đội/cá nhân | Email gửi đi (kiểm hộp thư test) | [ ] |
 | C11 | Quản lý Discord | Xem hàng đợi provision / retry | Trạng thái provision đúng | [ ] |
 | C12 | Quản lý tài khoản | Đổi role 1 user → collab | User đăng nhập lại → `/` hiện dashboard coop | [ ] |
+| C13 | Quản lý trạm | Mở trạm → **"Cấu hình bài nộp"**: nhập brief (markdown), bật form + thêm field, bật quiz + câu hỏi/đáp án, bật attachment (số file, loại file) → lưu | Overview trạm hiện đủ mode (Biểu mẫu/Quiz/Tệp); thí sinh thấy nội dung ở G2 | [ ] |
+| C14 | Quản lý sự kiện | Tạo event mới trong phase (tên, loại, cờ trạm, ngày) → sửa → xóa; đặt **event hiện tại**; đặt lịch start/end phase | CRUD hoạt động; lưu event thiếu tên → báo "Event cần có tên trước khi lưu" | [ ] |
+| C15 | Điểm & suất đi tiếp | Đổi rule sang chế độ **chọn tay (manual)**, tick chọn đội (≤ slots) → "Publish thăng hạng" | Chỉ các đội được tick vào roster phase sau; không tick được quá số slots | [ ] |
+| C16 | Điểm & suất đi tiếp | Publish khi **chưa cấu hình phase đích** | Báo "Phase này chưa cấu hình phase đích." — không publish | [ ] |
+| C17 | Quản lý tài khoản | "Tạo tài khoản" mới (role collab) → thử "Khóa" 1 tài khoản → sửa ("Lưu thay đổi") → xóa; dùng ô tìm kiếm + lọc role | Tài khoản mới đăng nhập được; tài khoản "Đã khóa" **không** đăng nhập được; tìm kiếm/lọc đúng | [ ] |
+| C18 | Tổng quan | Xem tab "Tổng quan" ở từng phase; bấm đổi phase trên **PhaseTrail** | KPI/feed hoạt động/leaderboard là số liệu thật từ API (không phải mock); đổi phase → badge header cập nhật | [ ] |
 
 ---
 
@@ -96,6 +108,7 @@ Các path `/admin`, `/coop`, `/participant`, `/checkin` **tự redirect về `/`
 | D9 | **Quét lặp** | Để QR trong khung hình vài giây sau khi thành công | **Không** spam lỗi "đã check-in/đang ở trạm" (dedupe 2.5s) | [ ] |
 | D10 | **Đồng bộ đa máy** | Coop B mở cùng trạm; coop A cho 1 đội vào trạm | Coop B thấy đội đó trong Live roster (~3s) | [ ] |
 | D11 | Chấm điểm trạm **không phụ trách** | (nếu chọn được) sửa điểm trạm ngoài phân công | Báo "Bạn không phụ trách trạm này" | [ ] |
+| D12 | Đội **chưa được duyệt** (draft/chờ duyệt) | Quét/nhập mã đội đó | Báo "Đội này chưa được duyệt nên không thể scan." | [ ] |
 
 ---
 
@@ -109,6 +122,7 @@ Các path `/admin`, `/coop`, `/participant`, `/checkin` **tự redirect về `/`
 6. Admin xem bảng điểm (C8), sửa nếu cần.
 7. Admin đặt rule top N + **publish thăng hạng** (C9).
 8. Admin chuyển phase = Chung kết, **mở QR** lại → **chỉ đội đi tiếp** thấy QR; đội trượt vào `/participant` **không** thấy QR (F3).
+9. Admin cấu hình bài nộp cho trạm (C13) → thí sinh thấy "Form đang mở" và mở được `/form` (B11, G1–G3).
 
 ---
 
@@ -121,10 +135,43 @@ Các path `/admin`, `/coop`, `/participant`, `/checkin` **tự redirect về `/`
 | F3 | Phase = Chung kết, đội KHÔNG đi tiếp xem `/participant` | Card QR hiện "BTC chưa mở điểm danh" (không có QR) | [ ] |
 | F4 | Token hết hạn / xóa localStorage giữa chừng | Mọi trang auth đẩy về `/` | [ ] |
 | F5 | Quét QR **cũ** sau khi admin mở lại (C7) | Check-in/vào trạm **thất bại** (token đã xoay) | [ ] |
+| F6 | Đã đăng nhập, gõ URL `/login` | Redirect về `/` (hiện dashboard theo role, không hiện form login) | [ ] |
+| F7 | Gõ path không tồn tại (vd `/abc`) | Redirect về `/` | [ ] |
+| F8 | **Chưa** đăng nhập, mở `/register` | Vẫn vào được (trang public) | [ ] |
+| F9 | admin/collab gõ URL `/form` | Redirect về `/` (chỉ participant vào được `/form`) | [ ] |
 
 ---
 
-## G. Ghi chú khi test
+## G. Biểu mẫu trạm — `/form` (participant)
+
+> Tiền đề: admin đã cấu hình bài nộp cho trạm (C13); đội đã duyệt và thuộc roster phase hiện tại.
+> ⚠️ **Trạng thái code hiện tại**: nút "Gửi bài nộp" và ô upload file **chưa nối API** — test đến mức hiển thị/nhập liệu; bổ sung ca submit khi backend sẵn sàng.
+
+| # | Bối cảnh | Các bước | Kết quả mong đợi | [ ] |
+|---|---|---|---|---|
+| G1 | Participant có đội trong roster phase | Xem dashboard thí sinh | Card **"Form đang mở"** liệt kê đúng các trạm có bài nộp trong phase/event hiện tại | [ ] |
+| G2 | Mở `/form?stationId=...` | Xem trang form | Render đúng cấu hình C13: brief (markdown), field nhập liệu, quiz chọn 1 đáp án, ô "Chọn tệp minh chứng" (đúng số file/loại file) | [ ] |
+| G3 | Sidebar "Biểu mẫu khả dụng" | Chọn trạm khác | Nội dung form đổi theo trạm được chọn; URL param không bắt buộc | [ ] |
+| G4 | Quiz | Chọn đáp án, đổi đáp án | Chỉ 1 đáp án được đánh dấu active tại một thời điểm | [ ] |
+| G5 | Đội **không** thuộc roster phase / chưa có đội | Mở `/form` | Báo "Bạn chưa có đội hoặc chưa có biểu mẫu phù hợp với phase hiện tại" hoặc "Không có biểu mẫu nào khả dụng cho phase hiện tại" | [ ] |
+
+---
+
+## H. Cài đặt tài khoản (nút "Cài đặt" — có ở dashboard admin & thí sinh)
+
+| # | Bối cảnh | Các bước | Kết quả mong đợi | [ ] |
+|---|---|---|---|---|
+| H1 | Đã đăng nhập | Mở "Cài đặt" → sửa họ tên, SĐT, trường/khoa → lưu | Cập nhật thành công, reload vẫn giữ; ô **email bị khóa** ("Email không thể thay đổi") | [ ] |
+| H2 | Ảnh đại diện | "Thêm ảnh đại diện" / "Đổi ảnh đại diện" → nhập URL | Avatar hiện đúng ở trang cài đặt và header/sidebar | [ ] |
+| H3 | Đổi mật khẩu đúng | Nhập mật khẩu hiện tại + mới (≥6 ký tự) + nhập lại khớp | Báo "Đã đổi mật khẩu." — logout, đăng nhập lại bằng mật khẩu **mới** OK | [ ] |
+| H4 | Đổi mật khẩu sai | (a) sai mật khẩu hiện tại; (b) mật khẩu mới <6 ký tự; (c) nhập lại không khớp | Báo lỗi tương ứng từng ca; mật khẩu **không** đổi | [ ] |
+| H5 | Tài khoản đăng nhập bằng Google | Mở phần đổi mật khẩu | Thông báo "Tài khoản của bạn đăng nhập qua Google, không có mật khẩu riêng" — không cho đổi | [ ] |
+| H6 | Tài khoản thường | Dùng mục **liên kết Google** | Liên kết xong → đăng nhập được bằng Google | [ ] |
+| H7 | Sửa MSSV | Đổi MSSV sang MSSV đã đăng ký với email khác | Báo "MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại." | [ ] |
+
+---
+
+## I. Ghi chú khi test
 - Lỗi camera → dùng ô "Nhập tay mã đội" (payload `t:<token>` hoặc mã đội Txxxx).
 - Mỗi lần admin "Mở điểm danh" là QR mới — báo thí sinh tải lại trang.
 - Nếu coop không thấy trạm: kiểm C4 (trạm đã lưu DB) + C5 (đã phân công) + C3 (đúng phase/event).
