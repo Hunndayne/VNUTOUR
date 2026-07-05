@@ -185,7 +185,7 @@ def change_password_view(request: HttpRequest):
 
     from django.contrib.auth.hashers import check_password, make_password
     if not check_password(current, acc.password_hash):
-        return JsonResponse({"error": "invalid_current_password"}, status=401)
+        return JsonResponse({"error": "invalid_current_password"}, status=400)
 
     acc.password_hash = make_password(new_password)
     acc.save(update_fields=["password_hash"])

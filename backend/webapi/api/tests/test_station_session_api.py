@@ -93,8 +93,8 @@ class StationSessionApiTests(TestCase):
 
     def test_enter_draft_team_rejected(self):
         resp = self._enter(self.collab, self.team_draft.code, self.station1.id)
-        self.assertEqual(resp.status_code, 404)
-        self.assertEqual(resp.json()["error"], "team_not_found")
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"], "team_not_approved")
 
     def test_enter_team_not_in_phase(self):
         resp = self._enter(self.collab, self.team_unrostered.code, self.station1.id)

@@ -413,11 +413,18 @@ export default function EmailPage() {
         </div>
       </div>
 
-      <div className={`${CARD} flex items-center justify-between px-5 py-4`}>
-        <div className="text-sm text-ink/55">
-          {estimatedRecipientCount > 0
-            ? `Sẽ gửi đến ${estimatedRecipientCount} người nhận`
-            : 'Chưa có người nhận nào được chọn'}
+      <div className={`${CARD} flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between`}>
+        <div>
+          <div className="text-sm text-ink/55">
+            {estimatedRecipientCount > 0
+              ? `Sẽ gửi đến ${estimatedRecipientCount} người nhận`
+              : 'Chưa có người nhận nào được chọn'}
+          </div>
+          {apiError && (
+            <div className="mt-2 text-sm font-medium text-clay">
+              {apiError}
+            </div>
+          )}
         </div>
         <button
           type="button"

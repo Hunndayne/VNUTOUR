@@ -9,13 +9,13 @@ Participant columns; everything else is stored in `Participant.extra`.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Optional, Tuple
 
 from django.db import transaction
 
 from api.models import (
-    Account, Participant, Team, TeamMembership, SystemSetting,
+    Account, Participant, Team, TeamMembership, SystemSetting, ProgramPhase,
 )
 from api.services import team_service
 
@@ -206,12 +206,13 @@ def validate_person_submission(data: dict, who: str = "participant") -> Tuple[di
     return _validate_person(get_schema(), data or {}, who)
 
 
-def _normalize_date(value) -> Optional[str]:
-    """Accept YYYY-MM-DD (HTML date input) and return it, else None."""
+def _normalize_date(value) -> Optional[date]:
+    """Accept YYYY-MM-DD (HTML date input) and return a date object."""
+    if isinstance(value, date):
+        return value
     if isinstance(value, str):
         try:
-            datetime.strptime(value, "%Y-%m-%d")
-            return value
+            return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError:
             return None
     return None
@@ -248,6 +249,8 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     """
     schema = get_schema()
     team_name = (data.get("team_name") or "").strip()
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    is_late_registration = bool(current_phase and current_phase.key != "registration")
 
     captain_data = data.get("captain") or {}
     members_data = data.get("members") or []
@@ -281,7 +284,10 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
 
     try:
         with transaction.atomic():
-            team, err = team_service.create_team(team_name)
+            team, err = team_service.create_team(
+                team_name,
+                is_late_registration=is_late_registration,
+            )
             if err:
                 raise _Rollback(err)
             if data.get("payment_proof"):
@@ -299,6 +305,12 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
                 if err:
                     raise _Rollback(err)
                 _attach(team, p, is_captain=False)
+
+            team.approval_status = Team.APPROVAL_PENDING
+            team.submitted_at = datetime.now(timezone.utc)
+            team.save(update_fields=[
+                "approval_status", "submitted_at", "is_late_registration", "updated_at",
+            ])
     except _Rollback as r:
         return None, r.code
 

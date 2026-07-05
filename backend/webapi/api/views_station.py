@@ -202,6 +202,7 @@ def station_enter_view(request: HttpRequest):
     if err:
         status_map = {
             "team_not_found": 404, "station_not_found": 404,
+            "team_not_approved": 403,
             "station_inactive": 400, "policy_free_play": 400,
             "station_full": 409, "session_already_active": 409,
             "event_not_found": 404, "station_not_in_event": 400,

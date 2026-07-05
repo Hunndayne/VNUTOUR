@@ -44,6 +44,10 @@ def current_phase_view(request: HttpRequest):
         return JsonResponse({"current_phase": phase.key})
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
+    except ValueError as exc:
+        if str(exc) == "missing_name":
+            return JsonResponse({"error": "missing_name"}, status=400)
+        raise
 
 
 @csrf_exempt
@@ -164,6 +168,10 @@ def sub_event_detail_view(request: HttpRequest, event_id: int):
             })
         except SubEvent.DoesNotExist:
             return JsonResponse({"error": "not_found"}, status=404)
+        except ValueError as exc:
+            if str(exc) == "missing_name":
+                return JsonResponse({"error": "missing_name"}, status=400)
+            raise
 
     if request.method == "DELETE":
         try:

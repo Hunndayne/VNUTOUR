@@ -2,11 +2,17 @@
 Participant self-service views — §9.2
 """
 
+from copy import deepcopy
+
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from api.models import Account, Participant, Team, TeamMembership, PhaseRoster, ProgramPhase, Station, SubEvent
+from api.models import (
+    Account, Participant, Team, TeamMembership, PhaseRoster, ProgramPhase,
+    Station, SubEvent, StationSession, StationSubmission,
+)
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
 )
@@ -125,6 +131,20 @@ def _has_submission_config(config: dict | None) -> bool:
     )
 
 
+def _public_submission_config(config: dict) -> dict:
+    public_config = deepcopy(config or {})
+    quiz = public_config.get("quiz")
+    if isinstance(quiz, dict):
+        for item in quiz.get("items") or []:
+            if isinstance(item, dict):
+                for key in (
+                    "correctOption", "correct_option",
+                    "correctAnswer", "correct_answer", "answer",
+                ):
+                    item.pop(key, None)
+    return public_config
+
+
 def _station_form_payload(station: Station) -> dict:
     phase = station.sub_event.phase
     event = station.sub_event
@@ -137,7 +157,7 @@ def _station_form_payload(station: Station) -> dict:
         "event_name": event.name,
         "phase_key": phase.key,
         "phase_label": phase.label,
-        "submission_config": station.submission_config or {},
+        "submission_config": _public_submission_config(station.submission_config or {}),
     }
 
 
@@ -288,6 +308,7 @@ def my_team_view(request: HttpRequest):
                 "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
                 "qr_token": team.qr_token,
                 "payment_proof": team.payment_proof,
+                "is_late_registration": team.is_late_registration,
             },
             "members": get_team_members(team),
             "editable": team_is_editable(team),
@@ -648,6 +669,84 @@ def my_team_forms_view(request: HttpRequest):
         "current_sub_event_id": current_event.id if current_event else None,
         "accessible_forms": accessible_forms,
     })
+
+
+@csrf_exempt
+def my_team_form_submit_view(request: HttpRequest, station_id: int):
+    """POST a participant station form submission for the current team."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        return JsonResponse({"error": "team_not_approved"}, status=403)
+
+    station = Station.objects.select_related("sub_event__phase").filter(
+        id=station_id,
+        active=True,
+    ).first()
+    if not station or not _has_submission_config(station.submission_config):
+        return JsonResponse({"error": "form_not_found"}, status=404)
+
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    current_phase_key = current_phase.key if current_phase else None
+    current_event = get_current_sub_event()
+    phase_key = station.sub_event.phase.key
+
+    team_phase_keys = set(
+        PhaseRoster.objects.filter(team=team).values_list("phase__key", flat=True)
+    )
+    phases_with_roster = set(
+        PhaseRoster.objects.values_list("phase__key", flat=True).distinct()
+    )
+    if phase_key in phases_with_roster:
+        if phase_key not in team_phase_keys:
+            return JsonResponse({"error": "team_not_in_phase"}, status=403)
+    elif current_phase_key and phase_key != current_phase_key:
+        return JsonResponse({"error": "team_not_in_phase"}, status=403)
+    if current_event and station.sub_event_id != current_event.id:
+        return JsonResponse({"error": "event_not_found"}, status=404)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    session = StationSession.objects.filter(
+        team=team,
+        station=station,
+    ).order_by("-entered_at").first()
+
+    submission = StationSubmission.objects.filter(
+        team=team,
+        station=station,
+    ).order_by("-created_at").first()
+    if not submission:
+        submission = StationSubmission(team=team, station=station)
+
+    submission.station_session = session
+    submission.status = StationSubmission.STATUS_SUBMITTED
+    submission.response_payload = data.get("response_payload") or data.get("answers") or {}
+    submission.attachment_payload = data.get("attachment_payload") or data.get("attachments") or {}
+    submission.submitted_at = timezone.now()
+    submission.save()
+
+    return JsonResponse({
+        "id": submission.id,
+        "status": submission.status,
+        "submitted_at": submission.submitted_at.isoformat(),
+    }, status=201)
 
 
 def my_experience_view(request: HttpRequest):

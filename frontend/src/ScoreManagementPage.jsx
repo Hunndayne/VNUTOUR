@@ -267,8 +267,9 @@ export default function ScoreManagementPage({
   ), [entriesByEvent, phaseEvents])
 
   const qualifiedTeamCodes = useMemo(() => {
-    if (!ruleForm.nextPhaseKey || ruleForm.slots <= 0) return []
-    if (ruleForm.mode === 'manual') return manualSelection.slice(0, ruleForm.slots)
+    if (!ruleForm.nextPhaseKey) return []
+    if (ruleForm.mode === 'manual') return manualSelection
+    if (ruleForm.slots <= 0) return []
     return scoreboard.leaderboard.slice(0, ruleForm.slots).map((team) => team.teamCode)
   }, [manualSelection, ruleForm.mode, ruleForm.nextPhaseKey, ruleForm.slots, scoreboard.leaderboard])
 
@@ -290,7 +291,7 @@ export default function ScoreManagementPage({
         body: {
           toPhaseKey: ruleForm.nextPhaseKey,
           mode: ruleForm.mode,
-          slots: ruleForm.slots,
+          slots: ruleForm.mode === 'manual' ? manualSelection.length : ruleForm.slots,
         },
       })
       await loadScoreboard()
@@ -376,13 +377,15 @@ export default function ScoreManagementPage({
   const toggleManualTeam = (teamCode) => {
     if (ruleForm.mode !== 'manual') return
     setManualSelection((current) => {
-      if (current.includes(teamCode)) {
-        return current.filter((code) => code !== teamCode)
-      }
-      if (current.length >= ruleForm.slots) {
-        return current
-      }
-      return [...current, teamCode]
+      const next = current.includes(teamCode)
+        ? current.filter((code) => code !== teamCode)
+        : [...current, teamCode]
+      setRuleForm((form) => (
+        form.mode === 'manual' && next.length > form.slots
+          ? { ...form, slots: next.length }
+          : form
+      ))
+      return next
     })
   }
 

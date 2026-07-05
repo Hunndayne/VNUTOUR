@@ -147,10 +147,18 @@ function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
 
 function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCancel }) {
   const [form, setForm] = useState(() => ({ ...initialEvent }))
+  const [error, setError] = useState('')
 
-  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+  const set = (key, value) => {
+    setError('')
+    setForm((current) => ({ ...current, [key]: value }))
+  }
 
   const handleSave = () => {
+    if (!form.name.trim()) {
+      setError('Event cần có tên trước khi lưu.')
+      return
+    }
     onSave({
       ...form,
       name: form.name.trim(),
@@ -177,6 +185,11 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
             placeholder="Ví dụ: Chạy trạm bản đồ"
           />
         </div>
+        {error && (
+          <p className="sm:col-span-2 rounded-lg border border-clay/25 bg-clay/[0.06] px-3 py-2 text-sm text-clay">
+            {error}
+          </p>
+        )}
 
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">

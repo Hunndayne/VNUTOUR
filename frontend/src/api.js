@@ -55,6 +55,11 @@ export function logoutAndRedirect(path = '/') {
   window.location.replace(path)
 }
 
+export function isSessionAuthError(error) {
+  const code = error?.data?.error || error?.message
+  return error?.status === 401 && ['missing_token', 'invalid_token'].includes(code)
+}
+
 export async function apiRequest(path, options = {}) {
   const {
     method = 'GET',
@@ -97,12 +102,15 @@ export async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
+    const code = typeof payload === 'object' && payload?.error ? payload.error : null
+    const sessionAuthFailure = response.status === 401 && ['missing_token', 'invalid_token'].includes(code)
     const error = new Error(
-      typeof payload === 'object' && payload?.error
-        ? payload.error
+      code
+        ? code
         : `request_failed_${response.status}`,
     )
-    error.status = response.status
+    error.status = sessionAuthFailure ? 401 : response.status === 401 ? 400 : response.status
+    error.originalStatus = response.status
     error.data = payload
     throw error
   }

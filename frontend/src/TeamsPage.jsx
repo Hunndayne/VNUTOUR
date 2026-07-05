@@ -31,6 +31,7 @@ function normalizeTeamSummary(team) {
     status: team.approval_status || 'draft',
     provision: team.provision_state || 'none',
     memberCount: team.member_count || 0,
+    isLateRegistration: Boolean(team.is_late_registration),
     createdAt: team.created_at || '',
   }
 }
@@ -131,7 +132,7 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
 
   if (!team) return null
 
-  const canAct = team.status === 'pending_approval'
+  const canAct = team.status === 'pending_approval' || team.status === 'draft'
   const withAccount = team.members.filter(member => member.has_account).length
   const withDiscord = team.members.filter(member => member.discord_id).length
 
@@ -147,6 +148,9 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
               <Badge {...APPROVAL[team.status]} />
               {team.provision && team.provision !== 'none' && (
                 <Badge {...(PROVISION[team.provision] ?? PROVISION.none)} />
+              )}
+              {team.isLateRegistration && (
+                <Badge label="Đăng ký trễ" cls="bg-clay/12 text-clay" />
               )}
             </div>
             <h2 className="mt-1 truncate font-display text-xl font-bold text-ink">
@@ -245,6 +249,11 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
                   <p className="mt-0.5 text-xs text-ink/55">
                     <span className="font-medium text-ink">{team.name}</span> · {team.members.length} thành viên · sẽ được thêm vào hàng đợi tạo kênh Discord.
                   </p>
+                  {team.status === 'draft' && (
+                    <p className="mt-2 text-xs font-medium text-clay">
+                      Đội nháp được duyệt từ màn này sẽ được đánh dấu là đội đăng ký trễ.
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setMode('idle')} className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper">
@@ -403,6 +412,7 @@ function TeamsPage() {
           submittedAt: detail.submitted_at,
           note: detail.approval_note || '',
           paymentProof: detail.payment_proof || '',
+          isLateRegistration: Boolean(detail.is_late_registration),
           members: detail.members || [],
         })
       } catch (error) {
@@ -454,7 +464,7 @@ function TeamsPage() {
   const handleApprove = () => withBusy('approve', async () => {
     await apiRequest(`/teams/${selectedId}/approve`, {
       method: 'POST',
-      body: {},
+      body: { is_late_registration: selectedTeam?.status === 'draft' || selectedTeam?.isLateRegistration },
     })
     await loadTeams()
     if (selectedId) {
@@ -467,6 +477,8 @@ function TeamsPage() {
         provision: detail.provision_state || 'none',
         submittedAt: detail.submitted_at,
         note: detail.approval_note || '',
+        paymentProof: detail.payment_proof || '',
+        isLateRegistration: Boolean(detail.is_late_registration),
         members: detail.members || [],
       })
     }
@@ -488,6 +500,8 @@ function TeamsPage() {
         provision: detail.provision_state || 'none',
         submittedAt: detail.submitted_at,
         note: detail.approval_note || '',
+        paymentProof: detail.payment_proof || '',
+        isLateRegistration: Boolean(detail.is_late_registration),
         members: detail.members || [],
       })
     }
@@ -596,7 +610,12 @@ function TeamsPage() {
                     <td className="px-4 py-3.5 text-sm font-medium text-ink">{team.name}</td>
                     <td className="px-4 py-3.5 text-sm text-ink/60">{team.owner || '—'}</td>
                     <td className="px-4 py-3.5 text-center font-mono text-sm text-ink/55">{team.memberCount}</td>
-                    <td className="px-4 py-3.5"><Badge {...APPROVAL[team.status]} /></td>
+                    <td className="px-4 py-3.5">
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge {...APPROVAL[team.status]} />
+                        {team.isLateRegistration && <Badge label="Đăng ký trễ" cls="bg-clay/12 text-clay" />}
+                      </div>
+                    </td>
                     <td className="px-4 py-3.5"><Badge {...(PROVISION[team.provision] ?? PROVISION.none)} /></td>
                     <td className="px-4 py-3.5 text-ink/25">
                       <Icon name="chevronR" className="h-4 w-4" />

@@ -126,6 +126,7 @@ class Team(models.Model):
     discord_role_id = models.BigIntegerField(null=True, blank=True)
     text_channel_id = models.BigIntegerField(null=True, blank=True)
     voice_channel_id = models.BigIntegerField(null=True, blank=True)
+    is_late_registration = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -573,7 +574,8 @@ class StationSubmission(models.Model):
     ]
 
     station_session = models.ForeignKey(
-        StationSession, on_delete=models.CASCADE, related_name="submissions",
+        StationSession, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="submissions",
     )
     team = models.ForeignKey(
         Team, on_delete=models.CASCADE, related_name="station_submissions",

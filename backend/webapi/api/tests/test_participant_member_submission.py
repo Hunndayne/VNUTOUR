@@ -1,6 +1,10 @@
+from datetime import date
+import json
+
 from django.test import TestCase
 
-from api.models import Account, Participant
+from api.models import Account, Participant, ProgramPhase, Team, TeamMembership
+from api.services.auth_service import generate_session
 from api.views_participant import _member_resolution, _prepare_member_submission
 
 
@@ -88,7 +92,7 @@ class ParticipantMemberSubmissionTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(columns["full_name"], "Member Two")
         self.assertEqual(columns["cccd"], "012345678901")
-        self.assertEqual(columns["date_of_birth"], "2006-01-02")
+        self.assertEqual(columns["date_of_birth"], date(2006, 1, 2))
 
     def test_prepare_member_submission_requires_cccd_when_missing_on_backend(self):
         Account.objects.create(
@@ -114,3 +118,63 @@ class ParticipantMemberSubmissionTests(TestCase):
         )
 
         self.assertEqual(error, "missing:member:cccd")
+
+    def test_patch_team_member_returns_iso_date_after_update(self):
+        ProgramPhase.objects.create(
+            key="registration",
+            label="Registration",
+            order=1,
+            is_current=True,
+        )
+        captain_account = Account.objects.create(
+            username="captain",
+            email="captain@example.com",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="SV001",
+        )
+        captain = Participant.objects.create(
+            account=captain_account,
+            mssv="SV001",
+            full_name="Captain",
+            email="captain@example.com",
+            cccd="UIT",
+            date_of_birth=date(2005, 1, 1),
+        )
+        member = Participant.objects.create(
+            mssv="SV002",
+            full_name="Member",
+            email="member@example.com",
+            cccd="UIT",
+            date_of_birth=date(2005, 1, 2),
+        )
+        team = Team.objects.create(
+            code="T0001",
+            name="Draft Team",
+            owner_account=captain_account,
+            approval_status=Team.APPROVAL_DRAFT,
+        )
+        TeamMembership.objects.create(team=team, participant=captain, is_captain=True)
+        TeamMembership.objects.create(team=team, participant=member, is_captain=False)
+        token = generate_session(captain_account)
+
+        response = self.client.patch(
+            "/api/my-team/members/SV002",
+            data=json.dumps({
+                "full_name": "Updated Member",
+                "school": "UIT",
+                "faculty": "KHMT",
+                "email": "member@example.com",
+                "phone": "0900000000",
+                "cccd": "UIT",
+                "date_of_birth": "2006-02-03",
+                "facebook": "https://facebook.com/member",
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["date_of_birth"], "2006-02-03")
+        member.refresh_from_db()
+        self.assertEqual(member.date_of_birth, date(2006, 2, 3))

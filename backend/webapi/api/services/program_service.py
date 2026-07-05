@@ -113,6 +113,9 @@ def get_current_phase() -> Optional[ProgramPhase]:
 
 def create_sub_event(phase_key: str, name: str, **kwargs) -> SubEvent:
     """Create a sub-event within a phase."""
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("missing_name")
     phase = ProgramPhase.objects.get(key=phase_key)
     for field in ("start_date", "end_date"):
         if field in kwargs:
@@ -153,6 +156,10 @@ def update_sub_event(event_id: int, **kwargs) -> SubEvent:
         if hasattr(se, field) and value is not None:
             if field in ("start_date", "end_date"):
                 value = _coerce_datetime(value)
+            if field == "name":
+                value = str(value or "").strip()
+                if not value:
+                    raise ValueError("missing_name")
             setattr(se, field, value)
     se.save()
     return se

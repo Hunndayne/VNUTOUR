@@ -64,5 +64,6 @@ def register_team_view(request: HttpRequest):
         "code": team.code,
         "name": team.name,
         "approval_status": team.approval_status,
+        "is_late_registration": team.is_late_registration,
         "mode": "team",
     }, status=201)

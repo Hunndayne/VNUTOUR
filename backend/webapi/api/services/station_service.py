@@ -118,7 +118,7 @@ def enter_station(
     """Record a team entering a station."""
     team = _resolve_team_from_scan(team_ref)
     if team and team.approval_status != Team.APPROVAL_APPROVED:
-        team = None
+        return None, "team_not_approved"
     if not team:
         return None, "team_not_found"
 

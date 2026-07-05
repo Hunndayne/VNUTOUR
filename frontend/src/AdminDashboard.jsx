@@ -633,6 +633,7 @@ function AdminDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [user, setUser] = useState(getUser())
   const [programState, setProgramState] = useState(() => normalizeProgramForFrontend())
+  const [scorePhase, setScorePhase] = useState('')
   const [overview, setOverview] = useState(null)
   const [activityItems, setActivityItems] = useState([])
   const [scoreboard, setScoreboard] = useState(null)
@@ -684,8 +685,10 @@ function AdminDashboard() {
 
   const phaseOptions = PHASES
   const phase = programState.currentPhase
+  const scoreViewPhase = scorePhase || phase
   const currentPhaseLabel = getCurrentPhaseLabel(phase)
   const currentPhaseEvents = programState.subEventsByPhase[phase] ?? []
+  const scorePhaseEvents = programState.subEventsByPhase[scoreViewPhase] ?? []
 
   useEffect(() => {
     let cancelled = false
@@ -894,11 +897,11 @@ function AdminDashboard() {
               <TeamsPage />
             ) : activeTab === 'scores' ? (
               <ScoreManagementPage
-                phase={phase}
+                phase={scoreViewPhase}
                 phaseOptions={phaseOptions}
                 phaseSchedule={programState.phaseSchedule}
-                phaseEvents={currentPhaseEvents}
-                onPhaseChange={setCurrentPhase}
+                phaseEvents={scorePhaseEvents}
+                onPhaseChange={setScorePhase}
               />
             ) : activeTab === 'stations' ? (
               <StationsPage

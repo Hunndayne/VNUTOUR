@@ -69,6 +69,7 @@ def create_team(
     name: str,
     owner_account: Account | None = None,
     auto_approve: bool = False,
+    is_late_registration: bool = False,
 ) -> Tuple[Optional[Team], Optional[str]]:
     """Create a new team. Returns (team, None) or (None, error_code)."""
     name = (name or "").strip()
@@ -85,6 +86,7 @@ def create_team(
         approval_status=Team.APPROVAL_APPROVED if auto_approve else Team.APPROVAL_DRAFT,
         provision_state=Team.PROVISION_PENDING if auto_approve else Team.PROVISION_NONE,
         qr_token=secrets.token_urlsafe(16),
+        is_late_registration=is_late_registration,
     )
 
     try:

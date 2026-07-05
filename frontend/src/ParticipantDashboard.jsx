@@ -877,14 +877,20 @@ function ParticipantDashboard() {
     })
   }
 
-  const submitTeam = async () => withBusy('submit-team', async () => {
-    await saveTeamNameIfNeeded()
-    await apiRequest('/my-team/submit', {
-      method: 'POST',
-      body: {},
+  const submitTeam = async () => {
+    if (members.length !== maxMembers) {
+      setApiError(`Đội cần đủ ${maxMembers} thành viên trước khi gửi duyệt.`)
+      return
+    }
+    await withBusy('submit-team', async () => {
+      await saveTeamNameIfNeeded()
+      await apiRequest('/my-team/submit', {
+        method: 'POST',
+        body: {},
+      })
+      await loadDashboard()
     })
-    await loadDashboard()
-  })
+  }
 
   const handleNextAction = () => {
     if (!registrationOpen) return
@@ -1104,6 +1110,11 @@ function ParticipantDashboard() {
                     Thêm thành viên
                   </button>
                 </div>
+                {apiError && (
+                  <div className="mt-3 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+                    {apiError}
+                  </div>
+                )}
               </div>
             ) : (
               <div className={`${PARTICIPANT_CARD} p-5`}>

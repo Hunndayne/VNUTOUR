@@ -219,10 +219,23 @@ function QuizChoice({ active, label, onClick }) {
   )
 }
 
-function AttachmentBox({ attachment }) {
+function AttachmentBox({ attachment, files, onChange }) {
   return (
     <label className="block cursor-pointer border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition hover:bg-gold/15" style={{ borderRadius: 26 }}>
-      <input type="file" className="hidden" multiple={Number(attachment.maxFiles) > 1} />
+      <input
+        type="file"
+        className="hidden"
+        multiple={Number(attachment.maxFiles) > 1}
+        onChange={(event) => {
+          const selectedFiles = Array.from(event.target.files || []).map((file) => ({
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified,
+          }))
+          onChange(selectedFiles)
+        }}
+      />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-clay shadow-sm">
@@ -240,6 +253,16 @@ function AttachmentBox({ attachment }) {
         </span>
       </div>
       {attachment.note ? <p className="mt-4 text-sm leading-6 text-ink/65">{attachment.note}</p> : null}
+      {files.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {files.map((file) => (
+            <div key={`${file.name}-${file.lastModified}`} className="rounded-2xl border border-stone bg-white px-3 py-2 text-xs text-ink/60">
+              <span className="font-semibold text-ink">{file.name}</span>
+              <span className="ml-2 font-mono text-ink/35">{Math.ceil(file.size / 1024)} KB</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </label>
   )
 }
@@ -250,6 +273,9 @@ export default function FormResponses() {
   const [forms, setForms] = useState([])
   const [selectedId, setSelectedId] = useState('')
   const [answers, setAnswers] = useState({})
+  const [attachments, setAttachments] = useState([])
+  const [submitState, setSubmitState] = useState('idle')
+  const [submitMessage, setSubmitMessage] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -304,8 +330,72 @@ export default function FormResponses() {
   const activeQuizItems = submissionConfig.quiz?.enabled ? submissionConfig.quiz.items || [] : []
   const attachmentConfig = submissionConfig.attachment?.enabled ? submissionConfig.attachment : null
 
+  useEffect(() => {
+    setAnswers({})
+    setAttachments([])
+    setSubmitState('idle')
+    setSubmitMessage('')
+  }, [selectedId])
+
   const setAnswer = (key, value) => {
     setAnswers((current) => ({ ...current, [key]: value }))
+  }
+
+  const handleSubmit = async () => {
+    const missingRequiredField = activeFormFields.some((field, index) => {
+      if (!field.required) return false
+      return !String(answers[`form:${field.id || index}`] || '').trim()
+    })
+    const missingQuizAnswer = activeQuizItems.some((item, index) => {
+      if (item.required === false) return false
+      return answers[`quiz:${item.id || index}`] === undefined
+    })
+    if (missingRequiredField || missingQuizAnswer) {
+      setSubmitState('error')
+      setSubmitMessage('Vui lòng hoàn tất các mục bắt buộc trước khi gửi.')
+      return
+    }
+
+    const responsePayload = {
+      form: activeFormFields.map((field, index) => ({
+        id: field.id || `field-${index}`,
+        label: field.label || '',
+        value: answers[`form:${field.id || index}`] || '',
+      })),
+      quiz: activeQuizItems.map((item, index) => ({
+        id: item.id || `quiz-${index}`,
+        question: item.question || '',
+        selectedOption: answers[`quiz:${item.id || index}`],
+      })),
+    }
+
+    try {
+      setSubmitState('submitting')
+      setSubmitMessage('')
+      await apiRequest(`/my-team/forms/${selectedId}/submit`, {
+        method: 'POST',
+        body: {
+          response_payload: responsePayload,
+          attachment_payload: { files: attachments },
+        },
+      })
+      setSubmitState('success')
+      setSubmitMessage('Đã gửi bài nộp thành công.')
+    } catch (submitError) {
+      if (submitError?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setSubmitState('error')
+      const code = submitError?.data?.error || submitError?.message
+      const messageMap = {
+        team_not_approved: 'Đội của bạn chưa được duyệt nên chưa thể gửi bài.',
+        team_not_in_phase: 'Đội của bạn không thuộc phase của biểu mẫu này.',
+        form_not_found: 'Biểu mẫu này không còn khả dụng.',
+        event_not_found: 'Biểu mẫu không thuộc event đang mở.',
+      }
+      setSubmitMessage(messageMap[code] || 'Không gửi được bài nộp. Vui lòng thử lại.')
+    }
   }
 
   if (loading) {
@@ -411,7 +501,7 @@ export default function FormResponses() {
                 label="Tep minh chung"
                 helper="Tai len theo cau hinh cua tram"
               >
-                <AttachmentBox attachment={attachmentConfig} />
+                <AttachmentBox attachment={attachmentConfig} files={attachments} onChange={setAttachments} />
               </FormFieldCard>
             ) : null}
 
@@ -423,10 +513,24 @@ export default function FormResponses() {
                     Trang nay dang doc cau hinh bai nop tu quan ly tram va tu dong an cac form khong thuoc phase cua doi.
                   </p>
                 </div>
-                <button type="button" className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90">
-                  Gui bai nop
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={submitState === 'submitting'}
+                  className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  {submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
                 </button>
               </div>
+              {submitMessage ? (
+                <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
+                  submitState === 'success'
+                    ? 'bg-trail/15 text-white'
+                    : 'bg-clay/20 text-white'
+                }`}>
+                  {submitMessage}
+                </p>
+              ) : null}
             </Card>
           </main>
 
@@ -449,13 +553,6 @@ export default function FormResponses() {
                     <p className="mt-1 text-xs text-ink/50">{item.event_name} · {item.phase_label}</p>
                   </button>
                 ))}
-              </div>
-            </Card>
-
-            <Card radius={28} className="border border-stone bg-white p-5" style={{ boxShadow: '0 18px 50px rgba(84,72,49,0.08)' }}>
-              <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Snapshot config</p>
-              <div className="mt-4 rounded-2xl bg-paper p-4 font-mono text-xs leading-6 text-ink/70">
-                <pre className="overflow-x-auto whitespace-pre-wrap">{JSON.stringify(submissionConfig, null, 2)}</pre>
               </div>
             </Card>
           </aside>

@@ -68,6 +68,7 @@ def teams_collection_view(request: HttpRequest):
                     "text_channel_id": t.text_channel_id,
                     "voice_channel_id": t.voice_channel_id,
                     "member_count": TeamMembership.objects.filter(team=t).count(),
+                    "is_late_registration": t.is_late_registration,
                     "created_at": t.created_at.isoformat(),
                 }
                 for t in teams
@@ -123,6 +124,7 @@ def teams_collection_view(request: HttpRequest):
         return JsonResponse({
             "code": team.code, "name": team.name,
             "approval_status": team.approval_status,
+            "is_late_registration": team.is_late_registration,
         }, status=201)
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
@@ -156,6 +158,7 @@ def team_item_view(request: HttpRequest, team_key: str):
             "discord_role_id": team.discord_role_id,
             "text_channel_id": team.text_channel_id,
             "voice_channel_id": team.voice_channel_id,
+            "is_late_registration": team.is_late_registration,
             "created_at": team.created_at.isoformat(),
             "members": get_team_members(team),
         })
@@ -190,6 +193,7 @@ def team_item_view(request: HttpRequest, team_key: str):
         return JsonResponse({
             "code": team.code, "name": team.name,
             "approval_status": team.approval_status,
+            "is_late_registration": team.is_late_registration,
         })
 
     if request.method == "DELETE":
@@ -216,10 +220,18 @@ def team_approve_view(request: HttpRequest, team_key: str):
     except Team.DoesNotExist:
         return JsonResponse({"error": "not_found"}, status=404)
 
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    if data.get("is_late_registration") is True and not team.is_late_registration:
+        team.is_late_registration = True
+        team.save(update_fields=["is_late_registration", "updated_at"])
+
     team = approve_team(team, acc)
     return JsonResponse({
         "code": team.code, "approval_status": team.approval_status,
         "provision_state": team.provision_state,
+        "is_late_registration": team.is_late_registration,
     })
 
 
