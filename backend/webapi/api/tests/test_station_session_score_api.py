@@ -82,3 +82,15 @@ class StationSessionScoreApiTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.session.refresh_from_db()
         self.assertEqual(self.session.score, 8)
+
+    def test_session_score_blocked_when_results_locked(self):
+        self.phase.is_current = False
+        self.phase.save(update_fields=["is_current"])
+        ProgramPhase.objects.create(key="ended", label="Ended", order=2, is_current=True)
+
+        resp = self._patch(self.collab, 15)
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"], "results_locked")
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.score, 0)
+        self.assertFalse(ScoreEntry.objects.filter(station_session=self.session).exists())

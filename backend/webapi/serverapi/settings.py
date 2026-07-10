@@ -80,6 +80,22 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Submission attachments: uploaded to Cloudflare R2 when configured,
+# otherwise stored under MEDIA_ROOT on the local server.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = os.getenv("MEDIA_ROOT", str(BASE_DIR / "media"))
+
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+R2_ENDPOINT_URL = os.getenv(
+    "R2_ENDPOINT_URL",
+    f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "",
+)
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.getenv("R2_BUCKET", "")
+# Public bucket/custom domain base URL; when empty, R2 files are referenced by key only
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
+
 # CORS (open for dev)
 CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL", "1") == "1"
 # Allow sending/receiving cookies across origins when enabled

@@ -80,6 +80,8 @@ def score_entry_create_view(request: HttpRequest):
     except Team.DoesNotExist:
         return JsonResponse({"error": "team_not_found"}, status=404)
     except ValueError as exc:
+        if str(exc) == "results_locked":
+            return JsonResponse({"error": "results_locked"}, status=409)
         if str(exc) == "team_not_in_phase":
             return JsonResponse({"error": "team_not_in_phase"}, status=403)
         return JsonResponse({"error": "invalid_points"}, status=400)
@@ -110,6 +112,10 @@ def score_entry_detail_view(request: HttpRequest, entry_id: int):
             })
         except ScoreEntry.DoesNotExist:
             return JsonResponse({"error": "not_found"}, status=404)
+        except ValueError as exc:
+            if str(exc) == "results_locked":
+                return JsonResponse({"error": "results_locked"}, status=409)
+            return JsonResponse({"error": "invalid_points"}, status=400)
 
     if request.method == "DELETE":
         try:
@@ -117,6 +123,10 @@ def score_entry_detail_view(request: HttpRequest, entry_id: int):
             return JsonResponse({"status": "deleted"})
         except ScoreEntry.DoesNotExist:
             return JsonResponse({"error": "not_found"}, status=404)
+        except ValueError as exc:
+            if str(exc) == "results_locked":
+                return JsonResponse({"error": "results_locked"}, status=409)
+            return JsonResponse({"error": "invalid_points"}, status=400)
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -175,6 +185,8 @@ def advancement_rule_view(request: HttpRequest, phase_key: str):
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
     except ValueError as exc:
+        if str(exc) == "results_locked":
+            return JsonResponse({"error": "results_locked"}, status=409)
         if str(exc) == "invalid_mode":
             return JsonResponse({"error": "invalid_mode"}, status=400)
         return JsonResponse({"error": "invalid_slots"}, status=400)
@@ -200,4 +212,5 @@ def publish_advancement_view(request: HttpRequest, phase_key: str):
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
     except ValueError as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        status = 409 if str(e) == "results_locked" else 400
+        return JsonResponse({"error": str(e)}, status=status)

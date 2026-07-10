@@ -2,6 +2,7 @@
 Participant self-service views — §9.2
 """
 
+import json
 from copy import deepcopy
 
 from django.http import JsonResponse, HttpRequest
@@ -18,6 +19,7 @@ from api.services.registration_service import (
 )
 from api.services.program_service import get_current_sub_event
 from api.services.checkin_qr_service import team_qr_visible
+from api.services.submission_storage_service import save_submission_files
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -145,10 +147,72 @@ def _public_submission_config(config: dict) -> dict:
     return public_config
 
 
-def _station_form_payload(station: Station) -> dict:
+def _submission_limits(config: dict | None) -> dict:
+    limits = (config or {}).get("limits") or {}
+    try:
+        max_submissions = max(0, int(limits.get("maxSubmissions") or 0))
+    except (TypeError, ValueError):
+        max_submissions = 0
+    return {
+        "max_submissions": max_submissions,
+        "close_on_correct": bool(limits.get("closeOnCorrect")),
+        "manual_closed": bool(limits.get("manualClosed")),
+    }
+
+
+def _grade_quiz(config: dict | None, response_payload: dict) -> bool | None:
+    """Grade quiz answers against the station config; None when there is no quiz."""
+    quiz = (config or {}).get("quiz") or {}
+    items = (quiz.get("items") or []) if quiz.get("enabled") else []
+    if not items:
+        return None
+
+    answers = {}
+    for answer in (response_payload or {}).get("quiz") or []:
+        if isinstance(answer, dict):
+            answers[str(answer.get("id"))] = answer.get("selectedOption")
+
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        correct = item.get("correctOption")
+        if not isinstance(correct, int):
+            continue
+        selected = answers.get(str(item.get("id") or f"quiz-{index}"))
+        if selected != correct:
+            return False
+    return True
+
+
+def _form_closure_state(station: Station) -> dict:
+    """Whether the station form stopped accepting submissions, and why."""
+    limits = _submission_limits(station.submission_config)
+    submitted = StationSubmission.objects.filter(
+        station=station,
+        status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
+    )
+    submitted_count = submitted.count()
+
+    reason = None
+    if limits["manual_closed"]:
+        reason = "manual"
+    elif limits["max_submissions"] and submitted_count >= limits["max_submissions"]:
+        reason = "limit_reached"
+    elif limits["close_on_correct"] and submitted.filter(is_correct=True).exists():
+        reason = "correct_answer"
+
+    return {
+        "closed": reason is not None,
+        "reason": reason,
+        "submitted_count": submitted_count,
+        "max_submissions": limits["max_submissions"] or None,
+    }
+
+
+def _station_form_payload(station: Station, team: Team | None = None) -> dict:
     phase = station.sub_event.phase
     event = station.sub_event
-    return {
+    payload = {
         "station_id": station.id,
         "station_code": station.code,
         "station_name": station.name,
@@ -158,7 +222,17 @@ def _station_form_payload(station: Station) -> dict:
         "phase_key": phase.key,
         "phase_label": phase.label,
         "submission_config": _public_submission_config(station.submission_config or {}),
+        "closure": _form_closure_state(station),
     }
+    if team is not None:
+        mine = StationSubmission.objects.filter(
+            team=team, station=station,
+        ).order_by("-created_at").first()
+        payload["my_submission"] = {
+            "status": mine.status,
+            "submitted_at": mine.submitted_at.isoformat() if mine.submitted_at else None,
+        } if mine else None
+    return payload
 
 
 def _registration_phase_open() -> bool:
@@ -661,7 +735,7 @@ def my_team_forms_view(request: HttpRequest):
         if current_event and station.sub_event_id != current_event.id:
             continue
 
-        accessible_forms.append(_station_form_payload(station))
+        accessible_forms.append(_station_form_payload(station, team=team))
 
     return JsonResponse({
         "team_code": team.code,
@@ -719,9 +793,42 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if current_event and station.sub_event_id != current_event.id:
         return JsonResponse({"error": "event_not_found"}, status=404)
 
-    data = _json_body(request)
-    if data is None:
-        return JsonResponse({"error": "invalid_json"}, status=400)
+    closure = _form_closure_state(station)
+    if closure["closed"]:
+        return JsonResponse({
+            "error": "form_closed",
+            "reason": closure["reason"],
+        }, status=409)
+
+    uploaded_files = []
+    if (request.content_type or "").startswith("multipart/"):
+        try:
+            response_payload = json.loads(request.POST.get("response_payload") or "{}")
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        if not isinstance(response_payload, dict):
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        uploaded_files = request.FILES.getlist("files")
+        attachment_payload = {}
+    else:
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        response_payload = data.get("response_payload") or data.get("answers") or {}
+        attachment_payload = data.get("attachment_payload") or data.get("attachments") or {}
+
+    config = station.submission_config or {}
+    if uploaded_files:
+        attachment_config = config.get("attachment") or {}
+        if not attachment_config.get("enabled"):
+            return JsonResponse({"error": "attachment_not_allowed"}, status=400)
+        try:
+            stored_files = save_submission_files(
+                station, team, uploaded_files, attachment_config,
+            )
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        attachment_payload = {"files": stored_files}
 
     session = StationSession.objects.filter(
         team=team,
@@ -737,8 +844,9 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
 
     submission.station_session = session
     submission.status = StationSubmission.STATUS_SUBMITTED
-    submission.response_payload = data.get("response_payload") or data.get("answers") or {}
-    submission.attachment_payload = data.get("attachment_payload") or data.get("attachments") or {}
+    submission.response_payload = response_payload
+    submission.attachment_payload = attachment_payload
+    submission.is_correct = _grade_quiz(config, response_payload)
     submission.submitted_at = timezone.now()
     submission.save()
 
@@ -784,7 +892,7 @@ def my_experience_view(request: HttpRequest):
         ).order_by("order", "id")
         for station in stations:
             if _has_submission_config(station.submission_config):
-                open_forms.append(_station_form_payload(station))
+                open_forms.append(_station_form_payload(station, team=team))
 
     return JsonResponse({
         "current_phase": current_phase_key,

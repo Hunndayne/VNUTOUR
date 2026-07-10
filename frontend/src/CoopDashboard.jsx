@@ -97,6 +97,7 @@ function explainScanError(error) {
     session_already_active: 'Đội này đang ở một trạm khác hoặc đã vào trạm này.',
     session_not_found: 'Không tìm thấy phiên trạm đang mở cho đội này.',
     policy_free_play: 'Trạm này đang ở chế độ tự do, không cần scan.',
+    results_locked: 'Kết quả đã khóa ở phase Kết thúc nên không thể tiếp tục thao tác trạm.',
   }
   return map[code] || 'Không thể xử lý mã vừa quét.'
 }
@@ -452,6 +453,8 @@ function CoopDashboard() {
       }
       setFlashMessage('error', error?.data?.error === 'not_assigned_to_station'
         ? 'Bạn không phụ trách trạm này nên không thể chấm điểm.'
+        : error?.data?.error === 'results_locked'
+          ? 'Kết quả đã khóa ở phase Kết thúc nên không thể lưu điểm.'
         : 'Không lưu được điểm.')
     } finally {
       setSavingScoreId(null)

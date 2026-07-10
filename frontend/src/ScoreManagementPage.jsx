@@ -27,6 +27,7 @@ function explainApiError(error) {
     team_not_found: 'Không tìm thấy đội cần cộng điểm.',
     team_not_in_phase: 'Đội này hiện không nằm trong roster của phase.',
     invalid_points: 'Số điểm không hợp lệ.',
+    results_locked: 'Kết quả đã khóa ở phase Kết thúc. Hãy chuyển phase hiện tại khỏi Kết thúc nếu cần chỉnh lại điểm.',
     invalid_mode: 'Chế độ advancement không hợp lệ.',
     advancement_rule_not_found: 'Phase này chưa cấu hình phase đích.',
     manual_team_codes_required: 'Chế độ chọn tay cần có danh sách đội được chọn.',
@@ -105,7 +106,19 @@ function normalizeScoreboard(payload = {}) {
       createdAt: entry.created_at || '',
       updatedAt: entry.updated_at || '',
     })),
+    subEvents: (payload.sub_events || []).map((eventItem) => ({
+      id: eventItem.id,
+      phaseKey: eventItem.phase_key || '',
+      name: eventItem.name || '',
+      type: eventItem.type || 'custom',
+      usesStations: Boolean(eventItem.uses_stations),
+      note: eventItem.note || '',
+      order: eventItem.order || 0,
+    })),
     usesPhaseRoster: Boolean(payload.uses_phase_roster),
+    resultsLocked: Boolean(payload.results_locked),
+    sourcePhaseKey: payload.source_phase_key || payload.phase_key || '',
+    sourcePhaseLabel: payload.source_phase_label || payload.phase_label || '',
     advancement: {
       nextPhaseKey: payload.advancement?.next_phase_key || '',
       nextPhaseLabel: payload.advancement?.next_phase_label || '',
@@ -196,6 +209,11 @@ export default function ScoreManagementPage({
     })
   }, [scoreboard.advancement.lastPublishedAt, scoreboard.advancement.mode, scoreboard.advancement.nextPhaseKey, scoreboard.advancement.slots])
 
+  const scoreEvents = useMemo(
+    () => (scoreboard.subEvents.length > 0 ? scoreboard.subEvents : phaseEvents),
+    [phaseEvents, scoreboard.subEvents],
+  )
+
   useEffect(() => {
     if (scoreboard.roster.length === 0) {
       setEntryForm((current) => ({ ...current, teamCode: '' }))
@@ -207,14 +225,14 @@ export default function ScoreManagementPage({
   }, [entryForm.teamCode, scoreboard.roster])
 
   useEffect(() => {
-    if (phaseEvents.length === 0) {
+    if (scoreEvents.length === 0) {
       setEntryForm((current) => ({ ...current, eventId: '' }))
       return
     }
-    if (!entryForm.eventId || !phaseEvents.some((eventItem) => String(eventItem.id) === entryForm.eventId)) {
-      setEntryForm((current) => ({ ...current, eventId: String(phaseEvents[0].id) }))
+    if (!entryForm.eventId || !scoreEvents.some((eventItem) => String(eventItem.id) === entryForm.eventId)) {
+      setEntryForm((current) => ({ ...current, eventId: String(scoreEvents[0].id) }))
     }
-  }, [entryForm.eventId, phaseEvents])
+  }, [entryForm.eventId, scoreEvents])
 
   useEffect(() => {
     if (ruleForm.mode !== 'manual') return
@@ -246,7 +264,7 @@ export default function ScoreManagementPage({
   )
 
   const eventSummaries = useMemo(() => (
-    phaseEvents.map((eventItem) => {
+    scoreEvents.map((eventItem) => {
       const eventEntries = entriesByEvent.get(String(eventItem.id)) || []
       const stationPoints = eventEntries
         .filter((entry) => entry.kind === 'station')
@@ -264,7 +282,7 @@ export default function ScoreManagementPage({
         touchedTeams,
       }
     })
-  ), [entriesByEvent, phaseEvents])
+  ), [entriesByEvent, scoreEvents])
 
   const qualifiedTeamCodes = useMemo(() => {
     if (!ruleForm.nextPhaseKey) return []
@@ -280,20 +298,37 @@ export default function ScoreManagementPage({
 
   const totalStationPoints = stationEntries.reduce((sum, entry) => sum + entry.points, 0)
   const totalManualPoints = manualEntries.reduce((sum, entry) => sum + entry.points, 0)
+  const isSummaryView = Boolean(scoreboard.sourcePhaseKey && scoreboard.sourcePhaseKey !== phase)
+  const sourcePhaseLabel = scoreboard.sourcePhaseLabel || scoreboard.sourcePhaseKey
+  const scoreEditingDisabled = scoreboard.resultsLocked || isSummaryView
+
+  const readOnlyScoreMessage = () => (
+    scoreboard.resultsLocked
+      ? explainApiError({ data: { error: 'results_locked' } })
+      : 'Phase Kết thúc chỉ tổng hợp kết quả từ phase trước, không nhập điểm trực tiếp.'
+  )
+
+  const buildRulePayload = () => ({
+    toPhaseKey: ruleForm.nextPhaseKey,
+    mode: ruleForm.mode,
+    slots: ruleForm.mode === 'manual' ? manualSelection.length : ruleForm.slots,
+  })
+
+  const saveAdvancementRule = async () => {
+    const payload = buildRulePayload()
+    await apiRequest(`/scores/phases/${phase}/advancement`, {
+      method: 'PUT',
+      body: payload,
+    })
+    return payload
+  }
 
   const handleSaveRule = async () => {
-    if (!ruleForm.nextPhaseKey) return
+    if (!ruleForm.nextPhaseKey || scoreEditingDisabled) return
     try {
       setBusyKey('rule:save')
       setApiError('')
-      await apiRequest(`/scores/phases/${phase}/advancement`, {
-        method: 'PUT',
-        body: {
-          toPhaseKey: ruleForm.nextPhaseKey,
-          mode: ruleForm.mode,
-          slots: ruleForm.mode === 'manual' ? manualSelection.length : ruleForm.slots,
-        },
-      })
+      await saveAdvancementRule()
       await loadScoreboard()
     } catch (error) {
       if (error?.status === 401) {
@@ -307,13 +342,14 @@ export default function ScoreManagementPage({
   }
 
   const handlePublishAdvancement = async () => {
-    if (!ruleForm.nextPhaseKey || qualifiedTeamCodes.length === 0) return
+    if (!ruleForm.nextPhaseKey || qualifiedTeamCodes.length === 0 || scoreEditingDisabled) return
     try {
       setBusyKey('rule:publish')
       setApiError('')
+      const savedRule = await saveAdvancementRule()
       await apiRequest(`/scores/phases/${phase}/publish-advancement`, {
         method: 'POST',
-        body: ruleForm.mode === 'manual'
+        body: savedRule.mode === 'manual'
           ? { manual_team_codes: qualifiedTeamCodes }
           : {},
       })
@@ -330,6 +366,10 @@ export default function ScoreManagementPage({
   }
 
   const handleCreateEntry = async () => {
+    if (scoreEditingDisabled) {
+      setApiError(readOnlyScoreMessage())
+      return
+    }
     try {
       setBusyKey('entry:create')
       setApiError('')
@@ -358,6 +398,10 @@ export default function ScoreManagementPage({
   }
 
   const handleDeleteEntry = async (entryId) => {
+    if (scoreEditingDisabled) {
+      setApiError(readOnlyScoreMessage())
+      return
+    }
     try {
       setBusyKey(`entry:${entryId}`)
       setApiError('')
@@ -375,7 +419,7 @@ export default function ScoreManagementPage({
   }
 
   const toggleManualTeam = (teamCode) => {
-    if (ruleForm.mode !== 'manual') return
+    if (ruleForm.mode !== 'manual' || scoreEditingDisabled) return
     setManualSelection((current) => {
       const next = current.includes(teamCode)
         ? current.filter((code) => code !== teamCode)
@@ -414,6 +458,8 @@ export default function ScoreManagementPage({
               <Badge label={phaseInfo.label} cls="bg-trail/12 text-trail" />
               {schedule && <Badge label={`${schedule.startDate || '--'} -> ${schedule.endDate || '--'}`} cls="bg-ink/[0.07] text-ink/55" />}
               {scoreboard.usesPhaseRoster && <Badge label="Dùng roster phase" cls="bg-gold/15 text-gold" />}
+              {isSummaryView && <Badge label={`Tổng hợp từ ${sourcePhaseLabel}`} cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+              {scoreboard.resultsLocked && <Badge label="Đã khóa kết quả" cls="bg-clay/12 text-clay" />}
             </div>
             <h2 className="mt-3 font-display text-2xl font-semibold text-ink">Tổng hợp điểm theo phase</h2>
             <p className="mt-2 text-sm leading-6 text-ink/55">
@@ -443,7 +489,7 @@ export default function ScoreManagementPage({
       </section>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard value={String(phaseEvents.length)} label="Event trong phase" note="Lấy từ Quản lý sự kiện." accent="sky" />
+        <MetricCard value={String(scoreEvents.length)} label={isSummaryView ? 'Event tổng kết' : 'Event trong phase'} note={isSummaryView ? `Từ ${sourcePhaseLabel}.` : 'Lấy từ Quản lý sự kiện.'} accent="sky" />
         <MetricCard value={String(totalStationPoints)} label="Tổng điểm trạm" note="Auto từ station session đã đóng." accent="trail" />
         <MetricCard value={String(totalManualPoints)} label="Cộng trừ thủ công" note="Bonus, penalty và điều chỉnh." accent="gold" />
         <MetricCard value={String(scoreboard.roster.length)} label="Đội trong roster" note={scoreboard.usesPhaseRoster ? 'Roster đã khóa theo phase' : 'Đang lấy từ đội đã duyệt'} accent="clay" />
@@ -456,7 +502,7 @@ export default function ScoreManagementPage({
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Tổng hợp event</p>
               <h3 className="mt-1 font-display text-xl font-semibold text-ink">Điểm của từng event con</h3>
             </div>
-            <Badge label={`${phaseEvents.length} event`} cls="bg-ink/[0.07] text-ink/55" />
+            <Badge label={`${scoreEvents.length} event`} cls="bg-ink/[0.07] text-ink/55" />
           </div>
 
           <div className="mt-4 space-y-3">
@@ -518,6 +564,7 @@ export default function ScoreManagementPage({
                 </label>
                 <select
                   value={ruleForm.nextPhaseKey}
+                  disabled={scoreEditingDisabled}
                   onChange={(event) => setRuleForm((current) => ({ ...current, nextPhaseKey: event.target.value }))}
                   className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                 >
@@ -535,6 +582,7 @@ export default function ScoreManagementPage({
                   <button
                     key={option.key}
                     type="button"
+                    disabled={scoreEditingDisabled}
                     onClick={() => setRuleForm((current) => ({ ...current, mode: option.key }))}
                     className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
                       ruleForm.mode === option.key
@@ -555,6 +603,7 @@ export default function ScoreManagementPage({
                   type="number"
                   min="0"
                   value={ruleForm.slots}
+                  disabled={scoreEditingDisabled}
                   onChange={(event) => setRuleForm((current) => ({ ...current, slots: Math.max(0, Number(event.target.value) || 0) }))}
                   className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
                 />
@@ -589,7 +638,7 @@ export default function ScoreManagementPage({
                   <button
                     type="button"
                     onClick={handleSaveRule}
-                    disabled={!ruleForm.nextPhaseKey || busyKey === 'rule:save'}
+                    disabled={!ruleForm.nextPhaseKey || scoreEditingDisabled || busyKey === 'rule:save'}
                     className="rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:opacity-40"
                   >
                     {busyKey === 'rule:save' ? 'Đang lưu...' : 'Lưu luật'}
@@ -597,7 +646,7 @@ export default function ScoreManagementPage({
                   <button
                     type="button"
                     onClick={handlePublishAdvancement}
-                    disabled={!ruleForm.nextPhaseKey || qualifiedTeamCodes.length === 0 || busyKey === 'rule:publish'}
+                    disabled={!ruleForm.nextPhaseKey || qualifiedTeamCodes.length === 0 || scoreEditingDisabled || busyKey === 'rule:publish'}
                     className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
                   >
                     <Icon name="link" className="h-4 w-4" />
@@ -664,6 +713,7 @@ export default function ScoreManagementPage({
                             <input
                               type="checkbox"
                               checked={isSelected}
+                              disabled={scoreEditingDisabled}
                               onChange={() => toggleManualTeam(team.teamCode)}
                               className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
                             />
@@ -745,6 +795,7 @@ export default function ScoreManagementPage({
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Đội nhận điểm</label>
             <select
               value={entryForm.teamCode}
+              disabled={scoreEditingDisabled}
               onChange={(event) => setEntryForm((current) => ({ ...current, teamCode: event.target.value }))}
               className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
             >
@@ -760,10 +811,11 @@ export default function ScoreManagementPage({
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Event con</label>
             <select
               value={entryForm.eventId}
+              disabled={scoreEditingDisabled}
               onChange={(event) => setEntryForm((current) => ({ ...current, eventId: event.target.value }))}
               className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
             >
-              {phaseEvents.map((eventItem) => (
+              {scoreEvents.map((eventItem) => (
                 <option key={eventItem.id} value={String(eventItem.id)}>
                   {eventItem.name}
                 </option>
@@ -775,6 +827,7 @@ export default function ScoreManagementPage({
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Loại điểm</label>
             <select
               value={entryForm.kind}
+              disabled={scoreEditingDisabled}
               onChange={(event) => setEntryForm((current) => ({ ...current, kind: event.target.value }))}
               className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
             >
@@ -789,6 +842,7 @@ export default function ScoreManagementPage({
             <input
               type="number"
               value={entryForm.points}
+              disabled={scoreEditingDisabled}
               onChange={(event) => setEntryForm((current) => ({ ...current, points: Number(event.target.value) || 0 }))}
               className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
             />
@@ -799,6 +853,7 @@ export default function ScoreManagementPage({
             <textarea
               rows={4}
               value={entryForm.note}
+              disabled={scoreEditingDisabled}
               onChange={(event) => setEntryForm((current) => ({ ...current, note: event.target.value }))}
               className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
               placeholder="VD: cộng điểm social, trừ điểm nộp file muộn, điều chỉnh BTC."
@@ -813,7 +868,7 @@ export default function ScoreManagementPage({
           <button
             type="button"
             onClick={handleCreateEntry}
-            disabled={!entryForm.teamCode || !entryForm.eventId || busyKey === 'entry:create'}
+            disabled={!entryForm.teamCode || !entryForm.eventId || scoreEditingDisabled || busyKey === 'entry:create'}
             className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
           >
             <Icon name="plus" className="h-4 w-4" />
@@ -827,7 +882,7 @@ export default function ScoreManagementPage({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <EntryBadge kind={entry.kind} />
-                  <EventBadge type={phaseEvents.find((item) => String(item.id) === entry.eventId)?.type} />
+                  <EventBadge type={scoreEvents.find((item) => String(item.id) === entry.eventId)?.type} />
                   <span className="font-medium text-ink">{entry.teamName || entry.teamCode}</span>
                   <span className="font-mono text-xs text-ink/35">{formatDateTime(entry.createdAt)}</span>
                 </div>
@@ -842,7 +897,7 @@ export default function ScoreManagementPage({
                 <button
                   type="button"
                   onClick={() => handleDeleteEntry(entry.id)}
-                  disabled={busyKey === `entry:${entry.id}`}
+                  disabled={scoreEditingDisabled || busyKey === `entry:${entry.id}`}
                   className="rounded-lg p-1.5 text-ink/30 transition hover:bg-paper hover:text-clay disabled:opacity-40"
                   title="Xóa dòng điểm"
                 >

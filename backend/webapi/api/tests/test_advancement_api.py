@@ -49,11 +49,11 @@ class AdvancementApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
 
-    def _publish(self, account, phase_key="qualifying"):
+    def _publish(self, account, phase_key="qualifying", body=None):
         token = generate_session(account)
         return self.client.post(
             f"/api/scores/phases/{phase_key}/publish-advancement",
-            data=json.dumps({}),
+            data=json.dumps(body or {}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
@@ -85,6 +85,19 @@ class AdvancementApiTests(TestCase):
             PhaseRoster.objects.filter(phase=self.final, origin=PhaseRoster.ORIGIN_QUALIFIED).count(),
             2,
         )
+
+    def test_manual_codes_override_stale_top_n_rule(self):
+        self._set_rule(self.admin, slots=1, mode="top_n")
+        resp = self._publish(self.admin, body={
+            "manual_team_codes": [self.teams[1].code, self.teams[2].code],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["promoted_count"], 2)
+
+        promoted = set(PhaseRoster.objects.filter(
+            phase=self.final, origin=PhaseRoster.ORIGIN_QUALIFIED,
+        ).values_list("team__code", flat=True))
+        self.assertEqual(promoted, {self.teams[1].code, self.teams[2].code})
 
     def test_publish_without_rule_fails(self):
         resp = self._publish(self.admin, phase_key="final")

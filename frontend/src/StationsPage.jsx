@@ -130,8 +130,17 @@ function createAttachmentConfig(attachment = {}) {
   return {
     enabled: attachment.enabled ?? false,
     maxFiles: Math.max(1, Number(attachment.maxFiles) || 1),
+    maxSizeMb: Math.max(1, Number(attachment.maxSizeMb) || 20),
     allowedTypes: attachment.allowedTypes ?? 'JPG, PNG, PDF',
     note: attachment.note ?? '',
+  }
+}
+
+function createSubmissionLimits(limits = {}) {
+  return {
+    maxSubmissions: Math.max(0, Number(limits.maxSubmissions) || 0),
+    closeOnCorrect: limits.closeOnCorrect ?? false,
+    manualClosed: limits.manualClosed ?? false,
   }
 }
 
@@ -154,6 +163,7 @@ function createSubmissionConfig(submission = {}) {
       items: quizItems,
     },
     attachment: createAttachmentConfig(submission.attachment),
+    limits: createSubmissionLimits(submission.limits),
   }
 }
 
@@ -1617,6 +1627,16 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     }))
   }
 
+  const updateLimits = (key, value) => {
+    updateSubmission(submission => ({
+      ...submission,
+      limits: {
+        ...submission.limits,
+        [key]: value,
+      },
+    }))
+  }
+
   const handleSave = () => {
     if (!form.name.trim()) return
     onSave({
@@ -1900,6 +1920,18 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
                 className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
               />
             </div>
+            <div>
+              <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+                Dung lượng tối đa mỗi file (MB)
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.submission.attachment.maxSizeMb}
+                onChange={event => updateAttachment('maxSizeMb', Math.max(1, Number(event.target.value) || 1))}
+                className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+              />
+            </div>
             <div className="sm:col-span-2">
               <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
                 Ghi chú cho file đính kèm
@@ -1915,6 +1947,45 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </div>
         </div>
       )}
+
+      <div className={`${CARD} p-4`}>
+        <SectionTitle title="Giới hạn nộp bài" />
+        <div className="grid gap-3">
+          <div>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Số đội nộp tối đa (0 = không giới hạn)
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={form.submission.limits.maxSubmissions}
+              onChange={event => updateLimits('maxSubmissions', Math.max(0, Number(event.target.value) || 0))}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            />
+            <p className="mt-1 text-xs leading-5 text-ink/45">
+              Form tự động đóng khi đủ số đội đã nộp.
+            </p>
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm text-ink/60">
+            <input
+              type="checkbox"
+              checked={form.submission.limits.closeOnCorrect}
+              onChange={event => updateLimits('closeOnCorrect', event.target.checked)}
+              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            Tự động đóng khi có đội trả lời đúng toàn bộ trắc nghiệm
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-ink/60">
+            <input
+              type="checkbox"
+              checked={form.submission.limits.manualClosed}
+              onChange={event => updateLimits('manualClosed', event.target.checked)}
+              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            Đóng form ngay (không nhận bài nộp mới)
+          </label>
+        </div>
+      </div>
 
       <div className="flex gap-2 pt-1">
         <button

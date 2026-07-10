@@ -588,6 +588,8 @@ class StationSubmission(models.Model):
     )
     response_payload = models.JSONField(null=True, blank=True)
     attachment_payload = models.JSONField(null=True, blank=True)
+    # Auto-graded quiz result: True/False when the form has a quiz, None otherwise
+    is_correct = models.BooleanField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     graded_at = models.DateTimeField(null=True, blank=True)
     graded_by = models.ForeignKey(

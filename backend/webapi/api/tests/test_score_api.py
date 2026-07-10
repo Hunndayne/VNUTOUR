@@ -48,10 +48,10 @@ class ScoreApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
 
-    def _scoreboard(self, account):
+    def _scoreboard(self, account, phase_key=None):
         token = generate_session(account)
         return self.client.get(
-            f"/api/scores/phases/{self.phase.key}",
+            f"/api/scores/phases/{phase_key or self.phase.key}",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
 
@@ -87,6 +87,83 @@ class ScoreApiTests(TestCase):
         )
         self.assertEqual(deleted.status_code, 200)
         self.assertFalse(ScoreEntry.objects.filter(id=created["id"]).exists())
+
+    def test_score_entries_blocked_when_results_locked(self):
+        entry = ScoreEntry.objects.create(
+            phase=self.phase, sub_event=self.event, team=self.team1,
+            kind=ScoreEntry.KIND_MANUAL, points=10, created_by=self.admin,
+        )
+        self.phase.is_current = False
+        self.phase.save(update_fields=["is_current"])
+        ProgramPhase.objects.create(key="ended", label="Ended", order=2, is_current=True)
+
+        created = self._create_entry(self.admin, self.team1.code, 20)
+        self.assertEqual(created.status_code, 409)
+        self.assertEqual(created.json()["error"], "results_locked")
+
+        admin_token = generate_session(self.admin)
+        patched = self.client.patch(
+            f"/api/scores/entries/{entry.id}",
+            data=json.dumps({"points": 30}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {admin_token}",
+        )
+        self.assertEqual(patched.status_code, 409)
+        self.assertEqual(patched.json()["error"], "results_locked")
+        entry.refresh_from_db()
+        self.assertEqual(entry.points, 10)
+
+        deleted = self.client.delete(
+            f"/api/scores/entries/{entry.id}",
+            HTTP_AUTHORIZATION=f"Bearer {admin_token}",
+        )
+        self.assertEqual(deleted.status_code, 409)
+        self.assertEqual(deleted.json()["error"], "results_locked")
+        self.assertTrue(ScoreEntry.objects.filter(id=entry.id).exists())
+
+    def test_ended_scoreboard_summarizes_final_phase_results(self):
+        self.phase.is_current = False
+        self.phase.save(update_fields=["is_current"])
+        final = ProgramPhase.objects.create(key="final", label="Final", order=2)
+        ended = ProgramPhase.objects.create(key="ended", label="Ended", order=3, is_current=True)
+        final_event = SubEvent.objects.create(
+            phase=final, name="Final Station Run",
+            type=SubEvent.TYPE_STATION_RUN, uses_stations=True, order=1,
+        )
+        PhaseRoster.objects.create(
+            phase=final, team=self.team1,
+            origin=PhaseRoster.ORIGIN_QUALIFIED, qualified_from_phase=self.phase,
+        )
+        PhaseRoster.objects.create(
+            phase=final, team=self.team2,
+            origin=PhaseRoster.ORIGIN_QUALIFIED, qualified_from_phase=self.phase,
+        )
+        ScoreEntry.objects.create(
+            phase=final, sub_event=final_event, team=self.team1,
+            kind=ScoreEntry.KIND_STATION, points=42, created_by=self.admin,
+        )
+        ScoreEntry.objects.create(
+            phase=final, sub_event=final_event, team=self.team2,
+            kind=ScoreEntry.KIND_STATION, points=30, created_by=self.admin,
+        )
+
+        resp = self._scoreboard(self.admin, phase_key=ended.key)
+        self.assertEqual(resp.status_code, 200)
+        board = resp.json()
+        self.assertEqual(board["phase_key"], "ended")
+        self.assertEqual(board["source_phase_key"], "final")
+        self.assertEqual(board["source_phase_label"], "Final")
+        self.assertTrue(board["results_locked"])
+        self.assertTrue(board["uses_phase_roster"])
+        self.assertIsNone(board["advancement"]["next_phase_key"])
+
+        codes = [row["team_code"] for row in board["leaderboard"]]
+        self.assertEqual(codes, [self.team1.code, self.team2.code])
+        self.assertNotIn(self.team_unrostered.code, codes)
+        totals = {row["team_code"]: row["total_points"] for row in board["leaderboard"]}
+        self.assertEqual(totals, {self.team1.code: 42, self.team2.code: 30})
+        self.assertEqual(len(board["score_entries"]), 2)
+        self.assertEqual(board["sub_events"][0]["name"], "Final Station Run")
 
     def test_invalid_kind_rejected(self):
         resp = self._create_entry(self.admin, self.team1.code, 10, kind="station")

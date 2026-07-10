@@ -14,6 +14,11 @@ from api.models import (
     Account, Team, ProgramPhase, SubEvent, PhaseRoster,
     ScoreEntry, AdvancementRule, TeamMembership,
 )
+from api.services.result_lock_service import (
+    ensure_results_unlocked,
+    results_are_locked,
+    score_source_phase_for,
+)
 
 
 def _get_phase_roster(phase: ProgramPhase):
@@ -75,18 +80,19 @@ def _build_team_meta_map(team_ids: list[int]) -> dict[int, dict]:
 def get_phase_scoreboard(phase_key: str) -> dict:
     """Return roster, leaderboard, and event breakdown for a phase."""
     phase = ProgramPhase.objects.get(key=phase_key)
-    roster_teams, team_ids, roster_is_strict = _team_scope_for_phase(phase)
+    source_phase = score_source_phase_for(phase)
+    roster_teams, team_ids, roster_is_strict = _team_scope_for_phase(source_phase)
     team_meta = _build_team_meta_map(team_ids)
 
     # Get all sub-events for this phase
-    sub_events = SubEvent.objects.filter(phase=phase).order_by("order")
+    sub_events = SubEvent.objects.filter(phase=source_phase).order_by("order")
     next_phase = ProgramPhase.objects.filter(order__gt=phase.order).order_by("order").first()
     advancement_rule = AdvancementRule.objects.select_related(
         "to_phase", "published_by",
     ).filter(from_phase=phase).first()
 
     scores = ScoreEntry.objects.filter(
-        phase=phase,
+        phase=source_phase,
         team_id__in=team_ids,
     ).values("team_id", "team__code", "team__name").annotate(
         total=Sum("points"),
@@ -110,7 +116,7 @@ def get_phase_scoreboard(phase_key: str) -> dict:
     event_breakdown = {}
     for se in sub_events:
         event_scores = ScoreEntry.objects.filter(
-            phase=phase, sub_event=se,
+            phase=source_phase, sub_event=se,
             team_id__in=team_ids,
         ).values("team__code").annotate(total=Sum("points")).order_by("-total", "team__code")
         event_breakdown[se.name] = [
@@ -119,7 +125,7 @@ def get_phase_scoreboard(phase_key: str) -> dict:
         ]
 
     entries = ScoreEntry.objects.filter(
-        phase=phase,
+        phase=source_phase,
         team_id__in=team_ids,
     ).select_related(
         "team", "sub_event", "station_session__station", "created_by",
@@ -137,10 +143,25 @@ def get_phase_scoreboard(phase_key: str) -> dict:
     return {
         "phase_key": phase.key,
         "phase_label": phase.label,
+        "source_phase_key": source_phase.key,
+        "source_phase_label": source_phase.label,
+        "results_locked": results_are_locked(),
         "roster_teams": detailed_roster,
         "roster_count": len(detailed_roster),
         "leaderboard": leaderboard,
         "event_breakdown": event_breakdown,
+        "sub_events": [
+            {
+                "id": se.id,
+                "phase_key": se.phase.key,
+                "name": se.name,
+                "type": se.type,
+                "uses_stations": se.uses_stations,
+                "note": se.note,
+                "order": se.order,
+            }
+            for se in sub_events
+        ],
         "uses_phase_roster": roster_is_strict,
         "score_entries": [
             {
@@ -184,6 +205,7 @@ def create_score_entry(
 ) -> ScoreEntry:
     """Create a manual/bonus/penalty score entry."""
     phase = ProgramPhase.objects.get(key=phase_key)
+    ensure_results_unlocked()
     sub_event = SubEvent.objects.get(id=event_id, phase=phase)
     team = Team.objects.get(code=team_code)
 
@@ -219,6 +241,7 @@ def _normalize_points(kind: str, points: int) -> int:
 def update_score_entry(entry_id: int, points: int | None = None, note: str | None = None) -> ScoreEntry:
     """Update a score entry."""
     entry = ScoreEntry.objects.get(id=entry_id)
+    ensure_results_unlocked()
     if points is not None:
         entry.points = _normalize_points(entry.kind, points)
     if note is not None:
@@ -229,7 +252,9 @@ def update_score_entry(entry_id: int, points: int | None = None, note: str | Non
 
 def delete_score_entry(entry_id: int) -> None:
     """Delete a score entry."""
-    ScoreEntry.objects.filter(id=entry_id).delete()
+    entry = ScoreEntry.objects.get(id=entry_id)
+    ensure_results_unlocked()
+    entry.delete()
 
 
 def get_advancement_rule(from_phase_key: str, to_phase_key: str) -> Optional[AdvancementRule]:
@@ -247,6 +272,7 @@ def set_advancement_rule(
     slots: int = 0,
 ) -> AdvancementRule:
     """Create or update an advancement rule."""
+    ensure_results_unlocked()
     if mode not in (AdvancementRule.MODE_TOP_N, AdvancementRule.MODE_MANUAL):
         raise ValueError("invalid_mode")
     from_phase = ProgramPhase.objects.get(key=from_phase_key)
@@ -269,6 +295,7 @@ def publish_advancement(
     Publish advancement: promote top N teams from from_phase to to_phase roster.
     Returns summary of promoted teams.
     """
+    ensure_results_unlocked()
     from_phase = ProgramPhase.objects.get(key=from_phase_key)
     rule = AdvancementRule.objects.filter(from_phase=from_phase).first()
     if not rule:
@@ -293,15 +320,15 @@ def publish_advancement(
         key=lambda item: (-item["total"], item["team_code"]),
     )
 
-    if rule.mode == AdvancementRule.MODE_MANUAL:
-        requested_codes = []
-        seen_codes = set()
-        for code in manual_team_codes or []:
-            normalized = str(code or "").strip()
-            if normalized and normalized not in seen_codes:
-                requested_codes.append(normalized)
-                seen_codes.add(normalized)
+    requested_codes = []
+    seen_codes = set()
+    for code in manual_team_codes or []:
+        normalized = str(code or "").strip()
+        if normalized and normalized not in seen_codes:
+            requested_codes.append(normalized)
+            seen_codes.add(normalized)
 
+    if rule.mode == AdvancementRule.MODE_MANUAL or requested_codes:
         if not requested_codes:
             raise ValueError("manual_team_codes_required")
 

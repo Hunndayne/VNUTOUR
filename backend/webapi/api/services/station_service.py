@@ -13,6 +13,7 @@ from api.models import (
     Account, Team, Station, StationSession, SubEvent,
     ProgramPhase, ScoreEntry, PhaseRoster,
 )
+from api.services.result_lock_service import results_are_locked
 
 
 def _resolve_team_from_scan(raw_code: str) -> Team | None:
@@ -140,6 +141,9 @@ def enter_station(
     except (ProgramPhase.DoesNotExist, SubEvent.DoesNotExist):
         return None, "event_not_found"
 
+    if results_are_locked():
+        return None, "results_locked"
+
     if PhaseRoster.objects.filter(phase=phase).exists() and not PhaseRoster.objects.filter(
         phase=phase,
         team=team,
@@ -188,6 +192,9 @@ def exit_station(
     if not session:
         return None, "session_not_found"
 
+    if results_are_locked():
+        return None, "results_locked"
+
     now = datetime.now(timezone.utc)
     session.status = StationSession.STATUS_CLOSED
     session.exited_at = now
@@ -222,6 +229,9 @@ def set_session_score(
     ).filter(id=session_id).first()
     if not session:
         return None, "session_not_found"
+
+    if results_are_locked():
+        return None, "results_locked"
 
     try:
         points = int(score)

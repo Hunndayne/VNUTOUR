@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { apiRequest, logoutAndRedirect } from './api.js'
+import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
 
 function renderInlineMarkdown(text, keyPrefix = 'md') {
@@ -227,13 +227,8 @@ function AttachmentBox({ attachment, files, onChange }) {
         className="hidden"
         multiple={Number(attachment.maxFiles) > 1}
         onChange={(event) => {
-          const selectedFiles = Array.from(event.target.files || []).map((file) => ({
-            name: file.name,
-            size: file.size,
-            type: file.type,
-            lastModified: file.lastModified,
-          }))
-          onChange(selectedFiles)
+          onChange(Array.from(event.target.files || []))
+          event.target.value = ''
         }}
       />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -244,7 +239,7 @@ function AttachmentBox({ attachment, files, onChange }) {
           <div>
             <p className="font-display text-lg font-semibold text-ink">Chon tep minh chung</p>
             <p className="mt-1 text-sm leading-6 text-ink/55">
-              Toi da {attachment.maxFiles || 1} file. Cho phep: {attachment.allowedTypes || 'Chua cau hinh'}.
+              Toi da {attachment.maxFiles || 1} file, moi file toi da {attachment.maxSizeMb || 20} MB. Cho phep: {attachment.allowedTypes || 'Moi dinh dang'}.
             </p>
           </div>
         </div>
@@ -329,6 +324,9 @@ export default function FormResponses() {
   const activeFormFields = submissionConfig.form?.enabled ? submissionConfig.form.fields || [] : []
   const activeQuizItems = submissionConfig.quiz?.enabled ? submissionConfig.quiz.items || [] : []
   const attachmentConfig = submissionConfig.attachment?.enabled ? submissionConfig.attachment : null
+  const closure = selectedForm?.closure || null
+  const formClosed = Boolean(closure?.closed)
+  const mySubmission = selectedForm?.my_submission || null
 
   useEffect(() => {
     setAnswers({})
@@ -356,6 +354,34 @@ export default function FormResponses() {
       return
     }
 
+    if (attachmentConfig && attachments.length > 0) {
+      const maxFiles = Math.max(1, Number(attachmentConfig.maxFiles) || 1)
+      const maxSizeMb = Math.max(1, Number(attachmentConfig.maxSizeMb) || 20)
+      const allowed = String(attachmentConfig.allowedTypes || '')
+        .split(',')
+        .map((token) => token.trim().toLowerCase().replace(/^\./, ''))
+        .filter(Boolean)
+      if (attachments.length > maxFiles) {
+        setSubmitState('error')
+        setSubmitMessage(`Chỉ được nộp tối đa ${maxFiles} file.`)
+        return
+      }
+      const badType = allowed.length > 0 && attachments.some((file) => {
+        const extension = (file.name.split('.').pop() || '').toLowerCase()
+        return !allowed.includes(extension)
+      })
+      if (badType) {
+        setSubmitState('error')
+        setSubmitMessage(`File không đúng định dạng cho phép (${attachmentConfig.allowedTypes}).`)
+        return
+      }
+      if (attachments.some((file) => file.size > maxSizeMb * 1024 * 1024)) {
+        setSubmitState('error')
+        setSubmitMessage(`Mỗi file tối đa ${maxSizeMb} MB.`)
+        return
+      }
+    }
+
     const responsePayload = {
       form: activeFormFields.map((field, index) => ({
         id: field.id || `field-${index}`,
@@ -372,15 +398,36 @@ export default function FormResponses() {
     try {
       setSubmitState('submitting')
       setSubmitMessage('')
+
+      let body
+      if (attachmentConfig && attachments.length > 0) {
+        body = new FormData()
+        body.append('response_payload', JSON.stringify(responsePayload))
+        attachments.forEach((file) => body.append('files', file))
+      } else {
+        body = {
+          response_payload: responsePayload,
+          attachment_payload: { files: [] },
+        }
+      }
+
       await apiRequest(`/my-team/forms/${selectedId}/submit`, {
         method: 'POST',
-        body: {
-          response_payload: responsePayload,
-          attachment_payload: { files: attachments },
-        },
+        body,
       })
       setSubmitState('success')
       setSubmitMessage('Đã gửi bài nộp thành công.')
+      setForms((current) => current.map((item) => {
+        if (String(item.station_id) !== String(selectedId)) return item
+        const wasSubmitted = Boolean(item.my_submission)
+        return {
+          ...item,
+          my_submission: { status: 'submitted', submitted_at: new Date().toISOString() },
+          closure: item.closure
+            ? { ...item.closure, submitted_count: (item.closure.submitted_count || 0) + (wasSubmitted ? 0 : 1) }
+            : item.closure,
+        }
+      }))
     } catch (submitError) {
       if (submitError?.status === 401) {
         logoutAndRedirect('/')
@@ -388,11 +435,21 @@ export default function FormResponses() {
       }
       setSubmitState('error')
       const code = submitError?.data?.error || submitError?.message
+      const closedReasonMap = {
+        manual: 'Biểu mẫu đã được ban tổ chức đóng.',
+        limit_reached: 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.',
+        correct_answer: 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.',
+      }
       const messageMap = {
         team_not_approved: 'Đội của bạn chưa được duyệt nên chưa thể gửi bài.',
         team_not_in_phase: 'Đội của bạn không thuộc phase của biểu mẫu này.',
         form_not_found: 'Biểu mẫu này không còn khả dụng.',
         event_not_found: 'Biểu mẫu không thuộc event đang mở.',
+        form_closed: closedReasonMap[submitError?.data?.reason] || 'Biểu mẫu đã đóng, không nhận bài nộp mới.',
+        too_many_files: 'Số lượng file vượt quá giới hạn cho phép.',
+        file_type_not_allowed: 'File không đúng định dạng cho phép.',
+        file_too_large: 'File vượt quá dung lượng cho phép.',
+        attachment_not_allowed: 'Biểu mẫu này không nhận file đính kèm.',
       }
       setSubmitMessage(messageMap[code] || 'Không gửi được bài nộp. Vui lòng thử lại.')
     }
@@ -452,6 +509,30 @@ export default function FormResponses() {
                 </Card>
               </div>
             </Card>
+
+            {formClosed || mySubmission ? (
+              <Card radius={32} className={`border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
+                  {formClosed ? (
+                    <span className="font-semibold text-clay">
+                      {closure?.reason === 'limit_reached'
+                        ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
+                        : closure?.reason === 'correct_answer'
+                          ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
+                          : 'Biểu mẫu đã được ban tổ chức đóng.'}
+                    </span>
+                  ) : null}
+                  {mySubmission?.submitted_at ? (
+                    <span>Đội của bạn đã nộp lúc {formatDateTime(mySubmission.submitted_at)}.</span>
+                  ) : null}
+                  {closure?.max_submissions ? (
+                    <span className="font-mono text-xs text-ink/50">
+                      {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} đội đã nộp
+                    </span>
+                  ) : null}
+                </div>
+              </Card>
+            ) : null}
 
             {submissionConfig.brief ? (
               <Card radius={32} className="border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 18px 54px rgba(84,72,49,0.08)' }}>
@@ -516,10 +597,10 @@ export default function FormResponses() {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  disabled={submitState === 'submitting'}
+                  disabled={submitState === 'submitting' || formClosed}
                   className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
                 >
-                  {submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
+                  {formClosed ? 'Da dong' : submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
                 </button>
               </div>
               {submitMessage ? (

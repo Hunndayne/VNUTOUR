@@ -113,6 +113,16 @@ class StationSessionApiTests(TestCase):
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json()["error"], "session_already_active")
 
+    def test_enter_blocked_when_results_locked(self):
+        self.phase.is_current = False
+        self.phase.save(update_fields=["is_current"])
+        ProgramPhase.objects.create(key="ended", label="Ended", order=2, is_current=True)
+
+        resp = self._enter(self.collab, self.team1.code, self.station1.id)
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"], "results_locked")
+        self.assertFalse(StationSession.objects.filter(station=self.station1, team=self.team1).exists())
+
     def test_exit_success_creates_score_entry(self):
         self._enter(self.collab, self.team1.code, self.station1.id)
         resp = self._exit(self.collab, self.team1.code, self.station1.id, score=10)
@@ -127,6 +137,19 @@ class StationSessionApiTests(TestCase):
         resp = self._exit(self.collab, self.team1.code, self.station1.id)
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["error"], "session_not_found")
+
+    def test_exit_blocked_when_results_locked(self):
+        self._enter(self.collab, self.team1.code, self.station1.id)
+        self.phase.is_current = False
+        self.phase.save(update_fields=["is_current"])
+        ProgramPhase.objects.create(key="ended", label="Ended", order=2, is_current=True)
+
+        resp = self._exit(self.collab, self.team1.code, self.station1.id, score=10)
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"], "results_locked")
+        session = StationSession.objects.get(station=self.station1, team=self.team1)
+        self.assertEqual(session.status, StationSession.STATUS_ACTIVE)
+        self.assertFalse(ScoreEntry.objects.filter(station_session=session).exists())
 
     def test_participant_cannot_enter(self):
         resp = self._enter(self.participant, self.team1.code, self.station1.id)

@@ -41,7 +41,7 @@ def station_session_score_view(request: HttpRequest, session_id: int):
 
     updated, err = set_session_score(session_id, acc, data.get("score"), data.get("note"))
     if err:
-        status = 400 if err == "invalid_score" else 404
+        status = 409 if err == "results_locked" else (400 if err == "invalid_score" else 404)
         return JsonResponse({"error": err}, status=status)
 
     return JsonResponse({
@@ -207,6 +207,7 @@ def station_enter_view(request: HttpRequest):
             "station_full": 409, "session_already_active": 409,
             "event_not_found": 404, "station_not_in_event": 400,
             "team_not_in_phase": 403,
+            "results_locked": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
@@ -247,7 +248,11 @@ def station_exit_view(request: HttpRequest):
         note=data.get("note"),
     )
     if err:
-        status_map = {"team_not_found": 404, "session_not_found": 404}
+        status_map = {
+            "team_not_found": 404,
+            "session_not_found": 404,
+            "results_locked": 409,
+        }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
     return JsonResponse({
