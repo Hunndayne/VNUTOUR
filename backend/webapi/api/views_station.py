@@ -2,15 +2,18 @@
 Station views — config CRUD + session enter/exit (§9.5, §9.7).
 """
 
+from django.db.models import F
 from django.http import JsonResponse, HttpRequest
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, Station, SubEvent, StationSession, StationAssignment
+from api.models import Account, Station, SubEvent, StationSession, StationAssignment, StationSubmission
 from api.services.station_service import (
     create_station, update_station, delete_station,
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
     enter_station, exit_station, list_recent_sessions, set_session_score,
 )
+from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
@@ -49,6 +52,101 @@ def station_session_score_view(request: HttpRequest, session_id: int):
         "team_code": updated.team.code,
         "score": updated.score,
     })
+
+
+# =====================================================================
+# Station submissions (view + grade)
+# =====================================================================
+
+def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
+    """Chuyển StationSubmission thành dict JSON; presign=True để sinh URL R2 tạm."""
+    files = []
+    attachment = sub.attachment_payload or {}
+    for f in (attachment.get("files") or []):
+        entry = dict(f)
+        if presign and entry.get("storage") == STORAGE_R2 and not entry.get("url"):
+            entry["url"] = presigned_url(entry.get("key"))
+        files.append(entry)
+
+    return {
+        "id": sub.id,
+        "team_code": sub.team.code,
+        "team_name": sub.team.name,
+        "status": sub.status,
+        "is_correct": sub.is_correct,
+        "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+        "graded_at": sub.graded_at.isoformat() if sub.graded_at else None,
+        "graded_by": sub.graded_by.username if sub.graded_by else None,
+        "response_payload": sub.response_payload,
+        "files": files,
+    }
+
+
+def station_submissions_view(request: HttpRequest, station_id: int):
+    """GET: danh sách bài nộp của một trạm (admin, hoặc collab được phân công trạm đó)."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    station = Station.objects.filter(id=station_id).first()
+    if not station:
+        return JsonResponse({"error": "station_not_found"}, status=404)
+
+    if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
+        collab=acc, station=station, active=True,
+    ).exists():
+        return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    submissions = StationSubmission.objects.select_related("team", "graded_by").filter(
+        station=station,
+    ).order_by(F("submitted_at").desc(nulls_last=True))
+
+    return JsonResponse({
+        "station_id": station.id,
+        "station_name": station.name,
+        "submissions": [_serialize_submission(sub) for sub in submissions],
+    })
+
+
+@csrf_exempt
+def submission_grade_view(request: HttpRequest, submission_id: int):
+    """PATCH: chấm bài nộp (admin, hoặc collab được phân công trạm của bài nộp đó)."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    submission = StationSubmission.objects.select_related("team", "station", "graded_by").filter(
+        id=submission_id,
+    ).first()
+    if not submission:
+        return JsonResponse({"error": "submission_not_found"}, status=404)
+
+    if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
+        collab=acc, station=submission.station, active=True,
+    ).exists():
+        return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    if "is_correct" in data and not isinstance(data.get("is_correct"), (bool, type(None))):
+        return JsonResponse({"error": "invalid_is_correct"}, status=400)
+
+    submission.status = StationSubmission.STATUS_GRADED
+    submission.graded_at = timezone.now()
+    submission.graded_by = acc
+    if "is_correct" in data:
+        submission.is_correct = data.get("is_correct")
+    submission.save()
+
+    return JsonResponse(_serialize_submission(submission, presign=False))
 
 
 # =====================================================================

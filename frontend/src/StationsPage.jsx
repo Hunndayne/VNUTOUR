@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { Icon, CARD, Badge } from './ui.jsx'
-import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import { apiRequest, formatDateTime, logoutAndRedirect, API_BASE_URL } from './api.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 
@@ -587,6 +587,8 @@ function explainApiError(error) {
     method_not_allowed: 'Thao tác này chưa được API hỗ trợ.',
     station_not_found: 'Không tìm thấy trạm cần thao tác.',
     station_not_in_event: 'Trạm này không thuộc event đang chọn.',
+    not_assigned_to_station: 'Bạn chưa được phân công phụ trách trạm này.',
+    submission_not_found: 'Không tìm thấy bài nộp cần thao tác.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu trạm.'
 }
@@ -2209,6 +2211,229 @@ function StationDrawer({
   )
 }
 
+function resolveAttachmentUrl(url) {
+  if (!url) return null
+  return url.startsWith('/') ? `${API_BASE_URL}${url}` : url
+}
+
+function StationSubmissionRow({ submission, onGrade, busy }) {
+  const files = submission.files || []
+  const formAnswers = submission.response_payload?.form || []
+  const quizAnswers = submission.response_payload?.quiz || []
+  const statusMeta = submission.status === 'graded'
+    ? { label: 'Đã chấm', cls: 'bg-trail/12 text-trail' }
+    : { label: 'Đã nộp', cls: 'bg-gold/15 text-[#9A6B12]' }
+
+  return (
+    <div className={`${CARD} px-4 py-3.5`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-ink">{submission.team_name}</p>
+          <p className="font-mono text-xs text-ink/40">{submission.team_code}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge {...statusMeta} />
+          {submission.is_correct !== null && submission.is_correct !== undefined && (
+            <Badge
+              label={submission.is_correct ? 'Đúng' : 'Sai'}
+              cls={submission.is_correct ? 'bg-trail/12 text-trail' : 'bg-clay/12 text-clay'}
+            />
+          )}
+        </div>
+      </div>
+
+      <p className="mt-1.5 text-xs text-ink/45">
+        Nộp lúc: {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
+        {submission.graded_by ? ` · Đã chấm bởi ${submission.graded_by}` : ''}
+      </p>
+
+      {formAnswers.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Câu trả lời</p>
+          {formAnswers.map((field, index) => (
+            <div key={field.id || index} className="rounded-lg border border-stone bg-paper px-3 py-2">
+              <p className="text-xs font-medium text-ink/55">{field.label || `Trường ${index + 1}`}</p>
+              <p className="mt-0.5 text-sm text-ink">{field.value || '—'}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {quizAnswers.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Trắc nghiệm</p>
+          {quizAnswers.map((item, index) => (
+            <div key={item.id || index} className="rounded-lg border border-stone bg-paper px-3 py-2">
+              <p className="text-xs font-medium text-ink/55">{item.question || `Câu ${index + 1}`}</p>
+              <p className="mt-0.5 text-sm text-ink">
+                {item.selectedOption === null || item.selectedOption === undefined
+                  ? 'Chưa chọn đáp án'
+                  : `Đã chọn: đáp án ${Number(item.selectedOption) + 1}`}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {files.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Tệp đính kèm</p>
+          <div className="flex flex-wrap gap-1.5">
+            {files.map((file, index) => {
+              const url = resolveAttachmentUrl(file.url)
+              return url ? (
+                <a
+                  key={file.key || index}
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border border-stone bg-paper px-2.5 py-1.5 text-xs font-medium text-ink/70 transition hover:bg-white"
+                >
+                  <Icon name="paperclip" className="h-3.5 w-3.5" />
+                  {file.name}
+                </a>
+              ) : (
+                <span
+                  key={file.key || index}
+                  className="inline-flex items-center gap-1 rounded-lg border border-dashed border-stone px-2.5 py-1.5 text-xs text-ink/40"
+                >
+                  <Icon name="paperclip" className="h-3.5 w-3.5" />
+                  {file.name} (chưa có link)
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => onGrade(submission.id, true)}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-trail/30 bg-trail/10 px-3 py-1.5 text-xs font-semibold text-trail transition hover:bg-trail/15 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Icon name="checkPlain" className="h-3.5 w-3.5" />
+          Đánh dấu Đúng
+        </button>
+        <button
+          type="button"
+          onClick={() => onGrade(submission.id, false)}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-clay/30 bg-clay/10 px-3 py-1.5 text-xs font-semibold text-clay transition hover:bg-clay/15 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Icon name="xmark" className="h-3.5 w-3.5" />
+          Đánh dấu Sai
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function StationSubmissionsDrawer({ stationId, stationName, onClose }) {
+  const [submissions, setSubmissions] = useState([])
+  const [stationLabel, setStationLabel] = useState(stationName || '')
+  const [loading, setLoading] = useState(true)
+  const [apiError, setApiError] = useState('')
+  const [busyId, setBusyId] = useState('')
+
+  const load = useCallback(async () => {
+    if (!stationId) return
+    try {
+      setLoading(true)
+      setApiError('')
+      const payload = await apiRequest(`/stations/${stationId}/submissions`)
+      setSubmissions(payload.submissions || [])
+      setStationLabel(payload.station_name || stationName || '')
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setLoading(false)
+    }
+  }, [stationId, stationName])
+
+  useEffect(() => {
+    if (stationId) void load()
+  }, [stationId, load])
+
+  if (!stationId) return null
+
+  const handleGrade = async (submissionId, isCorrect) => {
+    try {
+      setBusyId(submissionId)
+      setApiError('')
+      const updated = await apiRequest(`/submissions/${submissionId}/grade`, {
+        method: 'PATCH',
+        body: { is_correct: isCorrect },
+      })
+      setSubmissions(current => current.map(item => (item.id === updated.id ? updated : item)))
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[560px] flex-col border-l border-stone bg-paper shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
+          <div className="min-w-0">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Bài nộp trạm</p>
+            <h2 className="mt-1 truncate font-display text-xl font-bold text-ink">{stationLabel}</h2>
+            <p className="mt-1 text-xs text-ink/45">{submissions.length} bài nộp</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          {apiError && (
+            <div className="mb-3 rounded-xl border border-clay/20 bg-clay/[0.05] px-4 py-3 text-sm text-clay">
+              {apiError}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="rounded-xl border border-dashed border-stone bg-white px-4 py-10 text-center text-sm text-ink/40">
+              Đang tải bài nộp...
+            </div>
+          ) : submissions.length > 0 ? (
+            <div className="space-y-3">
+              {submissions.map(submission => (
+                <StationSubmissionRow
+                  key={submission.id}
+                  submission={submission}
+                  onGrade={handleGrade}
+                  busy={busyId === submission.id}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-stone bg-white px-4 py-10 text-center text-sm text-ink/40">
+              Trạm này chưa có đội nào nộp bài.
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function StationsPage({
   phase = 'registration',
   phaseOptions = DEFAULT_PHASE_OPTIONS,
@@ -2227,6 +2452,7 @@ function StationsPage({
   const [stationsByPhaseEvent, setStationsByPhaseEvent] = useState(() => loadStationsByPhaseEvent(phaseKeys))
   const [selectedEventId, setSelectedEventId] = useState('')
   const [selectedId, setSelectedId] = useState(null)
+  const [submissionsStationId, setSubmissionsStationId] = useState(null)
   const [adding, setAdding] = useState(false)
   const [listLoading, setListLoading] = useState(false)
   const [busyKey, setBusyKey] = useState('')
@@ -2613,6 +2839,19 @@ function StationsPage({
                         {station.submission.brief && (
                           <p className="max-w-[260px] truncate text-xs text-ink/40">{stripMarkdown(station.submission.brief)}</p>
                         )}
+                        {hasSubmissionConfig(station.submission) && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setSubmissionsStationId(station.id)
+                            }}
+                            className="mt-1 inline-flex items-center gap-1 rounded-md border border-stone bg-white px-2 py-1 text-[11px] font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
+                          >
+                            <Icon name="doc" className="h-3 w-3" />
+                            Bài nộp
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-center">
@@ -2666,6 +2905,12 @@ function StationsPage({
         onToggleActive={toggleActive}
         onSave={saveStation}
         onDelete={deleteStation}
+      />
+
+      <StationSubmissionsDrawer
+        stationId={submissionsStationId}
+        stationName={stations.find(station => station.id === submissionsStationId)?.name}
+        onClose={() => setSubmissionsStationId(null)}
       />
     </div>
   )

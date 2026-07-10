@@ -85,6 +85,22 @@ def _store_local(key: str, uploaded) -> str:
     return f"{settings.MEDIA_URL.rstrip('/')}/{key}"
 
 
+def presigned_url(key: str, expires: int = 3600) -> str | None:
+    """Generate a temporary signed GET URL for a private R2 object, or None on failure."""
+    client = _r2_client()
+    if client is None:
+        return None
+    try:
+        return client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.R2_BUCKET, "Key": key},
+            ExpiresIn=expires,
+        )
+    except Exception:
+        logger.exception("Failed to generate presigned URL for %s", key)
+        return None
+
+
 def save_submission_files(station, team, uploaded_files, attachment_config: dict) -> list[dict]:
     """Persist uploaded files and return their attachment metadata entries."""
     validate_files(uploaded_files, attachment_config)
