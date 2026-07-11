@@ -11,7 +11,7 @@ from django.db import IntegrityError, transaction
 
 from api.models import (
     Account, Team, Station, StationSession, SubEvent,
-    ProgramPhase, ScoreEntry, PhaseRoster,
+    ProgramPhase, ScoreEntry, PhaseRoster, StationSubmission,
 )
 from api.services.result_lock_service import results_are_locked
 
@@ -260,6 +260,66 @@ def set_session_score(
         )
 
     return session, None
+
+
+def set_submission_score(
+    submission: StationSubmission,
+    operator: Account,
+    score,
+    note: str | None = None,
+) -> Optional[str]:
+    """Set/cập nhật điểm cho một bài nộp và đồng bộ ScoreEntry tương ứng.
+
+    Bài nộp gắn với phiên trạm dùng chung ScoreEntry của phiên đó (tránh cộng đôi
+    với điểm coop chấm lúc checkout); bài nộp tự do khóa entry theo submission.
+    """
+    if results_are_locked():
+        return "results_locked"
+
+    try:
+        points = int(score)
+    except (TypeError, ValueError):
+        return "invalid_score"
+
+    submission.score = points
+    submission.save(update_fields=["score", "updated_at"])
+
+    session = submission.station_session
+    entry = None
+    if session:
+        entry = ScoreEntry.objects.filter(
+            station_session=session, kind=ScoreEntry.KIND_STATION,
+        ).first()
+    if entry is None:
+        entry = ScoreEntry.objects.filter(
+            submission=submission, kind=ScoreEntry.KIND_STATION,
+        ).first()
+
+    default_note = f"Bai nop tram {submission.station.code}"
+    if entry:
+        entry.points = points
+        entry.submission = submission
+        if note is not None:
+            entry.note = note
+        entry.save(update_fields=["points", "submission", "note", "updated_at"])
+    else:
+        ScoreEntry.objects.create(
+            phase=submission.station.sub_event.phase,
+            sub_event=submission.station.sub_event,
+            station_session=session,
+            submission=submission,
+            team=submission.team,
+            kind=ScoreEntry.KIND_STATION,
+            points=points,
+            note=note or default_note,
+            created_by=operator,
+        )
+
+    if session:
+        session.score = points
+        session.save(update_fields=["score", "updated_at"])
+
+    return None
 
 
 def list_recent_sessions(event_id: int | None = None, limit: int = 50) -> list[dict]:

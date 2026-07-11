@@ -117,12 +117,14 @@ function createFormField(field = {}) {
 function createQuizItem(item = {}) {
   const nextOptions = Array.isArray(item.options) ? [...item.options] : []
   while (nextOptions.length < 4) nextOptions.push('')
+  const rawPoints = Number(item.points)
 
   return {
     id: item.id ?? makeLocalId('quiz'),
     question: item.question ?? '',
     options: nextOptions.slice(0, 4),
     correctOption: Number.isInteger(item.correctOption) ? item.correctOption : 0,
+    points: Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 1,
   }
 }
 
@@ -160,6 +162,7 @@ function createSubmissionConfig(submission = {}) {
     },
     quiz: {
       enabled: submission.quiz?.enabled ?? false,
+      autoScore: submission.quiz?.autoScore ?? false,
       items: quizItems,
     },
     attachment: createAttachmentConfig(submission.attachment),
@@ -589,6 +592,8 @@ function explainApiError(error) {
     station_not_in_event: 'Trạm này không thuộc event đang chọn.',
     not_assigned_to_station: 'Bạn chưa được phân công phụ trách trạm này.',
     submission_not_found: 'Không tìm thấy bài nộp cần thao tác.',
+    invalid_score: 'Điểm không hợp lệ.',
+    results_locked: 'Kết quả đã khóa (chương trình kết thúc), không thể sửa điểm.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu trạm.'
 }
@@ -1889,9 +1894,38 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
                     </div>
                   ))}
                 </div>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <label className="font-mono text-[10px] uppercase tracking-widest text-ink/40">
+                    Điểm khi đúng câu này
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={item.points}
+                    onChange={event => updateQuizItem(item.id, 'points', Math.max(0, Number(event.target.value) || 0))}
+                    className="w-20 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+                  />
+                </div>
               </div>
             ))}
           </div>
+
+          <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
+            <input
+              type="checkbox"
+              checked={form.submission.quiz.autoScore}
+              onChange={event => updateSubmission(submission => ({
+                ...submission,
+                quiz: { ...submission.quiz, autoScore: event.target.checked },
+              }))}
+              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            Tự cộng điểm quiz vào điểm đội trong phase (leaderboard)
+          </label>
+          <p className="mt-1 text-xs leading-5 text-ink/45">
+            Tắt: điểm quiz chỉ hiển thị ở bài nộp để tham khảo khi chấm. Bật: mỗi lần đội nộp bài, tổng điểm các câu đúng tự ghi vào bảng điểm.
+          </p>
         </div>
       )}
 
@@ -2217,9 +2251,11 @@ function resolveAttachmentUrl(url) {
 }
 
 function StationSubmissionRow({ submission, onGrade, busy }) {
+  const [scoreInput, setScoreInput] = useState(submission.score ?? '')
   const files = submission.files || []
   const formAnswers = submission.response_payload?.form || []
   const quizAnswers = submission.response_payload?.quiz || []
+  const quizResult = submission.response_payload?.quiz_result || null
   const statusMeta = submission.status === 'graded'
     ? { label: 'Đã chấm', cls: 'bg-trail/12 text-trail' }
     : { label: 'Đã nộp', cls: 'bg-gold/15 text-[#9A6B12]' }
@@ -2245,7 +2281,13 @@ function StationSubmissionRow({ submission, onGrade, busy }) {
       <p className="mt-1.5 text-xs text-ink/45">
         Nộp lúc: {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
         {submission.graded_by ? ` · Đã chấm bởi ${submission.graded_by}` : ''}
+        {submission.score !== null && submission.score !== undefined ? ` · Điểm: ${submission.score}` : ''}
       </p>
+      {quizResult ? (
+        <p className="mt-1 text-xs font-medium text-[#3E7CA8]">
+          Quiz: đúng {quizResult.correct_count}/{quizResult.total} câu · {quizResult.points}/{quizResult.max_points} điểm
+        </p>
+      ) : null}
 
       {formAnswers.length > 0 && (
         <div className="mt-3 space-y-1.5">
@@ -2306,10 +2348,10 @@ function StationSubmissionRow({ submission, onGrade, busy }) {
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => onGrade(submission.id, true)}
+          onClick={() => onGrade(submission.id, { is_correct: true })}
           disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg border border-trail/30 bg-trail/10 px-3 py-1.5 text-xs font-semibold text-trail transition hover:bg-trail/15 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -2318,13 +2360,41 @@ function StationSubmissionRow({ submission, onGrade, busy }) {
         </button>
         <button
           type="button"
-          onClick={() => onGrade(submission.id, false)}
+          onClick={() => onGrade(submission.id, { is_correct: false })}
           disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg border border-clay/30 bg-clay/10 px-3 py-1.5 text-xs font-semibold text-clay transition hover:bg-clay/15 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Icon name="xmark" className="h-3.5 w-3.5" />
           Đánh dấu Sai
         </button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {quizResult ? (
+            <button
+              type="button"
+              onClick={() => setScoreInput(String(quizResult.points))}
+              disabled={busy}
+              title="Điền điểm quiz tự tính vào ô điểm"
+              className="inline-flex items-center gap-1 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs font-semibold text-[#3E7CA8] transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Lấy điểm quiz
+            </button>
+          ) : null}
+          <input
+            type="number"
+            value={scoreInput}
+            onChange={event => setScoreInput(event.target.value)}
+            placeholder="Điểm"
+            className="w-20 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          />
+          <button
+            type="button"
+            onClick={() => onGrade(submission.id, { score: Number(scoreInput) })}
+            disabled={busy || scoreInput === '' || !Number.isFinite(Number(scoreInput))}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/70 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Lưu điểm
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -2362,13 +2432,13 @@ function StationSubmissionsDrawer({ stationId, stationName, onClose }) {
 
   if (!stationId) return null
 
-  const handleGrade = async (submissionId, isCorrect) => {
+  const handleGrade = async (submissionId, body) => {
     try {
       setBusyId(submissionId)
       setApiError('')
       const updated = await apiRequest(`/submissions/${submissionId}/grade`, {
         method: 'PATCH',
-        body: { is_correct: isCorrect },
+        body,
       })
       setSubmissions(current => current.map(item => (item.id === updated.id ? updated : item)))
     } catch (error) {

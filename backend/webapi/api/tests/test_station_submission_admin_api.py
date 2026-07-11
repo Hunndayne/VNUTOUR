@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from api.models import (
     Account, Team, ProgramPhase, SubEvent, Station,
-    StationAssignment, StationSubmission,
+    StationAssignment, StationSession, StationSubmission, ScoreEntry,
 )
 from api.services.auth_service import generate_session
 
@@ -100,3 +100,66 @@ class StationSubmissionAdminApiTests(TestCase):
         resp = self._patch(self.admin, 999999, {"is_correct": True})
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["error"], "submission_not_found")
+
+    def test_grade_with_score_creates_score_entry(self):
+        resp = self._patch(self.admin, self.submission.id, {"is_correct": True, "score": 25})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["score"], 25)
+
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.score, 25)
+        entry = ScoreEntry.objects.get(submission=self.submission)
+        self.assertEqual(entry.points, 25)
+        self.assertEqual(entry.kind, ScoreEntry.KIND_STATION)
+        self.assertEqual(entry.team_id, self.team.id)
+        self.assertEqual(entry.phase_id, self.phase.id)
+
+    def test_regrade_score_updates_entry_without_duplicate(self):
+        self._patch(self.admin, self.submission.id, {"score": 10})
+        resp = self._patch(self.admin, self.submission.id, {"score": 30})
+
+        self.assertEqual(resp.status_code, 200)
+        entries = ScoreEntry.objects.filter(submission=self.submission)
+        self.assertEqual(entries.count(), 1)
+        self.assertEqual(entries.first().points, 30)
+
+    def test_grade_score_reuses_session_score_entry(self):
+        session = StationSession.objects.create(
+            phase=self.phase, sub_event=self.event,
+            station=self.station, team=self.team,
+            entered_at=timezone.now(),
+        )
+        self.submission.station_session = session
+        self.submission.save()
+        existing = ScoreEntry.objects.create(
+            phase=self.phase, sub_event=self.event,
+            station_session=session, team=self.team,
+            kind=ScoreEntry.KIND_STATION, points=5,
+        )
+
+        resp = self._patch(self.admin, self.submission.id, {"score": 40})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(ScoreEntry.objects.filter(team=self.team).count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.points, 40)
+        self.assertEqual(existing.submission_id, self.submission.id)
+        session.refresh_from_db()
+        self.assertEqual(session.score, 40)
+
+    def test_grade_invalid_score_rejected(self):
+        resp = self._patch(self.admin, self.submission.id, {"score": "abc"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"], "invalid_score")
+
+    def test_grade_score_blocked_when_results_locked(self):
+        self.phase.is_current = False
+        self.phase.save()
+        ProgramPhase.objects.create(
+            key="ended", label="Ended", order=99, is_current=True,
+        )
+
+        resp = self._patch(self.admin, self.submission.id, {"score": 15})
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"], "results_locked")

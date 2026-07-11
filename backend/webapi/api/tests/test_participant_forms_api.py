@@ -7,8 +7,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
 from api.models import (
-    Account, Participant, PhaseRoster, ProgramPhase, Station, StationSubmission,
-    SubEvent, Team, TeamMembership,
+    Account, Participant, PhaseRoster, ProgramPhase, ScoreEntry, Station,
+    StationSubmission, SubEvent, Team, TeamMembership,
 )
 from api.services.auth_service import generate_session
 
@@ -134,6 +134,72 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         self.assertEqual(response.status_code, 201)
         submission = StationSubmission.objects.get(team=self.team, station=self.station)
         self.assertIs(submission.is_correct, True)
+
+    def test_submit_stores_weighted_quiz_result(self):
+        self.station.submission_config = {
+            "quiz": {
+                "enabled": True,
+                "items": [
+                    {"id": "q1", "question": "A?", "options": ["A", "B"], "correctOption": 1, "points": 2},
+                    {"id": "q2", "question": "B?", "options": ["A", "B"], "correctOption": 0, "points": 3},
+                ],
+            },
+        }
+        self.station.save()
+
+        response = self._submit({
+            "response_payload": {
+                "quiz": [
+                    {"id": "q1", "selectedOption": 1},
+                    {"id": "q2", "selectedOption": 1},
+                ],
+                "quiz_result": {"points": 9999},
+            },
+        })
+
+        self.assertEqual(response.status_code, 201)
+        submission = StationSubmission.objects.get(team=self.team, station=self.station)
+        result = submission.response_payload["quiz_result"]
+        self.assertEqual(result["correct_count"], 1)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["points"], 2)
+        self.assertEqual(result["max_points"], 5)
+        self.assertFalse(result["all_correct"])
+        self.assertIs(submission.is_correct, False)
+        # Không tự cộng điểm khi chưa bật autoScore
+        self.assertIsNone(submission.score)
+        self.assertFalse(ScoreEntry.objects.filter(team=self.team).exists())
+
+    def test_submit_with_auto_score_writes_score_entry(self):
+        self.station.submission_config = {
+            "quiz": {
+                "enabled": True,
+                "autoScore": True,
+                "items": [
+                    {"id": "q1", "question": "A?", "options": ["A", "B"], "correctOption": 1, "points": 5},
+                ],
+            },
+        }
+        self.station.save()
+
+        response = self._submit({
+            "response_payload": {"quiz": [{"id": "q1", "selectedOption": 1}]},
+        })
+
+        self.assertEqual(response.status_code, 201)
+        submission = StationSubmission.objects.get(team=self.team, station=self.station)
+        self.assertEqual(submission.score, 5)
+        entry = ScoreEntry.objects.get(submission=submission)
+        self.assertEqual(entry.points, 5)
+        self.assertEqual(entry.kind, ScoreEntry.KIND_STATION)
+
+        # Nộp lại với đáp án sai: cùng entry được cập nhật về 0, không nhân đôi
+        self._submit({
+            "response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]},
+        })
+        entries = ScoreEntry.objects.filter(team=self.team)
+        self.assertEqual(entries.count(), 1)
+        self.assertEqual(entries.first().points, 0)
 
     def test_forms_payload_includes_closure_and_my_submission(self):
         self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]}})

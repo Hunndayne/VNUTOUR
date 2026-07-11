@@ -19,6 +19,7 @@ from api.services.registration_service import (
 )
 from api.services.program_service import get_current_sub_event
 from api.services.checkin_qr_service import team_qr_visible
+from api.services.station_service import set_submission_score
 from api.services.submission_storage_service import save_submission_files
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
@@ -160,8 +161,19 @@ def _submission_limits(config: dict | None) -> dict:
     }
 
 
-def _grade_quiz(config: dict | None, response_payload: dict) -> bool | None:
-    """Grade quiz answers against the station config; None when there is no quiz."""
+def _quiz_item_points(item: dict) -> int:
+    try:
+        return max(0, int(item.get("points")))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _grade_quiz(config: dict | None, response_payload: dict) -> dict | None:
+    """Grade quiz answers against the station config; None when there is no quiz.
+
+    Returns {correct_count, total, points, max_points, all_correct} — points sum
+    per-question weights (config item "points", default 1).
+    """
     quiz = (config or {}).get("quiz") or {}
     items = (quiz.get("items") or []) if quiz.get("enabled") else []
     if not items:
@@ -172,16 +184,31 @@ def _grade_quiz(config: dict | None, response_payload: dict) -> bool | None:
         if isinstance(answer, dict):
             answers[str(answer.get("id"))] = answer.get("selectedOption")
 
+    correct_count = 0
+    total = 0
+    points = 0
+    max_points = 0
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         correct = item.get("correctOption")
         if not isinstance(correct, int):
             continue
+        item_points = _quiz_item_points(item)
+        total += 1
+        max_points += item_points
         selected = answers.get(str(item.get("id") or f"quiz-{index}"))
-        if selected != correct:
-            return False
-    return True
+        if selected == correct:
+            correct_count += 1
+            points += item_points
+
+    return {
+        "correct_count": correct_count,
+        "total": total,
+        "points": points,
+        "max_points": max_points,
+        "all_correct": total > 0 and correct_count == total,
+    }
 
 
 def _form_closure_state(station: Station) -> dict:
@@ -842,13 +869,28 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if not submission:
         submission = StationSubmission(team=team, station=station)
 
+    quiz_result = _grade_quiz(config, response_payload)
+    if isinstance(response_payload, dict):
+        # quiz_result is server-computed only; never trust a client-sent one
+        response_payload.pop("quiz_result", None)
+        if quiz_result is not None:
+            response_payload["quiz_result"] = quiz_result
+
     submission.station_session = session
     submission.status = StationSubmission.STATUS_SUBMITTED
     submission.response_payload = response_payload
     submission.attachment_payload = attachment_payload
-    submission.is_correct = _grade_quiz(config, response_payload)
+    submission.is_correct = quiz_result["all_correct"] if quiz_result else None
     submission.submitted_at = timezone.now()
     submission.save()
+
+    if quiz_result is not None and (config.get("quiz") or {}).get("autoScore"):
+        # Optional per-form setting: push the quiz points straight to the
+        # team's phase score. Ignore lock errors — the submission itself stands.
+        set_submission_score(
+            submission, acc, quiz_result["points"],
+            note=f"Quiz tram {station.code}",
+        )
 
     return JsonResponse({
         "id": submission.id,

@@ -498,6 +498,10 @@ class ScoreEntry(models.Model):
         StationSession, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="score_entries",
     )
+    submission = models.ForeignKey(
+        "StationSubmission", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="score_entries",
+    )
     team = models.ForeignKey(
         Team, on_delete=models.CASCADE, related_name="score_entries",
     )
@@ -590,6 +594,8 @@ class StationSubmission(models.Model):
     attachment_payload = models.JSONField(null=True, blank=True)
     # Auto-graded quiz result: True/False when the form has a quiz, None otherwise
     is_correct = models.BooleanField(null=True, blank=True)
+    # Points awarded by the grader; mirrored into ScoreEntry (kind=station)
+    score = models.IntegerField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     graded_at = models.DateTimeField(null=True, blank=True)
     graded_by = models.ForeignKey(

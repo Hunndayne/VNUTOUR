@@ -12,6 +12,7 @@ from api.services.station_service import (
     create_station, update_station, delete_station,
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
     enter_station, exit_station, list_recent_sessions, set_session_score,
+    set_submission_score,
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from .views_shared import _json_body, _auth_or_401, _require_role
@@ -74,6 +75,7 @@ def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
         "team_name": sub.team.name,
         "status": sub.status,
         "is_correct": sub.is_correct,
+        "score": sub.score,
         "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
         "graded_at": sub.graded_at.isoformat() if sub.graded_at else None,
         "graded_by": sub.graded_by.username if sub.graded_by else None,
@@ -125,9 +127,9 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    submission = StationSubmission.objects.select_related("team", "station", "graded_by").filter(
-        id=submission_id,
-    ).first()
+    submission = StationSubmission.objects.select_related(
+        "team", "station__sub_event__phase", "station_session", "graded_by",
+    ).filter(id=submission_id).first()
     if not submission:
         return JsonResponse({"error": "submission_not_found"}, status=404)
 
@@ -138,6 +140,12 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
 
     if "is_correct" in data and not isinstance(data.get("is_correct"), (bool, type(None))):
         return JsonResponse({"error": "invalid_is_correct"}, status=400)
+
+    if "score" in data:
+        err = set_submission_score(submission, acc, data.get("score"), data.get("note"))
+        if err:
+            status = 409 if err == "results_locked" else 400
+            return JsonResponse({"error": err}, status=status)
 
     submission.status = StationSubmission.STATUS_GRADED
     submission.graded_at = timezone.now()
