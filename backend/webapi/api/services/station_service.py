@@ -14,6 +14,7 @@ from api.models import (
     ProgramPhase, ScoreEntry, PhaseRoster, StationSubmission,
 )
 from api.services.result_lock_service import results_are_locked
+from api.services.checkin_qr_service import get_checkin_qr_state
 
 
 def _resolve_team_from_scan(raw_code: str) -> Team | None:
@@ -141,6 +142,13 @@ def enter_station(
     except (ProgramPhase.DoesNotExist, SubEvent.DoesNotExist):
         return None, "event_not_found"
 
+    if str(team_ref or "").strip().lower().startswith("t:"):
+        qr_state = get_checkin_qr_state()
+        if not qr_state["enabled"]:
+            return None, "checkin_qr_disabled"
+        if qr_state.get("phase_key") != phase.key:
+            return None, "checkin_qr_phase_mismatch"
+
     if results_are_locked():
         return None, "results_locked"
 
@@ -153,17 +161,21 @@ def enter_station(
     if station.sub_event_id != int(event_id):
         return None, "station_not_in_event"
 
-    # Capacity gate
-    if station.capacity_mode == Station.CAPACITY_LIMITED and station.max_concurrent_teams:
-        active_count = StationSession.objects.filter(
-            station=station, status=StationSession.STATUS_ACTIVE,
-        ).count()
-        if active_count >= station.max_concurrent_teams:
-            return None, "station_full"
-
     now = datetime.now(timezone.utc)
     try:
         with transaction.atomic():
+            station = Station.objects.select_for_update().select_related(
+                "sub_event__phase",
+            ).get(id=station.id)
+            if not station.active:
+                return None, "station_inactive"
+            if station.capacity_mode == Station.CAPACITY_LIMITED and station.max_concurrent_teams:
+                active_count = StationSession.objects.filter(
+                    station=station,
+                    status=StationSession.STATUS_ACTIVE,
+                ).count()
+                if active_count >= station.max_concurrent_teams:
+                    return None, "station_full"
             session = StationSession.objects.create(
                 phase=phase, sub_event=sub_event, station=station, team=team,
                 status=StationSession.STATUS_ACTIVE, entered_at=now,
@@ -186,33 +198,52 @@ def exit_station(
     if not team:
         return None, "team_not_found"
 
-    session = StationSession.objects.filter(
-        station_id=station_id, team=team, status=StationSession.STATUS_ACTIVE,
-    ).first()
-    if not session:
-        return None, "session_not_found"
+    with transaction.atomic():
+        session = StationSession.objects.select_for_update().select_related(
+            "phase", "sub_event", "station", "team",
+        ).filter(
+            station_id=station_id,
+            team=team,
+            status=StationSession.STATUS_ACTIVE,
+        ).first()
+        if not session:
+            return None, "session_not_found"
 
-    if results_are_locked():
-        return None, "results_locked"
+        if results_are_locked():
+            return None, "results_locked"
 
-    now = datetime.now(timezone.utc)
-    session.status = StationSession.STATUS_CLOSED
-    session.exited_at = now
-    session.exited_by = operator
-    if score is not None:
-        session.score = score
-    if note is not None:
-        session.note = note
-    session.save(update_fields=["status", "exited_at", "exited_by", "score", "note", "updated_at"])
+        now = datetime.now(timezone.utc)
+        session.status = StationSession.STATUS_CLOSED
+        session.exited_at = now
+        session.exited_by = operator
+        if score is not None:
+            try:
+                session.score = int(score)
+            except (TypeError, ValueError):
+                return None, "invalid_score"
+        if note is not None:
+            session.note = note
+        session.save(update_fields=["status", "exited_at", "exited_by", "score", "note", "updated_at"])
 
-    # Auto-create score entry
-    if session.score:
-        ScoreEntry.objects.create(
-            phase=session.phase, sub_event=session.sub_event,
-            station_session=session, team=team,
-            kind=ScoreEntry.KIND_STATION, points=session.score,
-            note=f"Tram {session.station.code}", created_by=operator,
+        score_entries = ScoreEntry.objects.filter(
+            station_session=session,
+            kind=ScoreEntry.KIND_STATION,
         )
+        if session.score:
+            ScoreEntry.objects.update_or_create(
+                station_session=session,
+                kind=ScoreEntry.KIND_STATION,
+                defaults={
+                    "phase": session.phase,
+                    "sub_event": session.sub_event,
+                    "team": team,
+                    "points": session.score,
+                    "note": session.note or f"Tram {session.station.code}",
+                    "created_by": operator,
+                },
+            )
+        else:
+            score_entries.delete()
 
     return session, None
 
@@ -224,40 +255,45 @@ def set_session_score(
     note: str | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
     """Set/cập nhật điểm cho một phiên trạm và đồng bộ ScoreEntry tương ứng."""
-    session = StationSession.objects.select_related(
-        "phase", "sub_event", "team", "station",
-    ).filter(id=session_id).first()
-    if not session:
-        return None, "session_not_found"
-
-    if results_are_locked():
-        return None, "results_locked"
-
     try:
         points = int(score)
     except (TypeError, ValueError):
         return None, "invalid_score"
 
-    session.score = points
-    if note is not None:
-        session.note = note
-    session.save(update_fields=["score", "note", "updated_at"])
+    with transaction.atomic():
+        session = StationSession.objects.select_for_update().select_related(
+            "phase", "sub_event", "team", "station",
+        ).filter(id=session_id).first()
+        if not session:
+            return None, "session_not_found"
 
-    entry = ScoreEntry.objects.filter(
-        station_session=session, kind=ScoreEntry.KIND_STATION,
-    ).first()
-    if entry:
-        entry.points = points
+        if results_are_locked():
+            return None, "results_locked"
+
+        session.score = points
         if note is not None:
-            entry.note = note
-        entry.save(update_fields=["points", "note", "updated_at"])
-    elif points:
-        ScoreEntry.objects.create(
-            phase=session.phase, sub_event=session.sub_event,
-            station_session=session, team=session.team,
-            kind=ScoreEntry.KIND_STATION, points=points,
-            note=note or f"Tram {session.station.code}", created_by=operator,
+            session.note = note
+        session.save(update_fields=["score", "note", "updated_at"])
+
+        entries = ScoreEntry.objects.filter(
+            station_session=session,
+            kind=ScoreEntry.KIND_STATION,
         )
+        if points:
+            ScoreEntry.objects.update_or_create(
+                station_session=session,
+                kind=ScoreEntry.KIND_STATION,
+                defaults={
+                    "phase": session.phase,
+                    "sub_event": session.sub_event,
+                    "team": session.team,
+                    "points": points,
+                    "note": note or f"Tram {session.station.code}",
+                    "created_by": operator,
+                },
+            )
+        else:
+            entries.delete()
 
     return session, None
 

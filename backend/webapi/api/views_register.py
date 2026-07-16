@@ -7,9 +7,15 @@ anyone has an account. Identity is anchored on MSSV.
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
 
 from api.services import registration_service
-from .views_shared import _json_body
+from api.services.team_service import _get_setting
+from .views_shared import _json_body, _consume_rate_limit
+
+
+def _registration_closed_response():
+    return JsonResponse({"error": "registration_closed"}, status=403)
 
 
 def schema_view(request: HttpRequest):
@@ -24,6 +30,16 @@ def register_individual_view(request: HttpRequest):
     """POST a single participant registration."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if not _get_setting("registration_open", False):
+        return _registration_closed_response()
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="register-individual",
+        limit=settings.AUTH_REGISTER_RATE_LIMIT,
+        window_seconds=settings.AUTH_REGISTER_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
@@ -39,6 +55,14 @@ def lookup_view(request: HttpRequest):
     """POST {mssv, email} → privacy-safe basic info for the signup page."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="participant-lookup",
+        limit=settings.AUTH_LOOKUP_RATE_LIMIT,
+        window_seconds=settings.AUTH_LOOKUP_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
@@ -53,6 +77,16 @@ def register_team_view(request: HttpRequest):
     """POST a full team registration (captain + members)."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if not _get_setting("registration_open", False):
+        return _registration_closed_response()
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="register-team",
+        limit=settings.AUTH_REGISTER_RATE_LIMIT,
+        window_seconds=settings.AUTH_REGISTER_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)

@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from django.http import JsonResponse, HttpRequest
 from django.conf import settings
+from django.core.cache import cache
 
 from api.services.auth_service import find_by_token
 from api.models import Account
@@ -37,7 +39,7 @@ def _json_body(request: HttpRequest) -> dict | None:
 # --- Auth helpers ---
 
 def _extract_token(request: HttpRequest) -> str | None:
-    """Extract token from Authorization header, query param, or cookie."""
+    """Extract token from Authorization header or HttpOnly cookie."""
     header = request.headers.get("Authorization") or request.META.get("HTTP_AUTHORIZATION")
     token = None
     if header:
@@ -47,8 +49,49 @@ def _extract_token(request: HttpRequest) -> str | None:
         elif len(parts) == 1:
             token = parts[0].strip()
     if not token:
-        token = request.GET.get("token") or request.COOKIES.get(AUTH_COOKIE_NAME)
+        token = request.COOKIES.get(AUTH_COOKIE_NAME)
     return token or None
+
+
+def _client_ip(request: HttpRequest) -> str:
+    if getattr(settings, "TRUST_PROXY_HEADERS", False):
+        forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+    return request.META.get("REMOTE_ADDR") or "unknown"
+
+
+def _consume_rate_limit(
+    request: HttpRequest,
+    *,
+    scope: str,
+    identifier: str = "",
+    limit: int,
+    window_seconds: int,
+):
+    """Consume one request from a fixed-window cache rate limit."""
+    limit = max(1, int(limit))
+    window_seconds = max(1, int(window_seconds))
+    raw_key = f"{scope}:{_client_ip(request)}:{identifier.strip().lower()}"
+    digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+    cache_key = f"vnutour:rate:{digest}"
+
+    if cache.add(cache_key, 1, timeout=window_seconds):
+        return None, cache_key
+    try:
+        count = cache.incr(cache_key)
+    except ValueError:
+        cache.set(cache_key, 1, timeout=window_seconds)
+        count = 1
+    if count <= limit:
+        return None, cache_key
+
+    response = JsonResponse(
+        {"error": "too_many_attempts", "retry_after": window_seconds},
+        status=429,
+    )
+    response["Retry-After"] = str(window_seconds)
+    return response, cache_key
 
 
 def _auth_or_401(request: HttpRequest):
@@ -77,9 +120,13 @@ def _require_role(request: HttpRequest, *roles: str):
 def _set_auth_cookie(resp: JsonResponse, token: str, request: HttpRequest) -> None:
     """Set HttpOnly auth cookie."""
     try:
-        max_age = int(os.getenv("AUTH_COOKIE_MAX_AGE", "1209600"))
+        configured_max_age = int(os.getenv("AUTH_COOKIE_MAX_AGE", "1209600"))
     except Exception:
-        max_age = 1209600
+        configured_max_age = 1209600
+    max_age = min(
+        configured_max_age,
+        int(getattr(settings, "AUTH_TOKEN_MAX_AGE_SECONDS", configured_max_age)),
+    )
     samesite = os.getenv("AUTH_COOKIE_SAMESITE", "Lax")
     secure_env = os.getenv("AUTH_COOKIE_SECURE", "")
     secure = (

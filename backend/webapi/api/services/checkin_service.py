@@ -13,6 +13,7 @@ from api.models import (
     Account, Team, ProgramPhase, SubEvent, EventCheckIn, PhaseRoster,
     TeamMembership,
 )
+from api.services.checkin_qr_service import get_checkin_qr_state
 
 
 def _resolve_team_from_scan(raw_code: str) -> Team | None:
@@ -53,6 +54,13 @@ def scan_event_checkin(
         return None, "phase_not_found"
     except SubEvent.DoesNotExist:
         return None, "event_not_found"
+
+    if str(qr_token or "").strip().lower().startswith("t:"):
+        qr_state = get_checkin_qr_state()
+        if not qr_state["enabled"]:
+            return None, "checkin_qr_disabled"
+        if qr_state.get("phase_key") != phase.key:
+            return None, "checkin_qr_phase_mismatch"
 
     # Check if team is in this phase's roster (if roster exists for this phase)
     roster_exists = PhaseRoster.objects.filter(phase=phase).exists()
@@ -116,6 +124,7 @@ def list_event_checkins(
                 {
                     "mssv": membership.participant.mssv,
                     "full_name": membership.participant.full_name,
+                    "school": membership.participant.school,
                 }
                 for membership in c.team.memberships.all()
             ],

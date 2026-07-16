@@ -116,12 +116,10 @@ def _member_resolution(data: dict):
         fields.append(field)
 
     safe_profile = {
-        key: payload.get(key) or ""
-        for key in ("mssv", "email", "full_name", "phone", "school", "faculty", "facebook", "date_of_birth")
+        "mssv": payload.get("mssv") or "",
+        "full_name": payload.get("full_name") or "",
+        "school": payload.get("school") or "",
     }
-    for key, value in payload.items():
-        if key not in safe_profile and key != "cccd":
-            safe_profile[key] = value
     return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
 
 
@@ -407,11 +405,10 @@ def my_team_view(request: HttpRequest):
                 "approval_status": team.approval_status,
                 "approval_note": team.approval_note,
                 "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
-                "qr_token": team.qr_token,
                 "payment_proof": team.payment_proof,
                 "is_late_registration": team.is_late_registration,
             },
-            "members": get_team_members(team),
+            "members": get_team_members(team, visibility="self", requester=acc),
             "editable": team_is_editable(team),
         })
 
@@ -456,7 +453,6 @@ def my_team_view(request: HttpRequest):
             "code": team.code,
             "name": team.name,
             "approval_status": team.approval_status,
-            "qr_token": team.qr_token,
         }, status=201)
 
     if request.method == "PATCH":
@@ -665,18 +661,22 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         )
         if err:
             return JsonResponse({"error": err}, status=404)
-        return JsonResponse({
-            "mssv": participant.mssv,
-            "full_name": participant.full_name,
-            "email": participant.email,
-            "phone": participant.phone,
-            "faculty": participant.faculty,
-            "school": participant.school,
-            "facebook": participant.facebook,
-            "cccd": participant.cccd,
-            "date_of_birth": participant.date_of_birth.isoformat() if participant.date_of_birth else None,
-            "extra": participant.extra or {},
-        })
+        member_payload = next(
+            (
+                item for item in get_team_members(
+                    team,
+                    visibility="self",
+                    requester=acc,
+                )
+                if item["mssv"] == participant.mssv
+            ),
+            {
+                "mssv": participant.mssv,
+                "full_name": participant.full_name,
+                "school": participant.school,
+            },
+        )
+        return JsonResponse(member_payload)
 
     if request.method == "DELETE":
         success, err = remove_member(team, mssv)

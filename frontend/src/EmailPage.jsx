@@ -44,6 +44,8 @@ export default function EmailPage() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [selectedUsernames, setSelectedUsernames] = useState([])
   const [externalEmails, setExternalEmails] = useState('')
+  const [ccEmails, setCcEmails] = useState('')
+  const [bccEmails, setBccEmails] = useState('')
   const [subject, setSubject] = useState('')
   const [htmlBody, setHtmlBody] = useState('')
   const [isHtmlMode, setIsHtmlMode] = useState(true)
@@ -102,9 +104,13 @@ export default function EmailPage() {
     } else {
       count = recipientCounts[recipientType] || 0
     }
-    count += externalEmails.split(/[\n,]/).map((email) => email.trim()).filter(Boolean).length
+    count += [externalEmails, ccEmails, bccEmails]
+      .flatMap((value) => value.split(/[\n,;]/))
+      .map((email) => email.trim())
+      .filter(Boolean)
+      .length
     return count
-  }, [externalEmails, recipientCounts, recipientType, selectedUsernames])
+  }, [bccEmails, ccEmails, externalEmails, recipientCounts, recipientType, selectedUsernames])
 
   const personalizationPreview = useMemo(() => {
     const actorAccount = accounts.find((item) => item.username === currentUser?.username)
@@ -122,7 +128,10 @@ export default function EmailPage() {
   }, [accounts, currentUser, recipientType, selectedUsernames])
 
   const handleSend = useCallback(async () => {
-    const extEmails = externalEmails.split(/[\n,]/).map((email) => email.trim()).filter(Boolean)
+    const parseEmails = (value) => value.split(/[\n,;]/).map((email) => email.trim()).filter(Boolean)
+    const extEmails = parseEmails(externalEmails)
+    const ccList = parseEmails(ccEmails)
+    const bccList = parseEmails(bccEmails)
     if (!subject.trim()) {
       setApiError('Vui lòng nhập tiêu đề email.')
       return
@@ -147,7 +156,9 @@ export default function EmailPage() {
         body: {
           recipient_type: recipientType,
           usernames: recipientType === 'specific' ? selectedUsernames : [],
-          external_emails: extEmails,
+          to_emails: extEmails,
+          cc_emails: ccList,
+          bcc_emails: bccList,
           subject: subject.trim(),
           html_body: isHtmlMode ? htmlBody.trim() : `<pre>${htmlBody.trim()}</pre>`,
         },
@@ -162,7 +173,7 @@ export default function EmailPage() {
     } finally {
       setBusy(null)
     }
-  }, [estimatedRecipientCount, externalEmails, htmlBody, isHtmlMode, recipientType, selectedUsernames, subject])
+  }, [bccEmails, ccEmails, estimatedRecipientCount, externalEmails, htmlBody, isHtmlMode, recipientType, selectedUsernames, subject])
 
   const toggleUsername = (username) => {
     setSelectedUsernames((current) => (
@@ -190,7 +201,9 @@ export default function EmailPage() {
 
       {result && (
         <div className={`${CARD} border-trail/20 bg-trail/10 px-4 py-3 text-sm text-trail`}>
-          Đã gửi thành công {result.sent} / {result.recipients?.length || 0} email{result.personalized ? ' theo mẫu cá nhân hóa.' : '.'}
+          Đã xếp hàng {result.queued} email{result.personalized
+            ? ` cá nhân hóa, cách nhau ${result.interval_seconds || 10} giây.`
+            : '.'}
         </div>
       )}
 
@@ -286,18 +299,44 @@ export default function EmailPage() {
             </div>
           )}
 
-          <div className="space-y-2">
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-2">
             <label className="text-sm font-medium text-ink">
-              Email bên ngoài <span className="font-normal text-ink/40">(không có tài khoản trong hệ thống)</span>
+                To <span className="font-normal text-ink/40">(email nhập thêm)</span>
             </label>
             <textarea
-              placeholder="Nhập email, phân cách bằng dấu phẩy hoặc xuống dòng."
+                placeholder="to@example.com"
               value={externalEmails}
               onChange={(event) => setExternalEmails(event.target.value)}
               rows={3}
               className="w-full resize-none rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
             />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-ink">CC</label>
+              <textarea
+                placeholder="cc@example.com"
+                value={ccEmails}
+                onChange={(event) => setCcEmails(event.target.value)}
+                rows={3}
+                className="w-full resize-none rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-ink">BCC</label>
+              <textarea
+                placeholder="bcc@example.com"
+                value={bccEmails}
+                onChange={(event) => setBccEmails(event.target.value)}
+                rows={3}
+                className="w-full resize-none rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
+              />
+            </div>
           </div>
+          <p className="text-xs leading-5 text-ink/45">
+            Email dùng biến cá nhân hóa sẽ được tách thành từng thư và đưa vào queue có khoảng nghỉ để tránh gửi dồn.
+            CC/BCC sẽ được gắn vào từng thư cá nhân hóa.
+          </p>
         </div>
       </div>
 
@@ -439,12 +478,12 @@ export default function EmailPage() {
           {busy === 'send' ? (
             <>
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Đang gửi...
+              Đang xếp hàng...
             </>
           ) : (
             <>
               <Icon name="mail" className="h-4 w-4" />
-              Gửi email
+              Xếp hàng gửi email
             </>
           )}
         </button>

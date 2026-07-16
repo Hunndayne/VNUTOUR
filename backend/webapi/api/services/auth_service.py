@@ -5,11 +5,13 @@ Authentication service — token management, login/signup, Google OAuth.
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
+from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.db import IntegrityError
+from django.utils import timezone as django_timezone
 
 from api.models import Account
 
@@ -26,15 +28,18 @@ def generate_session(acc: Account) -> str:
     """Create a new auth token and persist it. Returns the token."""
     token = secrets.token_urlsafe(32)
     acc.token = token
-    acc.last_login = datetime.now(timezone.utc)
-    acc.save(update_fields=["token", "last_login"])
+    now = datetime.now(timezone.utc)
+    acc.token_created_at = now
+    acc.last_login = now
+    acc.save(update_fields=["token", "token_created_at", "last_login"])
     return token
 
 
 def revoke_session(acc: Account) -> None:
     """Clear the auth token."""
     acc.token = None
-    acc.save(update_fields=["token"])
+    acc.token_created_at = None
+    acc.save(update_fields=["token", "token_created_at"])
 
 
 def find_by_token(token: str) -> Optional[Account]:
@@ -42,7 +47,14 @@ def find_by_token(token: str) -> Optional[Account]:
     if not token:
         return None
     try:
-        return Account.objects.filter(token=token, is_active=True).first()
+        acc = Account.objects.filter(token=token, is_active=True).first()
+        if not acc or not acc.token_created_at:
+            return None
+        max_age = max(60, int(getattr(settings, "AUTH_TOKEN_MAX_AGE_SECONDS", 86400)))
+        if acc.token_created_at + timedelta(seconds=max_age) <= django_timezone.now():
+            revoke_session(acc)
+            return None
+        return acc
     except Exception:
         return None
 
@@ -57,6 +69,8 @@ def register_account(
     google_sub: str | None = None,
 ) -> Tuple[Optional[Account], Optional[str]]:
     """Create a new account. Returns (account, None) or (None, error_code)."""
+    if len(password or "") < int(getattr(settings, "AUTH_MIN_PASSWORD_LENGTH", 8)):
+        return None, "password_too_short"
     try:
         acc = Account(
             username=username,

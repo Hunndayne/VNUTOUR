@@ -119,7 +119,7 @@ class ParticipantMemberSubmissionTests(TestCase):
 
         self.assertEqual(error, "missing:member:cccd")
 
-    def test_patch_team_member_returns_iso_date_after_update(self):
+    def test_patch_team_member_hides_private_fields_from_captain(self):
         ProgramPhase.objects.create(
             key="registration",
             label="Registration",
@@ -175,6 +175,9 @@ class ParticipantMemberSubmissionTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["date_of_birth"], "2006-02-03")
+        self.assertEqual(
+            set(response.json()),
+            {"mssv", "full_name", "school"},
+        )
         member.refresh_from_db()
         self.assertEqual(member.date_of_birth, date(2006, 2, 3))

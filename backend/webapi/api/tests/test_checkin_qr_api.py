@@ -4,7 +4,7 @@ from django.test import TestCase
 
 from api.models import (
     Account, Participant, Team, TeamMembership,
-    ProgramPhase, PhaseRoster,
+    ProgramPhase, PhaseRoster, SubEvent,
 )
 from api.services.auth_service import generate_session
 
@@ -31,6 +31,15 @@ class CheckinQrApiTests(TestCase):
         )
         TeamMembership.objects.create(team=self.team, participant=self.participant, is_captain=True)
         PhaseRoster.objects.create(phase=self.phase, team=self.team, origin=PhaseRoster.ORIGIN_APPROVED)
+        self.event = SubEvent.objects.create(
+            phase=self.phase,
+            name="Check-in event",
+            type=SubEvent.TYPE_WORKFLOW,
+        )
+        self.collab = Account.objects.create(
+            username="collab", email="collab@example.com",
+            password_hash="x", role=Account.ROLE_COLLAB,
+        )
 
     def _qr(self, account):
         token = generate_session(account)
@@ -88,3 +97,50 @@ class CheckinQrApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertIn(resp.status_code, (401, 403))
+
+    def test_disabled_qr_token_cannot_be_scanned(self):
+        token = generate_session(self.collab)
+        response = self.client.post(
+            "/api/event-checkins/scan",
+            data=json.dumps({
+                "code": f"t:{self.team.qr_token}",
+                "phaseKey": self.phase.key,
+                "eventId": self.event.id,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "checkin_qr_disabled")
+
+    def test_disabling_qr_invalidates_previously_visible_payload(self):
+        admin_token = generate_session(self.admin)
+        self.client.post(
+            "/api/admin/checkin-qr",
+            data=json.dumps({"enabled": True}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {admin_token}",
+        )
+        self.team.refresh_from_db()
+        payload = f"t:{self.team.qr_token}"
+
+        self.client.post(
+            "/api/admin/checkin-qr",
+            data=json.dumps({"enabled": False}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {admin_token}",
+        )
+
+        token = generate_session(self.collab)
+        response = self.client.post(
+            "/api/event-checkins/scan",
+            data=json.dumps({
+                "code": payload,
+                "phaseKey": self.phase.key,
+                "eventId": self.event.id,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "checkin_qr_disabled")

@@ -215,3 +215,17 @@ Test files use Django test client and mock Discord/Google APIs.
 ### Deploy
 - Backend: Push to server, run migrations, set env vars, restart bot+API
 - Frontend: `npm run build` → upload `dist/` to web server or CDN
+
+## Agent skills
+
+### Issue tracker
+
+Issues và PRD được quản lý bằng GitHub Issues của repo. Xem `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Sử dụng các nhãn `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. Xem `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Repo dùng bố cục single-context với `CONTEXT.md` và `docs/adr/`. Xem `docs/agents/domain.md`.

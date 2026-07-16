@@ -8,6 +8,7 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from django.utils.dateparse import parse_date, parse_datetime
+from django.db import transaction
 
 from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting
 
@@ -56,10 +57,16 @@ def get_program() -> dict:
 
 def set_current_phase(phase_key: str) -> ProgramPhase:
     """Set exactly one phase as current."""
-    ProgramPhase.objects.update(is_current=False)
     phase = ProgramPhase.objects.get(key=phase_key)
-    phase.is_current = True
-    phase.save(update_fields=["is_current", "updated_at"])
+    with transaction.atomic():
+        ProgramPhase.objects.exclude(id=phase.id).update(is_current=False)
+        if not phase.is_current:
+            phase.is_current = True
+            phase.save(update_fields=["is_current", "updated_at"])
+
+        current_event = get_current_sub_event()
+        if current_event and current_event.phase_id != phase.id:
+            SystemSetting.objects.filter(key="current_sub_event_id").delete()
     return phase
 
 

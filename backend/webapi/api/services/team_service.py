@@ -293,8 +293,18 @@ def reject_team(team: Team, reviewer: Account, note: str | None = None) -> Team:
     return team
 
 
-def get_team_members(team: Team) -> list[dict]:
-    """Return member details for a team."""
+def get_team_members(
+    team: Team,
+    *,
+    visibility: str = "full",
+    requester: Account | None = None,
+) -> list[dict]:
+    """Return team members with an explicit privacy policy.
+
+    ``full`` is reserved for admin/internal validation.
+    ``basic`` exposes only name, school and student id.
+    ``self`` exposes the requester's full profile and basic data for teammates.
+    """
     memberships = TeamMembership.objects.filter(team=team).select_related("participant")
     result = []
     for m in memberships:
@@ -310,13 +320,28 @@ def get_team_members(team: Team) -> list[dict]:
         last_override = MssvLinkAudit.objects.filter(
             mssv=p.mssv, action=MssvLinkAudit.ACTION_OVERWRITTEN,
         ).order_by("-created_at").first()
-        result.append({
+        basic = {
             "mssv": p.mssv,
             "full_name": p.full_name,
+            "school": p.school,
+        }
+        can_view_full = visibility == "full" or (
+            visibility == "self"
+            and requester is not None
+            and (
+                p.account_id == requester.id
+                or bool(requester.mssv and p.mssv == requester.mssv)
+            )
+        )
+        if not can_view_full:
+            result.append(basic)
+            continue
+
+        result.append({
+            **basic,
             "email": p.email,
             "phone": p.phone,
             "faculty": p.faculty,
-            "school": p.school,
             "facebook": p.facebook,
             "cccd": p.cccd,
             "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,

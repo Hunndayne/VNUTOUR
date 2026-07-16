@@ -1,5 +1,6 @@
 import json
 
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 
 from api.models import (
@@ -60,6 +61,46 @@ class EventCheckinApiTests(TestCase):
         resp = self._scan(self.collab, self.team.code)
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json()["error"], "already_checked_in")
+        self.assertEqual(EventCheckIn.objects.filter(
+            sub_event=self.event,
+            team=self.team,
+            status=EventCheckIn.STATUS_ACTIVE,
+        ).count(), 1)
+
+    def test_database_rejects_two_active_checkins_for_same_team_and_event(self):
+        EventCheckIn.objects.create(
+            phase=self.phase,
+            sub_event=self.event,
+            team=self.team,
+            scanner=self.collab,
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                EventCheckIn.objects.create(
+                    phase=self.phase,
+                    sub_event=self.event,
+                    team=self.team,
+                    scanner=self.collab,
+                )
+
+    def test_reset_preserves_history_and_allows_one_new_active_checkin(self):
+        first_response = self._scan(self.collab, self.team.code)
+        first = EventCheckIn.objects.get(id=first_response.json()["id"])
+        admin_token = generate_session(self.admin)
+        self.client.delete(
+            f"/api/event-checkins/{first.id}",
+            HTTP_AUTHORIZATION=f"Bearer {admin_token}",
+        )
+
+        second_response = self._scan(self.collab, self.team.code)
+        self.assertEqual(second_response.status_code, 201)
+        self.assertEqual(EventCheckIn.objects.filter(
+            sub_event=self.event,
+            team=self.team,
+            status=EventCheckIn.STATUS_ACTIVE,
+        ).count(), 1)
+        first.refresh_from_db()
+        self.assertEqual(first.status, EventCheckIn.STATUS_REVERTED)
 
     def test_scan_team_not_found(self):
         resp = self._scan(self.collab, "NOPE")

@@ -80,6 +80,7 @@ def event_checkin_scan_view(request: HttpRequest):
             "team_not_found": 404, "team_not_approved": 403,
             "already_checked_in": 409, "event_not_found": 404,
             "phase_not_found": 404, "team_not_in_phase": 403,
+            "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
@@ -210,6 +211,7 @@ def checkin_legacy_view(request: HttpRequest):
             "team_not_found": 404, "team_not_approved": 403,
             "already_checked_in": 409, "event_not_found": 404,
             "phase_not_found": 404, "team_not_in_phase": 403,
+            "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 

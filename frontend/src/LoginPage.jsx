@@ -58,6 +58,8 @@ function LoginPage() {
       missing_fields: 'Vui lòng điền đầy đủ thông tin.',
       missing_credentials: 'Vui lòng nhập tên đăng nhập và mật khẩu.',
       registration_mismatch: 'MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại.',
+      password_too_short: 'Mật khẩu chưa đạt độ dài tối thiểu của hệ thống.',
+      too_many_attempts: 'Bạn thao tác quá nhiều lần. Vui lòng chờ rồi thử lại.',
     }
     setApiError(map[data.error] || `Lỗi: ${data.error || fallback}`)
   }, [])

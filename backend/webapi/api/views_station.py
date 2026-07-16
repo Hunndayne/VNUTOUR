@@ -314,6 +314,8 @@ def station_enter_view(request: HttpRequest):
             "event_not_found": 404, "station_not_in_event": 400,
             "team_not_in_phase": 403,
             "results_locked": 409,
+            "checkin_qr_disabled": 403,
+            "checkin_qr_phase_mismatch": 403,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 

@@ -4,10 +4,12 @@ import json
 import re
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.http import HttpRequest, JsonResponse
 
 from .models import Account, Participant
-from .services.email_service import send_email, send_personalized_emails
+from .services.email_service import enqueue_email_messages
 from .views_shared import _require_role
 
 PLACEHOLDER_PATTERN = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
@@ -35,6 +37,29 @@ def _render_template(template: str, context: dict[str, str]) -> str:
         return context.get(key, "")
 
     return PLACEHOLDER_PATTERN.sub(replace, template)
+
+
+def _email_list(value) -> list[str]:
+    if isinstance(value, str):
+        values = re.split(r"[\n,;]+", value)
+    elif isinstance(value, list):
+        values = value
+    else:
+        values = []
+
+    result = []
+    seen = set()
+    for raw in values:
+        email = str(raw or "").strip().lower()
+        if not email or email in seen:
+            continue
+        try:
+            validate_email(email)
+        except ValidationError as exc:
+            raise ValueError(f"invalid_email:{email}") from exc
+        seen.add(email)
+        result.append(email)
+    return result
 
 
 def send_email_view(request: HttpRequest) -> JsonResponse:
@@ -95,22 +120,33 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             "role": str(account.role or "").strip(),
         }
 
-    external = body.get("external_emails", [])
-    if isinstance(external, list):
-        for em in external:
-            email = str((em or "").strip()).lower()
-            if not email:
-                continue
-            recipient_map.setdefault(email, {
-                "email": email,
-                "name": _display_name_for_external(email),
-                "full_name": _display_name_for_external(email),
-                "username": "",
-                "role": "external",
-            })
+    try:
+        direct_to = _email_list(body.get("to_emails", []))
+        direct_to.extend(_email_list(body.get("external_emails", [])))
+        cc_list = _email_list(body.get("cc_emails", []))
+        bcc_list = _email_list(body.get("bcc_emails", []))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
-    to_list = sorted(recipient_map.keys())
-    if not to_list:
+    for email in direct_to:
+        recipient_map.setdefault(email, {
+            "email": email,
+            "name": _display_name_for_external(email),
+            "full_name": _display_name_for_external(email),
+            "username": "",
+            "role": "external",
+        })
+
+    to_list = list(recipient_map.keys())
+    to_set = set(to_list)
+    cc_list = [email for email in cc_list if email not in to_set]
+    cc_set = set(cc_list)
+    bcc_list = [
+        email for email in bcc_list
+        if email not in to_set and email not in cc_set
+    ]
+
+    if not (to_list or cc_list or bcc_list):
         return JsonResponse({"error": "no_recipients"}, status=400)
 
     if not settings.EMAIL_HOST:
@@ -118,12 +154,22 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
 
     uses_placeholders = bool(PLACEHOLDER_PATTERN.search(subject) or PLACEHOLDER_PATTERN.search(html_body))
     if not uses_placeholders:
-        sent = send_email(to_emails=to_list, subject=subject, html_body=html_body)
+        queued_items = enqueue_email_messages(
+            messages=[{
+                "to_emails": to_list,
+                "cc_emails": cc_list,
+                "bcc_emails": bcc_list,
+                "subject": subject,
+                "html_body": html_body,
+            }],
+            created_by=acc,
+        )
         return JsonResponse({
-            "sent": sent,
-            "recipients": to_list,
+            "queued": len(queued_items),
+            "queue_ids": [item.id for item in queued_items],
+            "recipients": to_list + cc_list + bcc_list,
             "personalized": False,
-        })
+        }, status=202)
 
     messages = []
     for recipient in recipient_map.values():
@@ -137,16 +183,25 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             "role": recipient["role"],
         }
         messages.append({
-            "to_email": recipient["email"],
+            "to_emails": [recipient["email"]],
+            "cc_emails": cc_list,
+            "bcc_emails": bcc_list,
             "subject": _render_template(subject, context),
             "html_body": _render_template(html_body, context),
         })
 
-    sent, sent_recipients = send_personalized_emails(messages=messages)
+    if not messages:
+        return JsonResponse(
+            {"error": "personalization_requires_to_recipient"},
+            status=400,
+        )
+    queued_items = enqueue_email_messages(messages=messages, created_by=acc)
     return JsonResponse({
-        "sent": sent,
-        "recipients": sent_recipients,
+        "queued": len(queued_items),
+        "queue_ids": [item.id for item in queued_items],
+        "recipients": [item["to_emails"][0] for item in messages],
         "personalized": True,
+        "interval_seconds": settings.EMAIL_QUEUE_INTERVAL_SECONDS,
         "supported_placeholders": [
             "{{ten}}",
             "{{name}}",
@@ -156,4 +211,4 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             "{{username}}",
             "{{role}}",
         ],
-    })
+    }, status=202)

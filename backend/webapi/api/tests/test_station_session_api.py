@@ -7,6 +7,7 @@ from api.models import (
     StationSession, ScoreEntry, PhaseRoster,
 )
 from api.services.auth_service import generate_session
+from api.services.checkin_qr_service import set_checkin_qr
 
 
 class StationSessionApiTests(TestCase):
@@ -86,6 +87,25 @@ class StationSessionApiTests(TestCase):
             station=self.station1, team=self.team1, status=StationSession.STATUS_ACTIVE,
         ).exists())
 
+    def test_qr_token_cannot_enter_station_while_qr_is_disabled(self):
+        response = self._enter(
+            self.collab,
+            f"t:{self.team1.qr_token}",
+            self.station1.id,
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "checkin_qr_disabled")
+
+    def test_enabled_qr_token_can_enter_station(self):
+        set_checkin_qr(True)
+        self.team1.refresh_from_db()
+        response = self._enter(
+            self.collab,
+            f"t:{self.team1.qr_token}",
+            self.station1.id,
+        )
+        self.assertEqual(response.status_code, 201)
+
     def test_enter_team_not_found(self):
         resp = self._enter(self.collab, "NOPE", self.station1.id)
         self.assertEqual(resp.status_code, 404)
@@ -132,6 +152,13 @@ class StationSessionApiTests(TestCase):
         self.assertTrue(ScoreEntry.objects.filter(
             station_session=session, kind=ScoreEntry.KIND_STATION, points=10,
         ).exists())
+
+        second = self._exit(self.collab, self.team1.code, self.station1.id, score=10)
+        self.assertEqual(second.status_code, 404)
+        self.assertEqual(ScoreEntry.objects.filter(
+            station_session=session,
+            kind=ScoreEntry.KIND_STATION,
+        ).count(), 1)
 
     def test_exit_session_not_found(self):
         resp = self._exit(self.collab, self.team1.code, self.station1.id)

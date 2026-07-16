@@ -3,6 +3,7 @@ Admin views — teams & accounts CRUD, approval (§9.3).
 """
 
 import json
+from django.conf import settings
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password
@@ -24,7 +25,7 @@ from .views_shared import _json_body, _auth_or_401, _require_role
 @csrf_exempt
 def teams_collection_view(request: HttpRequest):
     """GET: list teams. POST: admin creates team."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -54,25 +55,30 @@ def teams_collection_view(request: HttpRequest):
         total = qs.count()
         teams = qs[offset:offset + limit]
 
-        return JsonResponse({
-            "items": [
-                {
+        items = []
+        for t in teams:
+            item = {
                     "code": t.code,
                     "name": t.name,
-                    "owner_username": t.owner_account.username if t.owner_account else None,
                     "approval_status": t.approval_status,
+                    "member_count": TeamMembership.objects.filter(team=t).count(),
+                    "is_late_registration": t.is_late_registration,
+                    "created_at": t.created_at.isoformat(),
+            }
+            if acc.role == Account.ROLE_ADMIN:
+                item.update({
+                    "owner_username": t.owner_account.username if t.owner_account else None,
                     "provision_state": t.provision_state,
                     "provision_last_error": t.provision_last_error,
                     "last_provisioned_at": t.last_provisioned_at.isoformat() if t.last_provisioned_at else None,
                     "discord_role_id": t.discord_role_id,
                     "text_channel_id": t.text_channel_id,
                     "voice_channel_id": t.voice_channel_id,
-                    "member_count": TeamMembership.objects.filter(team=t).count(),
-                    "is_late_registration": t.is_late_registration,
-                    "created_at": t.created_at.isoformat(),
-                }
-                for t in teams
-            ],
+                })
+            items.append(item)
+
+        return JsonResponse({
+            "items": items,
             "page": page, "limit": limit, "total": total,
         })
 
@@ -133,7 +139,7 @@ def teams_collection_view(request: HttpRequest):
 @csrf_exempt
 def team_item_view(request: HttpRequest, team_key: str):
     """GET/PATCH/DELETE a team by code."""
-    acc, err = _auth_or_401(request)
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
 
@@ -143,25 +149,33 @@ def team_item_view(request: HttpRequest, team_key: str):
         return JsonResponse({"error": "not_found"}, status=404)
 
     if request.method == "GET":
-        return JsonResponse({
+        payload = {
             "code": team.code,
             "name": team.name,
-            "owner_username": team.owner_account.username if team.owner_account else None,
             "approval_status": team.approval_status,
-            "approval_note": team.approval_note,
-            "payment_proof": team.payment_proof,
             "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
-            "reviewed_by": team.reviewed_by.username if team.reviewed_by else None,
-            "reviewed_at": team.reviewed_at.isoformat() if team.reviewed_at else None,
-            "provision_state": team.provision_state,
-            "provision_last_error": team.provision_last_error,
-            "discord_role_id": team.discord_role_id,
-            "text_channel_id": team.text_channel_id,
-            "voice_channel_id": team.voice_channel_id,
             "is_late_registration": team.is_late_registration,
             "created_at": team.created_at.isoformat(),
-            "members": get_team_members(team),
-        })
+            "members": get_team_members(
+                team,
+                visibility="full" if acc.role == Account.ROLE_ADMIN else "basic",
+                requester=acc,
+            ),
+        }
+        if acc.role == Account.ROLE_ADMIN:
+            payload.update({
+                "owner_username": team.owner_account.username if team.owner_account else None,
+                "approval_note": team.approval_note,
+                "payment_proof": team.payment_proof,
+                "reviewed_by": team.reviewed_by.username if team.reviewed_by else None,
+                "reviewed_at": team.reviewed_at.isoformat() if team.reviewed_at else None,
+                "provision_state": team.provision_state,
+                "provision_last_error": team.provision_last_error,
+                "discord_role_id": team.discord_role_id,
+                "text_channel_id": team.text_channel_id,
+                "voice_channel_id": team.voice_channel_id,
+            })
+        return JsonResponse(payload)
 
     if request.method == "PATCH":
         if acc.role != Account.ROLE_ADMIN:
@@ -340,6 +354,8 @@ def admin_accounts_view(request: HttpRequest):
 
         if not username or not password or not email:
             return JsonResponse({"error": "missing_fields"}, status=400)
+        if len(password) < settings.AUTH_MIN_PASSWORD_LENGTH:
+            return JsonResponse({"error": "password_too_short"}, status=400)
 
         try:
             new_acc = Account(
@@ -403,6 +419,8 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         if "is_active" in data:
             target.is_active = bool(data["is_active"])
         if "password" in data and data["password"]:
+            if len(str(data["password"])) < settings.AUTH_MIN_PASSWORD_LENGTH:
+                return JsonResponse({"error": "password_too_short"}, status=400)
             target.password_hash = make_password(data["password"])
         try:
             target.save()

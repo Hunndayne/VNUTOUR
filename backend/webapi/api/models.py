@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.db import models
+from django.utils import timezone
 
 
 # =====================================================================
@@ -23,6 +24,7 @@ class Account(models.Model):
     role = models.CharField(max_length=12, choices=ROLE_CHOICES, default=ROLE_PARTICIPANT)
     is_active = models.BooleanField(default=True)
     token = models.CharField(max_length=128, null=True, blank=True, unique=True)
+    token_created_at = models.DateTimeField(null=True, blank=True)
     mssv = models.CharField(max_length=20, null=True, blank=True, unique=True)
     full_name = models.CharField(max_length=255, null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
@@ -165,6 +167,11 @@ class TeamMembership(models.Model):
                 fields=["participant"],
                 name="uq_membership_participant",
             ),
+            models.UniqueConstraint(
+                fields=["team"],
+                condition=models.Q(is_captain=True),
+                name="uq_membership_one_captain_per_team",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -189,6 +196,13 @@ class ProgramPhase(models.Model):
     class Meta:
         db_table = "program_phase"
         ordering = ["order"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_current"],
+                condition=models.Q(is_current=True),
+                name="uq_program_phase_single_current",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.key} ({self.label})"
@@ -517,6 +531,24 @@ class ScoreEntry(models.Model):
 
     class Meta:
         db_table = "score_entry"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station_session", "kind"],
+                condition=models.Q(
+                    station_session__isnull=False,
+                    kind="station",
+                ),
+                name="uq_station_score_per_session",
+            ),
+            models.UniqueConstraint(
+                fields=["submission", "kind"],
+                condition=models.Q(
+                    submission__isnull=False,
+                    kind="station",
+                ),
+                name="uq_station_score_per_submission",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.team.code} {self.kind}: {self.points:+d}"
@@ -661,7 +693,57 @@ class DiscordBroadcast(models.Model):
 
 
 # =====================================================================
-# 16. SystemSetting
+# 16. EmailQueueItem
+# =====================================================================
+
+class EmailQueueItem(models.Model):
+    STATUS_QUEUED = "queued"
+    STATUS_SENDING = "sending"
+    STATUS_SENT = "sent"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_SENDING, "Sending"),
+        (STATUS_SENT, "Sent"),
+        (STATUS_FAILED, "Failed"),
+    ]
+
+    created_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="email_queue_items",
+    )
+    to_emails = models.JSONField(default=list)
+    cc_emails = models.JSONField(default=list)
+    bcc_emails = models.JSONField(default=list)
+    subject = models.CharField(max_length=998)
+    html_body = models.TextField()
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default=STATUS_QUEUED,
+        db_index=True,
+    )
+    scheduled_at = models.DateTimeField(default=timezone.now, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "email_queue_item"
+        ordering = ["scheduled_at", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.subject} ({self.status})"
+
+
+# =====================================================================
+# 17. SystemSetting
 # =====================================================================
 
 class SystemSetting(models.Model):
@@ -677,7 +759,7 @@ class SystemSetting(models.Model):
 
 
 # =====================================================================
-# 17. MssvLinkAudit
+# 18. MssvLinkAudit
 # =====================================================================
 
 class MssvLinkAudit(models.Model):

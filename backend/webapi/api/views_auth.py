@@ -8,6 +8,8 @@ import os
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
+from django.conf import settings
+from django.core.cache import cache
 
 from api.services.auth_service import (
     authenticate, generate_session, revoke_session,
@@ -20,7 +22,7 @@ from api.models import Account, Participant
 from .views_shared import (
     _json_body, _extract_token, _auth_or_401,
     _set_auth_cookie, _clear_auth_cookie,
-    AUTH_COOKIE_NAME,
+    _consume_rate_limit, AUTH_COOKIE_NAME,
 )
 
 import secrets
@@ -47,10 +49,21 @@ def login_view(request: HttpRequest):
     if not username or not password:
         return JsonResponse({"error": "missing_credentials"}, status=400)
 
+    limited, rate_key = _consume_rate_limit(
+        request,
+        scope="login",
+        identifier=username,
+        limit=settings.AUTH_LOGIN_RATE_LIMIT,
+        window_seconds=settings.AUTH_LOGIN_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
+
     acc, err = authenticate(username, password)
     if err:
         return JsonResponse({"error": err}, status=401)
 
+    cache.delete(rate_key)
     token = generate_session(acc)
     resp = JsonResponse({
         "token": token,
@@ -180,7 +193,7 @@ def change_password_view(request: HttpRequest):
 
     if not current or not new_password:
         return JsonResponse({"error": "missing_fields"}, status=400)
-    if len(new_password) < 6:
+    if len(new_password) < settings.AUTH_MIN_PASSWORD_LENGTH:
         return JsonResponse({"error": "password_too_short"}, status=400)
 
     from django.contrib.auth.hashers import check_password, make_password
@@ -273,6 +286,14 @@ def register_view(request: HttpRequest):
     """Register admin/collab account (gated by ADMIN_REGISTER_SECRET)."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="admin-register",
+        limit=settings.AUTH_REGISTER_RATE_LIMIT,
+        window_seconds=settings.AUTH_REGISTER_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
 
     data = _json_body(request)
     if data is None:
@@ -283,6 +304,8 @@ def register_view(request: HttpRequest):
     email = str((data.get("email") or "").strip())
     if not username or not password or not email:
         return JsonResponse({"error": "missing_fields"}, status=400)
+    if len(password) < settings.AUTH_MIN_PASSWORD_LENGTH:
+        return JsonResponse({"error": "password_too_short"}, status=400)
 
     # Gate: if any admin exists, require secret
     admin_exists = Account.objects.filter(role=Account.ROLE_ADMIN, is_active=True).exists()
@@ -314,6 +337,14 @@ def signup_view(request: HttpRequest):
 
     if not _get_setting("registration_open"):
         return JsonResponse({"error": "registration_closed"}, status=403)
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="participant-signup",
+        limit=settings.AUTH_REGISTER_RATE_LIMIT,
+        window_seconds=settings.AUTH_REGISTER_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
 
     data = _json_body(request)
     if data is None:
@@ -329,6 +360,8 @@ def signup_view(request: HttpRequest):
 
     if not username or not password or not email:
         return JsonResponse({"error": "missing_fields"}, status=400)
+    if len(password) < settings.AUTH_MIN_PASSWORD_LENGTH:
+        return JsonResponse({"error": "password_too_short"}, status=400)
 
     # Two-layer safety gate against MSSV hijacking: if the MSSV is already
     # registered under a DIFFERENT email, block. A clean match trusts the

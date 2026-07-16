@@ -44,5 +44,20 @@ services:
       - postgres
       - bot
 
+  email-worker:
+    build: .
+    container_name: vnutour-email-worker
+    restart: unless-stopped
+    command: python webapi/manage.py process_email_queue --watch --sleep 5
+    env_file:
+      - .env.docker
+    environment:
+      - DB_HOST=postgres
+    volumes:
+      - .:/app
+    depends_on:
+      - postgres
+      - web
+
 volumes:
   pgdata:
