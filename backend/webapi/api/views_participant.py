@@ -24,7 +24,8 @@ from api.services.submission_storage_service import save_submission_files
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
-    link_account_profile, ensure_default_phase_roster_for_team,
+    link_account_profile, ensure_default_phase_roster_for_team, registration_is_open,
+    profile_is_account_owned_by_other,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -261,8 +262,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
 
 
 def _registration_phase_open() -> bool:
-    current_phase = ProgramPhase.objects.filter(is_current=True).first()
-    return bool(current_phase and current_phase.key == "registration")
+    return registration_is_open()
 
 
 def _registration_closed_response():
@@ -446,6 +446,7 @@ def my_team_view(request: HttpRequest):
             faculty=acc.faculty,
             school=acc.school,
             is_captain=True,
+            actor=acc,
         )
         link_account_profile(acc)
 
@@ -609,6 +610,7 @@ def my_team_members_view(request: HttpRequest):
         cccd=columns.get("cccd"),
         date_of_birth=columns.get("date_of_birth"),
         extra=extra,
+        actor=acc,
     )
     if err:
         return JsonResponse({"error": err}, status=400)
@@ -642,6 +644,15 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         data = _json_body(request)
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
+
+        target_membership = TeamMembership.objects.filter(
+            team=team,
+            participant__mssv=mssv,
+        ).select_related("participant").first()
+        if profile_is_account_owned_by_other(
+            target_membership.participant if target_membership else None, acc
+        ):
+            return JsonResponse({"error": "member_profile_owned"}, status=403)
 
         columns, extra, schema_error = _prepare_member_submission({**data, "mssv": mssv}, "member")
         if schema_error:
@@ -948,6 +959,6 @@ def my_experience_view(request: HttpRequest):
             "phase_key": current_event.phase.key,
         } if current_event else None,
         "team_in_current_phase": in_current_phase,
-        "registration_open": current_phase_key == "registration",
+        "registration_open": registration_is_open(),
         "open_forms": open_forms,
     })

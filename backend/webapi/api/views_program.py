@@ -10,6 +10,7 @@ from api.services.program_service import (
     get_program, set_current_phase, update_phase_dates,
     create_sub_event, update_sub_event, delete_sub_event, set_current_sub_event,
 )
+from api.services.audit_service import record_audit
 from .views_shared import _json_body, _require_role
 
 
@@ -40,7 +41,20 @@ def current_phase_view(request: HttpRequest):
         return JsonResponse({"error": "missing_phase_key"}, status=400)
 
     try:
+        previous = ProgramPhase.objects.filter(is_current=True).first()
         phase = set_current_phase(phase_key)
+        record_audit(
+            actor=acc,
+            action="phase.change",
+            summary=f"Chuyển phase sang {phase.label}",
+            target_type="ProgramPhase",
+            target_id=phase.id,
+            before_data={
+                "current_phase": previous.key if previous else None,
+            },
+            after_data={"current_phase": phase.key},
+            reversible=bool(previous and previous.id != phase.id),
+        )
         return JsonResponse({"current_phase": phase.key})
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)

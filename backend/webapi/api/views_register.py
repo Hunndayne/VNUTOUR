@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from api.services import registration_service
-from api.services.team_service import _get_setting
+from api.services.team_service import registration_is_open
 from .views_shared import _json_body, _consume_rate_limit
 
 
@@ -30,7 +30,7 @@ def register_individual_view(request: HttpRequest):
     """POST a single participant registration."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
-    if not _get_setting("registration_open", False):
+    if not registration_is_open():
         return _registration_closed_response()
     limited, _ = _consume_rate_limit(
         request,
@@ -77,7 +77,7 @@ def register_team_view(request: HttpRequest):
     """POST a full team registration (captain + members)."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
-    if not _get_setting("registration_open", False):
+    if not registration_is_open():
         return _registration_closed_response()
     limited, _ = _consume_rate_limit(
         request,

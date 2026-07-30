@@ -13,6 +13,7 @@ from api.models import (
     SystemSetting,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
+from api.services.audit_service import record_audit
 
 
 # =====================================================================
@@ -165,6 +166,12 @@ def settings_view(request: HttpRequest):
             "sheet_checkin_export_enabled": False,
         }
 
+        changed_keys = [key for key in default_settings if key in data]
+        before_values = {}
+        for key in changed_keys:
+            setting = SystemSetting.objects.filter(key=key).first()
+            before_values[key] = setting.value if setting else None
+
         for key, default in default_settings.items():
             if key in data:
                 value = data[key]
@@ -181,6 +188,21 @@ def settings_view(request: HttpRequest):
             setting = SystemSetting.objects.filter(key=key).first()
             if setting is not None:
                 response_settings[key] = setting.value
+
+        after_values = {
+            key: response_settings[key]
+            for key in changed_keys
+        }
+        if changed_keys and before_values != after_values:
+            record_audit(
+                actor=acc,
+                action="settings.update",
+                summary=f"Cập nhật {len(changed_keys)} cấu hình hệ thống",
+                target_type="SystemSetting",
+                before_data=before_values,
+                after_data=after_values,
+                reversible=True,
+            )
 
         return JsonResponse(response_settings)
 

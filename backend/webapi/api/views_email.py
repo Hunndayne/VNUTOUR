@@ -10,6 +10,7 @@ from django.http import HttpRequest, JsonResponse
 
 from .models import Account, Participant
 from .services.email_service import enqueue_email_messages
+from .services.audit_service import record_audit
 from .views_shared import _require_role
 
 PLACEHOLDER_PATTERN = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
@@ -164,6 +165,14 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             }],
             created_by=acc,
         )
+        record_audit(
+            actor=acc,
+            action="email.enqueue",
+            summary=f"Xếp hàng email tới {len(to_list) + len(cc_list) + len(bcc_list)} địa chỉ",
+            target_type="EmailQueueItem",
+            metadata={"queue_ids": [item.id for item in queued_items]},
+            reversible=False,
+        )
         return JsonResponse({
             "queued": len(queued_items),
             "queue_ids": [item.id for item in queued_items],
@@ -196,6 +205,14 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             status=400,
         )
     queued_items = enqueue_email_messages(messages=messages, created_by=acc)
+    record_audit(
+        actor=acc,
+        action="email.enqueue_personalized",
+        summary=f"Xếp hàng {len(queued_items)} email cá nhân hóa",
+        target_type="EmailQueueItem",
+        metadata={"queue_ids": [item.id for item in queued_items]},
+        reversible=False,
+    )
     return JsonResponse({
         "queued": len(queued_items),
         "queue_ids": [item.id for item in queued_items],

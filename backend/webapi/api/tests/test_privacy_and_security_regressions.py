@@ -124,6 +124,110 @@ class TeamPrivacyTests(TestCase):
         self.assertEqual(members["SV001"]["email"], "member@example.com")
         self.assertEqual(set(members["SV002"]), {"mssv", "full_name", "school"})
 
+    def test_captain_cannot_edit_profile_owned_by_another_account(self):
+        teammate_account = Account.objects.create(
+            username="teammate",
+            email="teammate@example.com",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="SV002",
+        )
+        self.teammate.account = teammate_account
+        self.teammate.save(update_fields=["account", "updated_at"])
+        self.team.approval_status = Team.APPROVAL_DRAFT
+        self.team.save(update_fields=["approval_status", "updated_at"])
+        SystemSetting.objects.update_or_create(
+            key="registration_open",
+            defaults={"value": True},
+        )
+
+        response = self.client.patch(
+            "/api/my-team/members/SV002",
+            data=json.dumps({
+                "mssv": "SV002",
+                "email": "teammate@example.com",
+                "full_name": "Changed",
+            }),
+            content_type="application/json",
+            **self._auth(self.member_account),
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "member_profile_owned")
+
+    def test_captain_cannot_overwrite_owned_profile_by_removing_and_re_adding(self):
+        """The `member_profile_owned` guard must not be bypassable via DELETE + POST."""
+        teammate_account = Account.objects.create(
+            username="teammate",
+            email="teammate@example.com",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="SV002",
+        )
+        self.teammate.account = teammate_account
+        self.teammate.save(update_fields=["account", "updated_at"])
+        self.team.approval_status = Team.APPROVAL_DRAFT
+        self.team.save(update_fields=["approval_status", "updated_at"])
+        SystemSetting.objects.update_or_create(
+            key="registration_open",
+            defaults={"value": True},
+        )
+
+        removed = self.client.delete(
+            "/api/my-team/members/SV002",
+            **self._auth(self.member_account),
+        )
+        self.assertEqual(removed.status_code, 200)
+
+        re_added = self.client.post(
+            "/api/my-team/members",
+            data=json.dumps({
+                "mssv": "SV002",
+                "email": "teammate@example.com",
+                "full_name": "Hijacked Name",
+                "school": "US",
+                "faculty": "Toan",
+                "phone": "0999999999",
+                "cccd": "999999999999",
+                "date_of_birth": "2001-01-01",
+                "facebook": "https://example.com/hijacked",
+            }),
+            content_type="application/json",
+            **self._auth(self.member_account),
+        )
+        self.assertEqual(re_added.status_code, 201)
+
+        self.teammate.refresh_from_db()
+        self.assertEqual(self.teammate.full_name, "Tran Van B")
+        self.assertEqual(self.teammate.cccd, "109876543210")
+        self.assertEqual(self.teammate.facebook, "https://example.com/teammate")
+        self.assertEqual(self.teammate.phone, "0911111111")
+        self.assertIsNone(self.teammate.date_of_birth)
+        self.assertTrue(
+            TeamMembership.objects.filter(team=self.team, participant=self.teammate).exists()
+        )
+
+    def test_admin_registration_switch_blocks_team_changes_even_in_registration_phase(self):
+        ProgramPhase.objects.create(
+            key="registration",
+            label="Registration",
+            order=0,
+            is_current=True,
+        )
+        SystemSetting.objects.update_or_create(
+            key="registration_open",
+            defaults={"value": False},
+        )
+
+        response = self.client.patch(
+            "/api/my-team",
+            data=json.dumps({"team_name": "Changed while closed"}),
+            content_type="application/json",
+            **self._auth(self.member_account),
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "registration_closed")
+
 
 class RegistrationClosedTests(TestCase):
     def setUp(self):

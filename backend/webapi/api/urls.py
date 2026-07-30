@@ -16,6 +16,9 @@ from .urls_score import urlpatterns as score_patterns
 from .urls_discord import urlpatterns as discord_patterns
 from .urls_dashboard import urlpatterns as dashboard_patterns
 from .urls_email import urlpatterns as email_patterns
+from .urls_audit import urlpatterns as audit_patterns
+from .urls_report import urlpatterns as report_patterns
+from .urls_backup import urlpatterns as backup_patterns
 
 urlpatterns = (
     auth_patterns
@@ -30,4 +33,7 @@ urlpatterns = (
     + discord_patterns
     + dashboard_patterns
     + email_patterns
+    + audit_patterns
+    + report_patterns
+    + backup_patterns
 )

@@ -743,7 +743,52 @@ class EmailQueueItem(models.Model):
 
 
 # =====================================================================
-# 17. SystemSetting
+# 17. AuditLog
+# =====================================================================
+
+class AuditLog(models.Model):
+    actor = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    action = models.CharField(max_length=100, db_index=True)
+    target_type = models.CharField(max_length=100, null=True, blank=True)
+    target_id = models.CharField(max_length=100, null=True, blank=True)
+    summary = models.CharField(max_length=500)
+    before_data = models.JSONField(null=True, blank=True)
+    after_data = models.JSONField(null=True, blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+    reversible = models.BooleanField(default=False, db_index=True)
+    undone_at = models.DateTimeField(null=True, blank=True)
+    undone_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="undone_audit_logs",
+    )
+    undo_audit = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="undoes",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "audit_log"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.action}: {self.summary}"
+
+
+# =====================================================================
+# 18. SystemSetting
 # =====================================================================
 
 class SystemSetting(models.Model):
@@ -759,7 +804,7 @@ class SystemSetting(models.Model):
 
 
 # =====================================================================
-# 18. MssvLinkAudit
+# 19. MssvLinkAudit
 # =====================================================================
 
 class MssvLinkAudit(models.Model):

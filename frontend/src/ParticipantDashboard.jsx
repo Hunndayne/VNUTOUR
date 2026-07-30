@@ -99,7 +99,6 @@ function normalizeTeam(teamPayload, teamDetail = null) {
     provision_state: teamDetail?.provision_state || 'none',
     approval_note: teamDetail?.approval_note || teamPayload.team.approval_note || '',
     submitted_at: teamDetail?.submitted_at || teamPayload.team.submitted_at || null,
-    qr_token: teamPayload.team.qr_token || null,
     payment_proof: teamDetail?.payment_proof || teamPayload.team.payment_proof || '',
   }
 }
@@ -762,7 +761,6 @@ function ParticipantDashboard() {
   const status = STATUS[team?.approval_status || 'draft']
   const provision = PROVISION[team?.provision_state || 'none']
   const nextAction = useMemo(() => getNextAction(profile, team, members), [profile, team, members])
-  const accountCount = members.filter((member) => member.has_account).length
   const registrationOpen = experience?.registration_open !== false
   const currentPhase = experience?.current_phase || 'registration'
   const personFields = useMemo(
@@ -1086,7 +1084,7 @@ function ParticipantDashboard() {
                     <div className="h-full" style={{ width: `${Math.min(100, (members.length / maxMembers) * 100)}%`, backgroundColor: status.color }} />
                   </div>
                   <p className="mt-2 text-xs text-ink/45">
-                    {accountCount}/{members.length || 0} thành viên đã có tài khoản web.
+                    Thành viên chỉ nhìn thấy tên, MSSV và trường của nhau.
                   </p>
                 </div>
 
@@ -1145,25 +1143,29 @@ function ParticipantDashboard() {
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="truncate text-sm font-semibold text-ink">{member.full_name}</h3>
                         {member.is_captain && <Badge label="Đội trưởng" cls="bg-[#E0A23A]/15 text-[#9A6B12]" />}
-                        <Badge
-                          label={member.has_account ? 'Đã có tài khoản' : 'Chưa có tài khoản'}
-                          cls={member.has_account ? 'bg-[#1F7A6B]/12 text-[#1F7A6B]' : 'bg-[#20312B]/[0.06] text-[#20312B]/40'}
-                        />
+                        {typeof member.has_account === 'boolean' && (
+                          <Badge
+                            label={member.has_account ? 'Đã có tài khoản' : 'Chưa có tài khoản'}
+                            cls={member.has_account ? 'bg-[#1F7A6B]/12 text-[#1F7A6B]' : 'bg-[#20312B]/[0.06] text-[#20312B]/40'}
+                          />
+                        )}
                       </div>
                       <p className="mt-1 font-mono text-xs text-ink/45">
-                        {member.mssv} · {member.faculty || 'Chưa có khoa'} · {member.school || 'Chưa có trường'}
+                        {member.mssv} · {member.school || 'Chưa có trường'}
                       </p>
                       {member.email && <p className="mt-1 truncate text-xs text-ink/40">{member.email}</p>}
                     </div>
                     <div className="flex items-center gap-1 sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={() => openMemberDrawer(index)}
-                        disabled={!editable || Boolean(busyAction)}
-                        className="rounded-md px-3 py-1.5 text-xs font-semibold text-[#20312B]/55 transition hover:bg-[#F3F4F1] hover:text-[#20312B] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Sửa
-                      </button>
+                      {member.email && (
+                        <button
+                          type="button"
+                          onClick={() => openMemberDrawer(index)}
+                          disabled={!editable || Boolean(busyAction)}
+                          className="rounded-md px-3 py-1.5 text-xs font-semibold text-[#20312B]/55 transition hover:bg-[#F3F4F1] hover:text-[#20312B] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Sửa
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => removeMember(index)}

@@ -118,6 +118,37 @@ export async function apiRequest(path, options = {}) {
   return payload
 }
 
+export async function apiDownload(path, options = {}) {
+  const authToken = options.token ?? getStoredAuthToken()
+  const headers = { ...(options.headers || {}) }
+  if (authToken) {
+    headers.Authorization = headers.Authorization || `Bearer ${authToken}`
+  }
+  const response = await fetch(joinUrl(API_BASE_URL, path), {
+    method: options.method || 'GET',
+    headers,
+    body: options.body,
+  })
+  if (!response.ok) {
+    let payload = null
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+    const error = new Error(payload?.error || `request_failed_${response.status}`)
+    error.status = response.status
+    error.data = payload
+    throw error
+  }
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i)
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] || 'download',
+  }
+}
+
 export function formatApiDateToInput(value) {
   if (!value) return ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value

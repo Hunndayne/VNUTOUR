@@ -156,3 +156,10 @@ EMAIL_FROM = os.environ.get("SMTP_FROM", "noreply@vnutour.vn")
 EMAIL_QUEUE_INTERVAL_SECONDS = int(os.getenv("EMAIL_QUEUE_INTERVAL_SECONDS", "10"))
 EMAIL_QUEUE_MAX_ATTEMPTS = int(os.getenv("EMAIL_QUEUE_MAX_ATTEMPTS", "5"))
 EMAIL_QUEUE_STALE_SECONDS = int(os.getenv("EMAIL_QUEUE_STALE_SECONDS", "600"))
+
+REPORT_TEMPLATE_PATH = os.getenv(
+    "REPORT_TEMPLATE_PATH",
+    str(REPO_ROOT / "assets" / "vnutour-report-template.xlsx"),
+)
+BACKUP_ROOT = os.getenv("BACKUP_ROOT", str(REPO_ROOT / "backups"))
+BACKUP_MAX_UPLOAD_MB = int(os.getenv("BACKUP_MAX_UPLOAD_MB", "500"))

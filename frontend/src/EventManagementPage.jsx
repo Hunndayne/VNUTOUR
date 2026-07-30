@@ -312,9 +312,12 @@ function EventManagementPage({
     }
 
     if (!selectedSubEventId || !visibleSubEvents.some(item => item.id === selectedSubEventId)) {
-      setSelectedSubEventId(visibleSubEvents[0].id)
+      const currentEvent = selectedPhase === currentPhase
+        ? visibleSubEvents.find(item => item.id === String(currentSubEventId))
+        : null
+      setSelectedSubEventId(currentEvent?.id || visibleSubEvents[0].id)
     }
-  }, [selectedSubEventId, visibleSubEvents])
+  }, [currentPhase, currentSubEventId, selectedPhase, selectedSubEventId, visibleSubEvents])
 
   const selectedPhaseInfo = getPhaseInfo(selectedPhase)
   const selectedSubEvent = visibleSubEvents.find(item => item.id === selectedSubEventId) ?? null

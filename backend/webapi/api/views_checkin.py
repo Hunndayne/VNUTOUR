@@ -5,12 +5,13 @@ Event check-in views — §9.6 (canonical + legacy compat aliases).
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account
+from api.models import Account, EventCheckIn
 from api.services.checkin_service import (
     scan_event_checkin, list_event_checkins,
     get_checkin_stats, reset_checkin,
 )
 from api.services.checkin_qr_service import get_checkin_qr_state, set_checkin_qr
+from api.services.audit_service import record_audit
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
@@ -146,7 +147,21 @@ def event_checkin_reset_view(request: HttpRequest, checkin_id: int):
     if request.method not in ("DELETE", "POST"):
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
-    if reset_checkin(checkin_id):
+    checkin = EventCheckIn.objects.select_related("team", "sub_event").filter(
+        id=checkin_id,
+        status=EventCheckIn.STATUS_ACTIVE,
+    ).first()
+    if checkin and reset_checkin(checkin_id):
+        record_audit(
+            actor=acc,
+            action="checkin.reset",
+            summary=f"Reset check-in đội {checkin.team.code} tại {checkin.sub_event.name}",
+            target_type="EventCheckIn",
+            target_id=checkin.id,
+            before_data={"id": checkin.id, "status": EventCheckIn.STATUS_ACTIVE},
+            after_data={"id": checkin.id, "status": EventCheckIn.STATUS_REVERTED},
+            reversible=True,
+        )
         return JsonResponse({"status": "reset"})
     return JsonResponse({"error": "not_found"}, status=404)
 

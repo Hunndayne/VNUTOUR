@@ -15,6 +15,7 @@ from api.services.station_service import (
     set_submission_score,
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
+from api.services.audit_service import record_audit
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
@@ -319,6 +320,15 @@ def station_enter_view(request: HttpRequest):
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
+    record_audit(
+        actor=acc,
+        action="station.enter",
+        summary=f"Đội {session.team.code} vào trạm {session.station.code}",
+        target_type="StationSession",
+        target_id=session.id,
+        after_data={"status": session.status, "score": session.score},
+        reversible=False,
+    )
     return JsonResponse({
         "id": session.id,
         "team_code": session.team.code,
@@ -363,6 +373,15 @@ def station_exit_view(request: HttpRequest):
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
+    record_audit(
+        actor=acc,
+        action="station.exit",
+        summary=f"Đội {session.team.code} rời trạm {session.station.code}",
+        target_type="StationSession",
+        target_id=session.id,
+        after_data={"status": session.status, "score": session.score},
+        reversible=False,
+    )
     return JsonResponse({
         "id": session.id,
         "team_code": session.team.code,

@@ -15,6 +15,7 @@ from api.services.team_service import (
     create_team, approve_team, reject_team,
     get_team_members, add_member, link_account_profile,
 )
+from api.services.audit_service import record_audit
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
@@ -121,6 +122,7 @@ def teams_collection_view(request: HttpRequest):
                 faculty=owner_account.faculty,
                 school=owner_account.school,
                 is_captain=True,
+                actor=owner_account,
             )
             if member_err:
                 team.delete()
@@ -242,6 +244,15 @@ def team_approve_view(request: HttpRequest, team_key: str):
         team.save(update_fields=["is_late_registration", "updated_at"])
 
     team = approve_team(team, acc)
+    record_audit(
+        actor=acc,
+        action="team.approve",
+        summary=f"Duyệt đội {team.code} - {team.name}",
+        target_type="Team",
+        target_id=team.id,
+        after_data={"approval_status": team.approval_status},
+        reversible=False,
+    )
     return JsonResponse({
         "code": team.code, "approval_status": team.approval_status,
         "provision_state": team.provision_state,
@@ -266,6 +277,18 @@ def team_reject_view(request: HttpRequest, team_key: str):
     data = _json_body(request) or {}
     note = str((data.get("note") or data.get("reason") or "").strip()) or None
     team = reject_team(team, acc, note)
+    record_audit(
+        actor=acc,
+        action="team.reject",
+        summary=f"Từ chối đội {team.code} - {team.name}",
+        target_type="Team",
+        target_id=team.id,
+        after_data={
+            "approval_status": team.approval_status,
+            "approval_note": team.approval_note,
+        },
+        reversible=False,
+    )
     return JsonResponse({
         "code": team.code, "approval_status": team.approval_status,
         "approval_note": team.approval_note,

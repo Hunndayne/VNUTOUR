@@ -3,7 +3,14 @@ import json
 
 from django.test import TestCase
 
-from api.models import Account, Participant, ProgramPhase, Team, TeamMembership
+from api.models import (
+    Account,
+    Participant,
+    ProgramPhase,
+    SystemSetting,
+    Team,
+    TeamMembership,
+)
 from api.services.auth_service import generate_session
 from api.views_participant import _member_resolution, _prepare_member_submission
 
@@ -126,6 +133,7 @@ class ParticipantMemberSubmissionTests(TestCase):
             order=1,
             is_current=True,
         )
+        SystemSetting.objects.create(key="registration_open", value=True)
         captain_account = Account.objects.create(
             username="captain",
             email="captain@example.com",

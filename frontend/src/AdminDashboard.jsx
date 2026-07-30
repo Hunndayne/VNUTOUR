@@ -8,6 +8,7 @@ import EmailPage from './EmailPage.jsx'
 import EventManagementPage from './EventManagementPage.jsx'
 import ScoreManagementPage from './ScoreManagementPage.jsx'
 import SettingsPage from './SettingsPage.jsx'
+import OperationsPage from './OperationsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
 
@@ -61,6 +62,7 @@ const NAV_ITEMS = [
   { key: 'discord', label: 'Quản lý Discord', icon: 'chat' },
   { key: 'accounts', label: 'Quản lý tài khoản', icon: 'userCircle' },
   { key: 'email', label: 'Gửi email', icon: 'mail' },
+  { key: 'operations', label: 'Vận hành & dữ liệu', icon: 'doc' },
 ]
 
 const PHASES = FIXED_PHASES
@@ -830,9 +832,10 @@ function AdminDashboard() {
     discord: 'Quản lý Discord',
     accounts: 'Quản lý tài khoản',
     email: 'Gửi email',
+    operations: 'Vận hành & dữ liệu',
     settings: 'Cài đặt',
   }
-  const tabIcon = { events: 'ticket', teams: 'users', scores: 'check', stations: 'flag', discord: 'chat', accounts: 'userCircle', email: 'mail' }
+  const tabIcon = { events: 'ticket', teams: 'users', scores: 'check', stations: 'flag', discord: 'chat', accounts: 'userCircle', email: 'mail', operations: 'doc' }
 
   return (
     <div className="min-h-screen bg-paper font-sans text-ink">
@@ -916,6 +919,8 @@ function AdminDashboard() {
               <AccountsPage />
             ) : activeTab === 'email' ? (
               <EmailPage />
+            ) : activeTab === 'operations' ? (
+              <OperationsPage />
             ) : activeTab === 'settings' ? (
               <SettingsPage />
             ) : (
