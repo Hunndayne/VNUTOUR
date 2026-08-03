@@ -10,8 +10,8 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from api.models import (
-    Account, Participant, Team, TeamMembership, PhaseRoster, ProgramPhase,
-    Station, SubEvent, StationSession, StationSubmission,
+    Account, CaptainVote, Participant, Team, TeamMembership, PhaseRoster,
+    ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
 )
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
@@ -28,6 +28,7 @@ from api.services.submission_config_service import (
     grade_quiz as grade_submission_quiz,
 )
 from api.services.team_form_variant_service import variant_item_ids
+from api.services import team_merge_service
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -935,4 +936,65 @@ def my_experience_view(request: HttpRequest):
         "team_in_current_phase": in_current_phase,
         "registration_open": registration_is_open(),
         "open_forms": open_forms,
+    })
+
+
+@csrf_exempt
+def my_team_captain_vote_view(request: HttpRequest):
+    """GET the open captain ballot, POST {candidate_mssv} to cast or change a vote.
+
+    The ballot is secret: the payload carries tallies and whether *you* have
+    voted, never who anyone voted for.
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team", "participant").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    me = membership.participant
+
+    if request.method == "POST":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        candidate_mssv = str((data.get("candidate_mssv") or "").strip())
+        candidate = Participant.objects.filter(mssv=candidate_mssv).first()
+        if not candidate:
+            return JsonResponse({"error": "candidate_not_found"}, status=404)
+
+        vote_error = team_merge_service.cast_vote(team, me, candidate)
+        if vote_error:
+            status = 409 if vote_error == "captain_already_elected" else 400
+            return JsonResponse({"error": vote_error}, status=status)
+        team_merge_service.resolve_election(team)
+    elif request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    result = team_merge_service.tally(team)
+    members = TeamMembership.objects.filter(team=team).select_related("participant")
+    captain = members.filter(is_captain=True).first()
+
+    return JsonResponse({
+        "open": captain is None and result["member_count"] > 1,
+        "captain_mssv": captain.participant.mssv if captain else None,
+        "i_have_voted": CaptainVote.objects.filter(team=team, voter=me).exists(),
+        "votes_cast": result["votes_cast"],
+        "member_count": result["member_count"],
+        "candidates": [
+            {
+                "mssv": m.participant.mssv,
+                "full_name": m.participant.full_name,
+                "votes": result["counts"].get(m.participant_id, 0),
+            }
+            for m in members
+        ],
+        "can_rename_team": team_merge_service.may_rename(team, me),
     })

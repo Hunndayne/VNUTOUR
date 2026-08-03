@@ -16,6 +16,7 @@ from api.services.team_service import (
     get_team_members, add_member, link_account_profile,
 )
 from api.services.audit_service import record_audit
+from api.services import team_merge_service
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 
 
@@ -492,3 +493,66 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         return JsonResponse({"status": "deactivated"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+# =====================================================================
+# Team merge
+# =====================================================================
+
+@csrf_exempt
+def team_merge_view(request: HttpRequest):
+    """POST {source_code, target_code}: fold one under-strength team into another.
+
+    The combined team keeps the target's code, loses both captains and is renamed
+    to that code, then opens a secret captain ballot — see team_merge_service.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    source_code = str((data.get("source_code") or "").strip())
+    target_code = str((data.get("target_code") or "").strip())
+    if not source_code or not target_code:
+        return JsonResponse({"error": "missing_team_codes"}, status=400)
+
+    source = Team.objects.filter(code=source_code).first()
+    target = Team.objects.filter(code=target_code).first()
+    if not source or not target:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    conflict = team_merge_service.can_merge(source, target)
+    if conflict:
+        return JsonResponse({"error": conflict}, status=409)
+
+    before = {
+        "source": {"code": source.code, "name": source.name,
+                   "members": TeamMembership.objects.filter(team=source).count()},
+        "target": {"code": target.code, "name": target.name,
+                   "members": TeamMembership.objects.filter(team=target).count()},
+    }
+    merged = team_merge_service.merge_teams(source, target)
+    record_audit(
+        actor=acc,
+        action="team.merge",
+        summary=f"Ghép đội {source_code} vào {merged.code}",
+        target_type="Team",
+        target_id=merged.code,
+        before_data=before,
+        after_data={"code": merged.code, "name": merged.name,
+                    "members": TeamMembership.objects.filter(team=merged).count()},
+        reversible=False,
+    )
+
+    return JsonResponse({
+        "code": merged.code,
+        "name": merged.name,
+        "merged_from": source_code,
+        "member_count": TeamMembership.objects.filter(team=merged).count(),
+        "captain_vote_open": True,
+    })

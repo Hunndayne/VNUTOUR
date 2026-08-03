@@ -651,6 +651,39 @@ class StationSubmission(models.Model):
 
 
 # =====================================================================
+# 14a. CaptainVote
+# =====================================================================
+
+class CaptainVote(models.Model):
+    """A secret ballot for team captain, opened when teams are merged.
+
+    Merging leaves a team with no captain — neither original captain has a claim
+    on the other's members — so the team elects one. The ballot is secret: only
+    tallies are ever exposed, never who voted for whom, and one vote per member
+    (changing your mind replaces it rather than adding another).
+    """
+
+    team = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="captain_votes",
+    )
+    voter = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="captain_votes_cast",
+    )
+    candidate = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="captain_votes_received",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "captain_vote"
+        unique_together = [("team", "voter")]
+
+    def __str__(self) -> str:
+        return f"Vote in {self.team.code}"
+
+
+# =====================================================================
 # 14b. TeamFormVariant
 # =====================================================================
 
