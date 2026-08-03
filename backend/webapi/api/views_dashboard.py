@@ -2,6 +2,7 @@
 Dashboard, settings & health views — §9.11.
 """
 
+import logging
 from datetime import datetime, timezone
 
 from django.http import JsonResponse, HttpRequest
@@ -14,6 +15,8 @@ from api.models import (
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 from api.services.audit_service import record_audit
+
+logger = logging.getLogger(__name__)
 
 
 # =====================================================================
@@ -29,8 +32,12 @@ def health(request: HttpRequest):
             "status": "ok",
             "time": datetime.now(timezone.utc).isoformat(),
         })
-    except Exception as e:
-        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+    except Exception:
+        # The health endpoint is unauthenticated, so the database's own words —
+        # driver, host, port, sometimes the credentials it tried — must not go
+        # out with it. Keep the detail in the server log.
+        logger.exception("Health check failed")
+        return JsonResponse({"status": "error"}, status=500)
 
 
 # =====================================================================

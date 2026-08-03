@@ -13,6 +13,7 @@ from typing import Any
 from django.http import JsonResponse, HttpRequest
 from django.conf import settings
 from django.core.cache import cache
+from django.middleware.csrf import CsrfViewMiddleware
 
 from api.services.auth_service import find_by_token
 from api.models import Account
@@ -38,8 +39,24 @@ def _json_body(request: HttpRequest) -> dict | None:
 
 # --- Auth helpers ---
 
-def _extract_token(request: HttpRequest) -> str | None:
-    """Extract token from Authorization header or HttpOnly cookie."""
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+class _CsrfChecker(CsrfViewMiddleware):
+    """Runs the stock CSRF check on demand and reports the reason instead of a response.
+
+    Nearly every mutating view here is `@csrf_exempt`, which suits the token in
+    the Authorization header — a browser never attaches that header to someone
+    else's cross-site request. It does not suit the auth cookie, which browsers
+    do attach automatically, so a cookie session needs the check put back.
+    """
+
+    def _reject(self, request, reason):
+        return reason
+
+
+def _token_from_request(request: HttpRequest) -> tuple[str | None, bool]:
+    """Return (token, came_from_cookie)."""
     header = request.headers.get("Authorization") or request.META.get("HTTP_AUTHORIZATION")
     token = None
     if header:
@@ -48,9 +65,31 @@ def _extract_token(request: HttpRequest) -> str | None:
             token = parts[1].strip()
         elif len(parts) == 1:
             token = parts[0].strip()
-    if not token:
-        token = request.COOKIES.get(AUTH_COOKIE_NAME)
-    return token or None
+    if token:
+        return token, False
+    cookie_token = request.COOKIES.get(AUTH_COOKIE_NAME)
+    return (cookie_token or None), bool(cookie_token)
+
+
+def _extract_token(request: HttpRequest) -> str | None:
+    """Extract token from Authorization header or HttpOnly cookie."""
+    token, _ = _token_from_request(request)
+    return token
+
+
+def _cookie_session_csrf_error(request: HttpRequest, from_cookie: bool):
+    """403 when a cookie-authenticated write arrives without a valid CSRF token.
+
+    SameSite=Lax blocks the obvious cross-site POST, but it is one cookie
+    attribute away from not applying, and it never covered a sibling subdomain.
+    Returns None when the request is safe, header-authenticated, or checks out.
+    """
+    if not from_cookie or request.method in SAFE_METHODS:
+        return None
+    reason = _CsrfChecker(lambda r: None).process_view(request, None, (), {})
+    if reason is None:
+        return None
+    return JsonResponse({"error": "csrf_required"}, status=403)
 
 
 def _client_ip(request: HttpRequest) -> str:
@@ -95,13 +134,16 @@ def _consume_rate_limit(
 
 
 def _auth_or_401(request: HttpRequest):
-    """Return (account, None) or (None, JsonResponse 401)."""
-    token = _extract_token(request)
+    """Return (account, None) or (None, JsonResponse 401/403)."""
+    token, from_cookie = _token_from_request(request)
     if not token:
         return None, JsonResponse({"error": "missing_token"}, status=401)
     acc = find_by_token(token)
     if not acc:
         return None, JsonResponse({"error": "invalid_token"}, status=401)
+    csrf_error = _cookie_session_csrf_error(request, from_cookie)
+    if csrf_error is not None:
+        return None, csrf_error
     return acc, None
 
 

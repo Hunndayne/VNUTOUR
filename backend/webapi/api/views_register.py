@@ -18,6 +18,21 @@ def _registration_closed_response():
     return JsonResponse({"error": "registration_closed"}, status=403)
 
 
+# Errors that mean "this identity is already spoken for" rather than "your form
+# is malformed". They deserve 409 so a caller can tell the two apart.
+_CONFLICT_CODES = frozenset({
+    "mssv_in_other_team",
+    "mssv_email_mismatch",
+    "duplicate_mssv_in_team",
+})
+
+
+def _registration_error_response(err: str):
+    code = str(err).split(":", 1)[0]
+    status = 409 if code in _CONFLICT_CODES else 400
+    return JsonResponse({"error": err}, status=status)
+
+
 def schema_view(request: HttpRequest):
     """GET the active registration form schema so the FE can render fields."""
     if request.method != "GET":
@@ -46,7 +61,7 @@ def register_individual_view(request: HttpRequest):
 
     participant, err = registration_service.register_individual(data)
     if err:
-        return JsonResponse({"error": err}, status=400)
+        return _registration_error_response(err)
     return JsonResponse({"mssv": participant.mssv, "mode": "individual"}, status=201)
 
 
@@ -93,7 +108,7 @@ def register_team_view(request: HttpRequest):
 
     team, err = registration_service.register_team(data)
     if err:
-        return JsonResponse({"error": err}, status=400)
+        return _registration_error_response(err)
     return JsonResponse({
         "code": team.code,
         "name": team.name,
