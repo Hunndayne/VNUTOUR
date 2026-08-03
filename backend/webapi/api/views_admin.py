@@ -16,7 +16,7 @@ from api.services.team_service import (
     get_team_members, add_member, link_account_profile,
 )
 from api.services.audit_service import record_audit
-from .views_shared import _json_body, _auth_or_401, _require_role
+from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 
 
 # =====================================================================
@@ -66,7 +66,7 @@ def teams_collection_view(request: HttpRequest):
                     "is_late_registration": t.is_late_registration,
                     "created_at": t.created_at.isoformat(),
             }
-            if acc.role == Account.ROLE_ADMIN:
+            if is_admin(acc):
                 item.update({
                     "owner_username": t.owner_account.username if t.owner_account else None,
                     "provision_state": t.provision_state,
@@ -84,7 +84,7 @@ def teams_collection_view(request: HttpRequest):
         })
 
     if request.method == "POST":
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
 
         data = _json_body(request)
@@ -160,11 +160,11 @@ def team_item_view(request: HttpRequest, team_key: str):
             "created_at": team.created_at.isoformat(),
             "members": get_team_members(
                 team,
-                visibility="full" if acc.role == Account.ROLE_ADMIN else "basic",
+                visibility="full" if is_admin(acc) else "basic",
                 requester=acc,
             ),
         }
-        if acc.role == Account.ROLE_ADMIN:
+        if is_admin(acc):
             payload.update({
                 "owner_username": team.owner_account.username if team.owner_account else None,
                 "approval_note": team.approval_note,
@@ -180,7 +180,7 @@ def team_item_view(request: HttpRequest, team_key: str):
         return JsonResponse(payload)
 
     if request.method == "PATCH":
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
 
         data = _json_body(request)
@@ -213,7 +213,7 @@ def team_item_view(request: HttpRequest, team_key: str):
         })
 
     if request.method == "DELETE":
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
         code = team.code
         team.delete()

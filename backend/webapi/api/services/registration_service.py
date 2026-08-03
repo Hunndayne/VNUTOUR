@@ -288,8 +288,13 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     total_members = len(validated_members) + 1
     if total_members < min_size or total_members > max_size:
         return None, f"team_size_out_of_range:{min_size}-{max_size}"
+    # Naming is reserved for full teams: an under-strength team is still going to
+    # be merged with others by the organisers, so whatever it called itself would
+    # not survive anyway.
     if total_members == max_size and not team_name:
         return None, "missing:team:team_name"
+    if total_members < max_size and team_name:
+        return None, f"team_name_requires_full_team:{max_size}"
     if not team_name:
         team_name = f"Pending team {cap_cols['mssv']}"
 

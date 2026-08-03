@@ -166,6 +166,16 @@ def _require_role(request: HttpRequest, *roles: str):
     return acc, None
 
 
+def is_admin(acc) -> bool:
+    """Whether an account has admin authority — master admins included.
+
+    Views that branch on the role inline (to widen a payload, to allow an edit)
+    must go through this rather than comparing to ROLE_ADMIN directly, or a
+    master admin silently gets treated as less privileged than an admin.
+    """
+    return bool(acc) and acc.role in (Account.ROLE_ADMIN, Account.ROLE_MASTER_ADMIN)
+
+
 def _require_master_admin(request: HttpRequest):
     """Auth + master-admin check, for changes to the shape of the programme.
 

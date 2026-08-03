@@ -27,8 +27,9 @@ class RegistrationServiceTests(TestCase):
             is_current=True,
         )
 
+        # A one-person team cannot be named — that is reserved for full teams —
+        # so it registers unnamed and picks up the placeholder.
         team, error = register_team({
-            "team_name": "Late Team",
             "captain": person("SV001"),
             "members": [],
         })
@@ -39,6 +40,7 @@ class RegistrationServiceTests(TestCase):
         self.assertEqual(team.approval_status, Team.APPROVAL_PENDING)
         self.assertTrue(team.is_late_registration)
         self.assertIsNotNone(team.submitted_at)
+        self.assertEqual(team.name, "Pending team SV001")
 
 
 class PreloadedMssvClaimTests(TestCase):
@@ -86,3 +88,48 @@ class PreloadedMssvClaimTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(participant.mssv, "SV103")
+
+
+class TeamNamingRuleTests(TestCase):
+    """Only a full team may choose its own name."""
+
+    def _members(self, count):
+        return [person(f"SV2{i:02d}") for i in range(count)]
+
+    def test_a_full_team_must_be_named(self):
+        team, error = register_team({
+            "captain": person("SV200"),
+            "members": self._members(4),
+        })
+
+        self.assertIsNone(team)
+        self.assertEqual(error, "missing:team:team_name")
+
+    def test_a_full_team_keeps_the_name_it_chose(self):
+        team, error = register_team({
+            "team_name": "Doi Ngu Manh",
+            "captain": person("SV210"),
+            "members": [person(f"SV2{i:02d}") for i in range(11, 15)],
+        })
+
+        self.assertIsNone(error)
+        self.assertEqual(team.name, "Doi Ngu Manh")
+
+    def test_an_under_strength_team_may_not_choose_a_name(self):
+        team, error = register_team({
+            "team_name": "Ten Dat Som",
+            "captain": person("SV220"),
+            "members": [person("SV221")],
+        })
+
+        self.assertIsNone(team)
+        self.assertEqual(error, "team_name_requires_full_team:5")
+
+    def test_an_under_strength_team_registers_fine_without_a_name(self):
+        team, error = register_team({
+            "captain": person("SV230"),
+            "members": [person("SV231")],
+        })
+
+        self.assertIsNone(error)
+        self.assertEqual(team.name, "Pending team SV230")

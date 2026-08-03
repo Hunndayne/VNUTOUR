@@ -10,7 +10,9 @@ import json
 
 from django.test import TestCase
 
-from api.models import Account, ProgramPhase, Station, SubEvent
+from api.models import (
+    Account, Participant, ProgramPhase, Station, SubEvent, Team, TeamMembership,
+)
 from api.services.auth_service import generate_session
 
 
@@ -194,3 +196,67 @@ class MasterAdminPermissionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.admin.refresh_from_db()
         self.assertEqual(self.admin.role, Account.ROLE_MASTER_ADMIN)
+
+
+class MasterAdminSeesFullPayloadsTests(TestCase):
+    """Views that widen a payload for admins must widen it for masters too.
+
+    These branch inline on the role instead of going through `_require_role`, so
+    they do not inherit the superset rule automatically. A master admin reading a
+    team was briefly shown the collab-level payload, which drops `has_account` —
+    the admin UI then reported that members with a web account had none.
+    """
+
+    def setUp(self):
+        self.master = Account.objects.create(
+            username="boss2", email="boss2@example.com",
+            password_hash="x", role=Account.ROLE_MASTER_ADMIN,
+        )
+        self.admin = Account.objects.create(
+            username="ops2", email="ops2@example.com",
+            password_hash="x", role=Account.ROLE_ADMIN,
+        )
+        self.team = Team.objects.create(
+            code="T9001", name="Doi Thu Nghiem",
+            approval_status=Team.APPROVAL_DRAFT,
+        )
+        member_account = Account.objects.create(
+            username="co-thanh-vien", email="tv@example.com",
+            password_hash="x", role=Account.ROLE_PARTICIPANT, mssv="SV777",
+        )
+        participant = Participant.objects.create(
+            mssv="SV777", full_name="Co Tai Khoan", email="tv@example.com",
+            account=member_account,
+        )
+        TeamMembership.objects.create(
+            team=self.team, participant=participant, is_captain=True,
+        )
+
+    def _members_seen_by(self, account):
+        response = self.client.get(
+            f"/api/teams/{self.team.code}",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(account)}",
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.json()["members"]
+
+    def test_master_admin_sees_the_same_member_payload_as_an_admin(self):
+        as_admin = self._members_seen_by(self.admin)
+        as_master = self._members_seen_by(self.master)
+
+        self.assertEqual(as_master, as_admin)
+
+    def test_a_member_with_an_account_is_reported_as_having_one(self):
+        for actor in (self.admin, self.master):
+            with self.subTest(role=actor.role):
+                members = self._members_seen_by(actor)
+                self.assertTrue(members[0]["has_account"])
+                self.assertEqual(members[0]["account_email"], "tv@example.com")
+
+    def test_master_admin_gets_the_admin_only_team_fields(self):
+        response = self.client.get(
+            f"/api/teams/{self.team.code}",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(self.master)}",
+        )
+
+        self.assertIn("provision_state", response.json())

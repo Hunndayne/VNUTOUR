@@ -13,7 +13,7 @@ from api.models import (
     SubEvent, EventCheckIn, StationSession, ScoreEntry,
     SystemSetting,
 )
-from .views_shared import _json_body, _auth_or_401, _require_role
+from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 from api.services.audit_service import record_audit
 
 logger = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ def settings_view(request: HttpRequest):
         return JsonResponse(settings)
 
     if request.method in ("PUT", "PATCH"):
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
 
         data = _json_body(request)

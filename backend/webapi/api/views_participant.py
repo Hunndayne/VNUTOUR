@@ -131,6 +131,20 @@ def _member_resolution(data: dict):
     return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
 
 
+def _team_size_max() -> int:
+    schema = get_schema()
+    return int(schema.get("team_size_max") or schema.get("team_size") or 5)
+
+
+def _placeholder_team_name(mssv: str) -> str:
+    """Stand-in name until the team is full and may be named for real.
+
+    Same shape `register_team` already uses, so a team created either way reads
+    the same in the admin list.
+    """
+    return f"Pending team {mssv}"
+
+
 def _submission_limits(config: dict | None) -> dict:
     limits = normalize_submission_config(config)["limits"]
     return {
@@ -365,7 +379,15 @@ def my_team_view(request: HttpRequest):
         if existing:
             return JsonResponse({"error": "already_has_team", "team_code": existing.team.code}, status=409)
 
-        team, err = create_team(name, owner_account=acc)
+        # Naming is reserved for full teams. A team starts with its captain
+        # alone, so there is never a point at creation where a name is allowed;
+        # it carries a placeholder until the fifth member arrives.
+        if name:
+            return JsonResponse(
+                {"error": f"team_name_requires_full_team:{_team_size_max()}"},
+                status=409,
+            )
+        team, err = create_team(_placeholder_team_name(acc.mssv), owner_account=acc)
         if err:
             return JsonResponse({"error": err}, status=400)
 
@@ -410,6 +432,16 @@ def my_team_view(request: HttpRequest):
         if not new_name:
             return JsonResponse({"error": "missing_team_name"}, status=400)
 
+        # Only a full team may be named. Resending the placeholder unchanged is
+        # allowed, so an under-strength captain can still update payment_proof
+        # through this same endpoint.
+        max_size = _team_size_max()
+        if new_name != team.name and len(get_team_members(team)) < max_size:
+            return JsonResponse(
+                {"error": f"team_name_requires_full_team:{max_size}"},
+                status=409,
+            )
+
         team.name = new_name
         if "payment_proof" in data:
             team.payment_proof = str((data.get("payment_proof") or "").strip()) or None
@@ -445,9 +477,17 @@ def my_team_submit_view(request: HttpRequest):
     team = membership.team
     schema = get_schema()
     members = get_team_members(team)
-    expected_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
-    if len(members) != expected_size:
-        return JsonResponse({"error": f"team_size_mismatch:expected_{expected_size}"}, status=409)
+    # An under-strength team may submit: this is a freshers' event, so people
+    # sign up before they know four others, and the organisers merge teams up to
+    # full size afterwards. Only the ceiling is enforced here, matching the range
+    # that public registration has always allowed in `register_team`.
+    min_size = int(schema.get("team_size_min") or 1)
+    max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
+    if len(members) < min_size or len(members) > max_size:
+        return JsonResponse(
+            {"error": f"team_size_out_of_range:{min_size}-{max_size}"},
+            status=409,
+        )
 
     for field in schema.get("team_fields", []):
         if field.get("enabled", True) and field.get("required") and field.get("key") == "payment_proof":
