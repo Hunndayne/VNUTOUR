@@ -2,6 +2,7 @@
 Dashboard, settings & health views — §9.11.
 """
 
+import logging
 from datetime import datetime, timezone
 
 from django.http import JsonResponse, HttpRequest
@@ -12,7 +13,10 @@ from api.models import (
     SubEvent, EventCheckIn, StationSession, ScoreEntry,
     SystemSetting,
 )
-from .views_shared import _json_body, _auth_or_401, _require_role
+from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
+from api.services.audit_service import record_audit
+
+logger = logging.getLogger(__name__)
 
 
 # =====================================================================
@@ -28,8 +32,12 @@ def health(request: HttpRequest):
             "status": "ok",
             "time": datetime.now(timezone.utc).isoformat(),
         })
-    except Exception as e:
-        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+    except Exception:
+        # The health endpoint is unauthenticated, so the database's own words —
+        # driver, host, port, sometimes the credentials it tried — must not go
+        # out with it. Keep the detail in the server log.
+        logger.exception("Health check failed")
+        return JsonResponse({"status": "error"}, status=500)
 
 
 # =====================================================================
@@ -150,7 +158,7 @@ def settings_view(request: HttpRequest):
         return JsonResponse(settings)
 
     if request.method in ("PUT", "PATCH"):
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
 
         data = _json_body(request)
@@ -164,6 +172,12 @@ def settings_view(request: HttpRequest):
             "sheet_import_enabled": False,
             "sheet_checkin_export_enabled": False,
         }
+
+        changed_keys = [key for key in default_settings if key in data]
+        before_values = {}
+        for key in changed_keys:
+            setting = SystemSetting.objects.filter(key=key).first()
+            before_values[key] = setting.value if setting else None
 
         for key, default in default_settings.items():
             if key in data:
@@ -181,6 +195,21 @@ def settings_view(request: HttpRequest):
             setting = SystemSetting.objects.filter(key=key).first()
             if setting is not None:
                 response_settings[key] = setting.value
+
+        after_values = {
+            key: response_settings[key]
+            for key in changed_keys
+        }
+        if changed_keys and before_values != after_values:
+            record_audit(
+                actor=acc,
+                action="settings.update",
+                summary=f"Cập nhật {len(changed_keys)} cấu hình hệ thống",
+                target_type="SystemSetting",
+                before_data=before_values,
+                after_data=after_values,
+                reversible=True,
+            )
 
         return JsonResponse(response_settings)
 

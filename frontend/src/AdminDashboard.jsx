@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import logoImage from './assets/vnutour-logo.png'
 import TeamsPage from './TeamsPage.jsx'
 import StationsPage from './StationsPage.jsx'
@@ -8,8 +8,9 @@ import EmailPage from './EmailPage.jsx'
 import EventManagementPage from './EventManagementPage.jsx'
 import ScoreManagementPage from './ScoreManagementPage.jsx'
 import SettingsPage from './SettingsPage.jsx'
+import OperationsPage from './OperationsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
-import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
+import { apiRequest, formatDateTime, getStoredUser, isMasterAdmin, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
 
 // ─────────────────────────────────────────────────────────────────────
 // Icon set — outline SVGs, no emoji
@@ -34,6 +35,7 @@ const ICON_PATHS = {
   logout: 'M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l3 3m0 0-3 3m3-3H2.25',
   star: 'M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z',
   menu: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5',
+  chevronUpDown: 'M8.25 15 12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9',
   gear: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.241.437-.613.43-.992a7.723 7.723 0 0 1 0-.255c.007-.378-.138-.75-.43-.991l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
   mail: 'M21.75 9v.906a2.25 2.25 0 0 1-1.183 1.981l-6.478 3.488a2.25 2.25 0 0 1-2.178 0l-6.478-3.488A2.25 2.25 0 0 1 2.25 9.906V9m18 0A2.25 2.25 0 0 0 18 6.75H6A2.25 2.25 0 0 0 3.75 9m18 0v6a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 15V9',
 }
@@ -52,16 +54,50 @@ function Icon({ name, className = 'h-5 w-5' }) {
 // ─────────────────────────────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────────────────────────────
-const NAV_ITEMS = [
-  { key: 'dashboard', label: 'Tổng quan', icon: 'grid' },
-  { key: 'events', label: 'Quản lý sự kiện', icon: 'ticket' },
-  { key: 'teams', label: 'Quản lý đội', icon: 'users' },
-  { key: 'scores', label: 'Điểm & suất đi tiếp', icon: 'check' },
-  { key: 'stations', label: 'Quản lý trạm', icon: 'flag' },
-  { key: 'discord', label: 'Quản lý Discord', icon: 'chat' },
-  { key: 'accounts', label: 'Quản lý tài khoản', icon: 'userCircle' },
-  { key: 'email', label: 'Gửi email', icon: 'mail' },
+// Nav is grouped by what the admin is acting on: the running event, the people
+// in it, then the system underneath. Labels drop the "Quản lý" prefix — the
+// group heading already says it, and repeating it made every row look alike.
+const NAV_GROUPS = [
+  {
+    key: 'main',
+    items: [
+      { key: 'dashboard', label: 'Tổng quan', icon: 'grid' },
+    ],
+  },
+  {
+    key: 'ops',
+    label: 'Vận hành',
+    items: [
+      { key: 'events', label: 'Sự kiện & phase', icon: 'ticket' },
+      { key: 'stations', label: 'Trạm', icon: 'flag' },
+      { key: 'teams', label: 'Đội thi', icon: 'users' },
+      { key: 'scores', label: 'Điểm & suất đi tiếp', icon: 'check' },
+    ],
+  },
+  {
+    key: 'people',
+    label: 'Người dùng',
+    items: [
+      { key: 'accounts', label: 'Tài khoản', icon: 'userCircle' },
+      { key: 'discord', label: 'Discord', icon: 'chat' },
+      { key: 'email', label: 'Email', icon: 'mail' },
+    ],
+  },
+  {
+    key: 'system',
+    label: 'Hệ thống',
+    items: [
+      { key: 'operations', label: 'Dữ liệu & nhật ký', icon: 'doc' },
+    ],
+  },
 ]
+
+// Page title + fallback icon per tab. `settings` is reachable from the user
+// menu rather than the nav, so it is registered here on its own.
+const TAB_META = {
+  ...Object.fromEntries(NAV_GROUPS.flatMap(g => g.items).map(item => [item.key, item])),
+  settings: { key: 'settings', label: 'Cài đặt tài khoản', icon: 'gear' },
+}
 
 const PHASES = FIXED_PHASES
 
@@ -150,6 +186,7 @@ function explainApiError(error) {
     phase_not_found: 'Không tìm thấy phase cần thao tác.',
     not_found: 'Không tìm thấy dữ liệu cần chỉnh sửa.',
     missing_name: 'Event cần có tên trước khi lưu.',
+    master_admin_required: 'Chỉ master admin mới được đổi phase hiện tại hoặc sửa cấu trúc chương trình (lịch phase, event con).',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu admin.'
 }
@@ -173,6 +210,78 @@ function Contours() {
 // ─────────────────────────────────────────────────────────────────────
 // Sidebar
 // ─────────────────────────────────────────────────────────────────────
+function UserMenu({ user, activeTab, onTabChange }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+  const settingsActive = activeTab === 'settings'
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onPointerDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    const onKeyDown = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  const itemCls = 'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-medium transition'
+
+  return (
+    <div ref={wrapRef} className="relative border-t border-stone p-3">
+      {open && (
+        <div
+          role="menu"
+          className="absolute bottom-full left-3 right-3 mb-2 overflow-hidden rounded-lg border border-stone bg-white py-1 shadow-[0_8px_24px_rgba(32,49,43,0.14)]"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { onTabChange('settings'); setOpen(false) }}
+            className={`${itemCls} ${settingsActive ? 'bg-gold/10 text-ink' : 'text-ink/70 hover:bg-paper hover:text-ink'}`}
+          >
+            <Icon name="gear" className="h-4 w-4" />
+            <span>Cài đặt tài khoản</span>
+          </button>
+          <div className="my-1 h-px bg-stone" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => logoutAndRedirect('/login')}
+            className={`${itemCls} text-clay hover:bg-clay/5`}
+          >
+            <Icon name="logout" className="h-4 w-4" />
+            <span>Đăng xuất</span>
+          </button>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition ${
+          open || settingsActive ? 'bg-paper' : 'hover:bg-paper'
+        }`}
+      >
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-trail font-display text-sm font-bold text-white">
+          {(user.username || 'A').charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-ink">{user.username}</p>
+          <p className="truncate font-mono text-[11px] text-ink/45">{user.email}</p>
+        </div>
+        <Icon name="chevronUpDown" className="h-4 w-4 shrink-0 text-ink/30" />
+      </button>
+    </div>
+  )
+}
+
 function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
   return (
     <>
@@ -191,37 +300,38 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
-          {NAV_ITEMS.map(item => {
-            const active = activeTab === item.key
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => onTabChange(item.key)}
-                className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
-                  active ? 'bg-gold/10 font-semibold text-ink' : 'font-medium text-ink/55 hover:bg-paper hover:text-ink'
-                }`}
-              >
-                {active && <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gold" />}
-                <Icon name={item.icon} className="h-5 w-5" />
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
+          {NAV_GROUPS.map((group, groupIndex) => (
+            <div key={group.key} className={groupIndex > 0 ? 'mt-5' : ''}>
+              {group.label && (
+                <p className="px-3 pb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink/35">
+                  {group.label}
+                </p>
+              )}
+              <div className="space-y-0.5">
+                {group.items.map(item => {
+                  const active = activeTab === item.key
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => onTabChange(item.key)}
+                      className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
+                        active ? 'bg-gold/10 font-semibold text-ink' : 'font-medium text-ink/55 hover:bg-paper hover:text-ink'
+                      }`}
+                    >
+                      {active && <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gold" />}
+                      <Icon name={item.icon} className="h-5 w-5" />
+                      <span>{item.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
-        <div className="border-t border-stone p-3">
-          <div className="flex items-center gap-3 rounded-lg px-2 py-1">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-trail font-display text-sm font-bold text-white">
-              {(user.username || 'A').charAt(0).toUpperCase()}
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink">{user.username}</p>
-              <p className="truncate font-mono text-[11px] text-ink/45">{user.email}</p>
-            </div>
-          </div>
-        </div>
+        <UserMenu user={user} activeTab={activeTab} onTabChange={onTabChange} />
       </aside>
     </>
   )
@@ -230,7 +340,7 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
 // ─────────────────────────────────────────────────────────────────────
 // Header
 // ─────────────────────────────────────────────────────────────────────
-function Header({ title, onMenu, currentPhaseLabel, user, onSettings, settingsActive }) {
+function Header({ title, onMenu, currentPhaseLabel, user }) {
   return (
     <header className="sticky top-0 z-30 border-b border-stone bg-paper/85 backdrop-blur">
       <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6">
@@ -248,19 +358,6 @@ function Header({ title, onMenu, currentPhaseLabel, user, onSettings, settingsAc
             <span className="hidden sm:inline">Phase:</span> {currentPhaseLabel}
           </div>
 
-          <button
-            type="button"
-            onClick={onSettings}
-            className={`rounded-lg border p-2 transition ${
-              settingsActive
-                ? 'border-trail/30 bg-trail/10 text-trail'
-                : 'border-stone bg-white text-ink/45 hover:text-ink'
-            }`}
-            title="Cài đặt"
-          >
-            <Icon name="gear" />
-          </button>
-
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-trail font-display text-sm font-bold text-white">
             {(user.username || 'A').charAt(0).toUpperCase()}
           </div>
@@ -273,7 +370,7 @@ function Header({ title, onMenu, currentPhaseLabel, user, onSettings, settingsAc
 // ─────────────────────────────────────────────────────────────────────
 // Signature: expedition phase trail
 // ─────────────────────────────────────────────────────────────────────
-function PhaseTrail({ phase, phases, onChange }) {
+function PhaseTrail({ phase, phases, onChange, canChange = true }) {
   const visiblePhases = phases?.length ? phases : PHASES
   const current = visiblePhases.findIndex((p) => p.key === phase)
   return (
@@ -291,7 +388,12 @@ function PhaseTrail({ phase, phases, onChange }) {
           const rightFilled = i < current
           return (
             <Fragment key={p.key}>
-              <button type="button" onClick={() => onChange(p.key)} className="flex flex-1 flex-col items-center">
+              <button
+                type="button"
+                onClick={() => onChange(p.key)}
+                disabled={!canChange}
+                className="flex flex-1 flex-col items-center disabled:cursor-not-allowed disabled:opacity-40"
+              >
                 <div className="flex w-full items-center">
                   <Segment filled={leftFilled} hidden={i === 0} />
                   <span
@@ -318,6 +420,12 @@ function PhaseTrail({ phase, phases, onChange }) {
           )
         })}
       </div>
+
+      {!canChange && (
+        <p className="mt-4 text-xs leading-5 text-ink/45">
+          Chỉ master admin mới chuyển được phase hiện tại, nên các mốc trên đang bị khóa.
+        </p>
+      )}
     </div>
   )
 }
@@ -642,6 +750,33 @@ function AdminDashboard() {
   const [, setBusyAction] = useState('')
   const [apiError, setApiError] = useState('')
 
+  // Reshaping the programme — current phase, phase calendar, sub-events — is
+  // master-admin only. The backend answers 403 `master_admin_required`, so a
+  // plain admin is stopped here instead of being walked into a refusal.
+  const canEditProgram = isMasterAdmin(user)
+  const programLockedMessage = () => explainApiError({ data: { error: 'master_admin_required' } })
+
+  // The role is written to localStorage at login and never again, so an account
+  // promoted or demoted since then would keep the old set of controls until it
+  // logged out. Re-read it from the server once on mount and store the answer.
+  useEffect(() => {
+    let cancelled = false
+    apiRequest('/auth/me')
+      .then(me => {
+        if (cancelled || !me?.role) return
+        setUser(prev => {
+          if (prev?.role === me.role) return prev
+          const next = { ...prev, role: me.role }
+          try {
+            window.localStorage.setItem('user', JSON.stringify(next))
+          } catch { /* storage unavailable — the in-memory role still applies */ }
+          return next
+        })
+      })
+      .catch(() => { /* the pages below surface their own auth errors */ })
+    return () => { cancelled = true }
+  }, [])
+
   const loadProgram = async () => {
     const [me, programPayload] = await Promise.all([
       apiRequest('/auth/me'),
@@ -755,84 +890,97 @@ function AdminDashboard() {
     }
   }
 
-  const updatePhaseSchedule = (phaseKey, patch) => withBusy(`phase:${phaseKey}`, async () => {
-    await apiRequest(`/program/phases/${phaseKey}`, {
-      method: 'PATCH',
-      body: {
-        start_date: patch.startDate || null,
-        end_date: patch.endDate || null,
-      },
-    })
-    await loadProgram()
-  })
-
-  const setCurrentPhase = (phaseKey) => withBusy(`current-phase:${phaseKey}`, async () => {
-    await apiRequest('/program/current-phase', {
-      method: 'PUT',
-      body: { phase_key: phaseKey },
-    })
-    await loadProgram()
-  })
-
-  const setCurrentSubEvent = (eventId) => withBusy(`current-sub-event:${eventId}`, async () => {
-    await apiRequest('/program/current-sub-event', {
-      method: 'PUT',
-      body: { event_id: eventId },
-    })
-    await loadProgram()
-  })
-
-  const createSubEventInPhase = (phaseKey, draft) => withBusy(`create-event:${phaseKey}`, async () => {
-    await apiRequest(`/program/phases/${phaseKey}/sub-events`, {
-      method: 'POST',
-      body: {
-        name: draft.name,
-        type: draft.type,
-        start_date: draft.startDate || null,
-        end_date: draft.endDate || null,
-        uses_stations: Boolean(draft.usesStations),
-        note: draft.note || '',
-        order: draft.order || 0,
-      },
-    })
-    await loadProgram()
-  })
-
-  const updateSubEventInPhase = (phaseKey, eventId, nextEvent) => withBusy(`update-event:${eventId}`, async () => {
-    await apiRequest(`/program/sub-events/${eventId}`, {
-      method: 'PATCH',
-      body: {
-        name: nextEvent.name,
-        type: nextEvent.type,
-        start_date: nextEvent.startDate || null,
-        end_date: nextEvent.endDate || null,
-        uses_stations: Boolean(nextEvent.usesStations),
-        note: nextEvent.note || '',
-        order: nextEvent.order || 0,
-      },
-    })
-    await loadProgram()
-  })
-
-  const deleteSubEventInPhase = (phaseKey, eventId) => withBusy(`delete-event:${eventId}`, async () => {
-    await apiRequest(`/program/sub-events/${eventId}`, {
-      method: 'DELETE',
-    })
-    await loadProgram()
-  })
-
-  const titles = {
-    dashboard: 'Tổng quan',
-    events: 'Quản lý sự kiện',
-    teams: 'Quản lý đội',
-    scores: 'Điểm & suất đi tiếp',
-    stations: 'Quản lý trạm',
-    discord: 'Quản lý Discord',
-    accounts: 'Quản lý tài khoản',
-    email: 'Gửi email',
-    settings: 'Cài đặt',
+  const guardProgramEdit = () => {
+    if (canEditProgram) return true
+    setApiError(programLockedMessage())
+    return false
   }
-  const tabIcon = { events: 'ticket', teams: 'users', scores: 'check', stations: 'flag', discord: 'chat', accounts: 'userCircle', email: 'mail' }
+
+  const updatePhaseSchedule = (phaseKey, patch) => {
+    if (!guardProgramEdit()) return undefined
+    return withBusy(`phase:${phaseKey}`, async () => {
+      await apiRequest(`/program/phases/${phaseKey}`, {
+        method: 'PATCH',
+        body: {
+          start_date: patch.startDate || null,
+          end_date: patch.endDate || null,
+        },
+      })
+      await loadProgram()
+    })
+  }
+
+  const setCurrentPhase = (phaseKey) => {
+    if (!guardProgramEdit()) return undefined
+    return withBusy(`current-phase:${phaseKey}`, async () => {
+      await apiRequest('/program/current-phase', {
+        method: 'PUT',
+        body: { phase_key: phaseKey },
+      })
+      await loadProgram()
+    })
+  }
+
+  const setCurrentSubEvent = (eventId) => {
+    if (!guardProgramEdit()) return undefined
+    return withBusy(`current-sub-event:${eventId}`, async () => {
+      await apiRequest('/program/current-sub-event', {
+        method: 'PUT',
+        body: { event_id: eventId },
+      })
+      await loadProgram()
+    })
+  }
+
+  const createSubEventInPhase = (phaseKey, draft) => {
+    if (!guardProgramEdit()) return undefined
+    return withBusy(`create-event:${phaseKey}`, async () => {
+      await apiRequest(`/program/phases/${phaseKey}/sub-events`, {
+        method: 'POST',
+        body: {
+          name: draft.name,
+          type: draft.type,
+          start_date: draft.startDate || null,
+          end_date: draft.endDate || null,
+          uses_stations: Boolean(draft.usesStations),
+          note: draft.note || '',
+          order: draft.order || 0,
+        },
+      })
+      await loadProgram()
+    })
+  }
+
+  const updateSubEventInPhase = (phaseKey, eventId, nextEvent) => {
+    if (!guardProgramEdit()) return undefined
+    return withBusy(`update-event:${eventId}`, async () => {
+      await apiRequest(`/program/sub-events/${eventId}`, {
+        method: 'PATCH',
+        body: {
+          name: nextEvent.name,
+          type: nextEvent.type,
+          start_date: nextEvent.startDate || null,
+          end_date: nextEvent.endDate || null,
+          uses_stations: Boolean(nextEvent.usesStations),
+          note: nextEvent.note || '',
+          order: nextEvent.order || 0,
+        },
+      })
+      await loadProgram()
+    })
+  }
+
+  const deleteSubEventInPhase = (phaseKey, eventId) => {
+    if (!guardProgramEdit()) return undefined
+    return withBusy(`delete-event:${eventId}`, async () => {
+      await apiRequest(`/program/sub-events/${eventId}`, {
+        method: 'DELETE',
+      })
+      await loadProgram()
+    })
+  }
+
+  const activeMeta = TAB_META[activeTab]
 
   return (
     <div className="min-h-screen bg-paper font-sans text-ink">
@@ -849,12 +997,10 @@ function AdminDashboard() {
 
         <div className="lg:ml-64">
           <Header
-            title={titles[activeTab]}
+            title={activeMeta?.label || ''}
             onMenu={() => setSidebarOpen(true)}
             currentPhaseLabel={currentPhaseLabel}
             user={user}
-            onSettings={() => setActiveTab('settings')}
-            settingsActive={activeTab === 'settings'}
           />
 
           <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
@@ -870,6 +1016,7 @@ function AdminDashboard() {
                   phase={phase}
                   phases={phaseOptions}
                   onChange={setCurrentPhase}
+                  canChange={canEditProgram}
                 />
                 <DashboardOverview
                   phase={phase}
@@ -892,6 +1039,7 @@ function AdminDashboard() {
                 onCreateSubEvent={createSubEventInPhase}
                 onUpdateSubEvent={updateSubEventInPhase}
                 onDeleteSubEvent={deleteSubEventInPhase}
+                canEditProgram={canEditProgram}
               />
             ) : activeTab === 'teams' ? (
               <TeamsPage />
@@ -916,10 +1064,12 @@ function AdminDashboard() {
               <AccountsPage />
             ) : activeTab === 'email' ? (
               <EmailPage />
+            ) : activeTab === 'operations' ? (
+              <OperationsPage />
             ) : activeTab === 'settings' ? (
               <SettingsPage />
             ) : (
-              <PlaceholderPage title={titles[activeTab]} icon={tabIcon[activeTab]} />
+              <PlaceholderPage title={activeMeta?.label || ''} icon={activeMeta?.icon} />
             )}
           </main>
         </div>

@@ -219,9 +219,6 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
                     : <p className="px-4 py-5 text-sm italic text-ink/30">Đội chưa có thành viên.</p>}
                 </div>
 
-                <div className="mt-4 rounded-lg border border-stone bg-paper px-4 py-3 text-sm leading-6 text-ink/50">
-                  Thành viên được quản lý từ cổng thí sinh. Trang admin hiện tập trung vào duyệt đội và theo dõi trạng thái đồng bộ.
-                </div>
               </div>
             </>
           )}

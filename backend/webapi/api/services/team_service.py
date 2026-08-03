@@ -24,6 +24,31 @@ def _get_setting(key: str, default=None):
         return default
 
 
+def registration_is_open() -> bool:
+    """Return the admin-controlled registration state with strict bool parsing."""
+    value = _get_setting("registration_open", False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def profile_is_account_owned_by_other(
+    participant: Optional[Participant],
+    actor: Optional[Account],
+) -> bool:
+    """True when `participant` is a self-managed profile belonging to another account.
+
+    A participant row with no linked account is captain-authored data the captain
+    may freely edit. Once the member claims it with their own account, the account
+    becomes the source of truth (see `_sync_participant_from_account`), so nobody
+    else may overwrite its registration fields. `actor=None` means an unattributed
+    write, which is treated as "not the owner".
+    """
+    if participant is None or not participant.account_id:
+        return False
+    return actor is None or participant.account_id != actor.id
+
+
 def _sync_participant_from_account(participant: Participant, account: Account) -> list[str]:
     changed = []
     for participant_field, account_field in (
@@ -125,8 +150,14 @@ def add_member(
     date_of_birth=None,
     extra: dict | None = None,
     is_captain: bool = False,
+    actor: Optional[Account] = None,
 ) -> Tuple[Optional[Participant], Optional[str]]:
-    """Add a participant to a team. Returns (participant, None) or (None, error_code)."""
+    """Add a participant to a team. Returns (participant, None) or (None, error_code).
+
+    `actor` is the account performing the write. Registration fields of a profile
+    already claimed by a different account are left untouched — the membership is
+    still created, but the owner's own data wins.
+    """
     mssv = (mssv or "").strip()
     if not mssv:
         return None, "missing_mssv"
@@ -155,22 +186,26 @@ def add_member(
     if existing_member and existing_member.team_id != team.id:
         return None, "mssv_in_other_team"
 
+    # A profile claimed by another account is self-managed: create the membership
+    # but never overwrite its registration fields with caller-supplied values.
+    existing_participant = Participant.objects.filter(mssv=mssv).first()
     defaults = {}
-    for key, value in {
-        "full_name": full_name,
-        "email": email,
-        "phone": phone,
-        "faculty": faculty,
-        "school": school,
-        "facebook": facebook,
-        "cccd": cccd,
-        "date_of_birth": date_of_birth,
-        "extra": extra,
-    }.items():
-        if value is not None:
-            defaults[key] = value
-    if "full_name" not in defaults:
-        defaults["full_name"] = ""
+    if not profile_is_account_owned_by_other(existing_participant, actor):
+        for key, value in {
+            "full_name": full_name,
+            "email": email,
+            "phone": phone,
+            "faculty": faculty,
+            "school": school,
+            "facebook": facebook,
+            "cccd": cccd,
+            "date_of_birth": date_of_birth,
+            "extra": extra,
+        }.items():
+            if value is not None:
+                defaults[key] = value
+        if "full_name" not in defaults:
+            defaults["full_name"] = ""
 
     # Get or create participant without clearing existing registration fields
     # when the caller only has partial account data (e.g. captain team create).

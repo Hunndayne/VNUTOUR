@@ -10,7 +10,8 @@ from api.services.program_service import (
     get_program, set_current_phase, update_phase_dates,
     create_sub_event, update_sub_event, delete_sub_event, set_current_sub_event,
 )
-from .views_shared import _json_body, _require_role
+from api.services.audit_service import record_audit
+from .views_shared import _json_body, _require_role, _require_master_admin
 
 
 def program_view(request: HttpRequest):
@@ -24,7 +25,7 @@ def program_view(request: HttpRequest):
 @csrf_exempt
 def current_phase_view(request: HttpRequest):
     """PUT: set current phase."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 
@@ -40,7 +41,20 @@ def current_phase_view(request: HttpRequest):
         return JsonResponse({"error": "missing_phase_key"}, status=400)
 
     try:
+        previous = ProgramPhase.objects.filter(is_current=True).first()
         phase = set_current_phase(phase_key)
+        record_audit(
+            actor=acc,
+            action="phase.change",
+            summary=f"Chuyển phase sang {phase.label}",
+            target_type="ProgramPhase",
+            target_id=phase.id,
+            before_data={
+                "current_phase": previous.key if previous else None,
+            },
+            after_data={"current_phase": phase.key},
+            reversible=bool(previous and previous.id != phase.id),
+        )
         return JsonResponse({"current_phase": phase.key})
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
@@ -53,7 +67,7 @@ def current_phase_view(request: HttpRequest):
 @csrf_exempt
 def current_sub_event_view(request: HttpRequest):
     """PUT: set current sub-event inside the current phase."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 
@@ -82,7 +96,7 @@ def current_sub_event_view(request: HttpRequest):
 @csrf_exempt
 def phase_detail_view(request: HttpRequest, phase_key: str):
     """PATCH: update phase dates."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 
@@ -111,7 +125,7 @@ def phase_detail_view(request: HttpRequest, phase_key: str):
 @csrf_exempt
 def sub_event_create_view(request: HttpRequest, phase_key: str):
     """POST: create sub-event in a phase."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 
@@ -147,7 +161,7 @@ def sub_event_create_view(request: HttpRequest, phase_key: str):
 @csrf_exempt
 def sub_event_detail_view(request: HttpRequest, event_id: int):
     """PATCH/DELETE a sub-event."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 

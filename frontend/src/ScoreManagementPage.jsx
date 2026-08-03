@@ -462,10 +462,6 @@ export default function ScoreManagementPage({
               {scoreboard.resultsLocked && <Badge label="Đã khóa kết quả" cls="bg-clay/12 text-clay" />}
             </div>
             <h2 className="mt-3 font-display text-2xl font-semibold text-ink">Tổng hợp điểm theo phase</h2>
-            <p className="mt-2 text-sm leading-6 text-ink/55">
-              Điểm trạm, điểm social, quiz và các điều chỉnh thủ công đều đổ về cùng một bảng điểm phase.
-              Roster phase được đọc từ backend, và việc đẩy đội sang phase sau sẽ gọi advancement API trực tiếp.
-            </p>
           </div>
 
           <div className="flex flex-wrap gap-2 rounded-xl border border-stone bg-white p-1">
@@ -554,10 +550,6 @@ export default function ScoreManagementPage({
 
           {ruleForm.nextPhaseKey ? (
             <>
-              <p className="mt-3 text-sm leading-6 text-ink/50">
-                Cấu hình top N hoặc chọn tay, sau đó publish roster sang phase tiếp theo.
-              </p>
-
               <div className="mt-4">
                 <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
                   Phase đích
@@ -749,11 +741,6 @@ export default function ScoreManagementPage({
               <h3 className="mt-1 font-display text-xl font-semibold text-ink">Danh sách đội được chấm</h3>
             </div>
             <Badge label={`${scoreboard.roster.length} đội`} cls="bg-ink/[0.07] text-ink/55" />
-          </div>
-
-          <div className="mt-3 rounded-lg border border-stone bg-paper px-4 py-3 text-sm leading-6 text-ink/50">
-            Roster này được quản lý từ backend: đội đã duyệt hoặc đội được publish từ phase trước sẽ tự động xuất hiện ở đây.
-            Nếu cần đặc cách/wildcard, nên bổ sung endpoint roster riêng ở bước tiếp theo.
           </div>
 
           <div className="mt-4 divide-y divide-stone rounded-lg border border-stone">

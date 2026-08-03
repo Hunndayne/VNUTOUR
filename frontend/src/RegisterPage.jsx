@@ -28,6 +28,8 @@ function explain(code, schema) {
     case 'duplicate_mssv_in_team': return 'Có MSSV bị trùng giữa các thành viên trong đội.'
     case 'team_size_mismatch': return `Đội cần đủ ${maxTeamSize} thành viên.`
     case 'team_size_out_of_range': return `Số người tham gia phải từ ${minTeamSize} đến ${maxTeamSize}.`
+    case 'team_name_requires_full_team':
+      return `Chỉ đội đủ ${maxTeamSize} thành viên mới được đặt tên. Đội chưa đủ sẽ mang tên tạm và được BTC ghép với đội khác.`
     case 'team_too_large': return 'Số người tham gia không được vượt quá ' + maxTeamSize + '.'
     default: return 'Có lỗi xảy ra, vui lòng kiểm tra lại thông tin.'
   }

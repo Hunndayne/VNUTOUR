@@ -10,12 +10,27 @@ from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from api.services import registration_service
-from api.services.team_service import _get_setting
+from api.services.team_service import registration_is_open
 from .views_shared import _json_body, _consume_rate_limit
 
 
 def _registration_closed_response():
     return JsonResponse({"error": "registration_closed"}, status=403)
+
+
+# Errors that mean "this identity is already spoken for" rather than "your form
+# is malformed". They deserve 409 so a caller can tell the two apart.
+_CONFLICT_CODES = frozenset({
+    "mssv_in_other_team",
+    "mssv_email_mismatch",
+    "duplicate_mssv_in_team",
+})
+
+
+def _registration_error_response(err: str):
+    code = str(err).split(":", 1)[0]
+    status = 409 if code in _CONFLICT_CODES else 400
+    return JsonResponse({"error": err}, status=status)
 
 
 def schema_view(request: HttpRequest):
@@ -30,7 +45,7 @@ def register_individual_view(request: HttpRequest):
     """POST a single participant registration."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
-    if not _get_setting("registration_open", False):
+    if not registration_is_open():
         return _registration_closed_response()
     limited, _ = _consume_rate_limit(
         request,
@@ -46,7 +61,7 @@ def register_individual_view(request: HttpRequest):
 
     participant, err = registration_service.register_individual(data)
     if err:
-        return JsonResponse({"error": err}, status=400)
+        return _registration_error_response(err)
     return JsonResponse({"mssv": participant.mssv, "mode": "individual"}, status=201)
 
 
@@ -77,7 +92,7 @@ def register_team_view(request: HttpRequest):
     """POST a full team registration (captain + members)."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
-    if not _get_setting("registration_open", False):
+    if not registration_is_open():
         return _registration_closed_response()
     limited, _ = _consume_rate_limit(
         request,
@@ -93,7 +108,7 @@ def register_team_view(request: HttpRequest):
 
     team, err = registration_service.register_team(data)
     if err:
-        return JsonResponse({"error": err}, status=400)
+        return _registration_error_response(err)
     return JsonResponse({
         "code": team.code,
         "name": team.name,

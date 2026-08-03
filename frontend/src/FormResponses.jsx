@@ -321,9 +321,12 @@ export default function FormResponses() {
   )
 
   const submissionConfig = selectedForm?.submission_config || {}
-  const activeFormFields = submissionConfig.form?.enabled ? submissionConfig.form.fields || [] : []
-  const activeQuizItems = submissionConfig.quiz?.enabled ? submissionConfig.quiz.items || [] : []
-  const attachmentConfig = submissionConfig.attachment?.enabled ? submissionConfig.attachment : null
+  // The backend always sends the canonical ordered item list, converting older
+  // three-section configs on the way out — so display order is admin-controlled.
+  const submissionItems = Array.isArray(submissionConfig.items) ? submissionConfig.items : []
+  const activeFormFields = submissionItems.filter((item) => item.type === 'text')
+  const activeQuizItems = submissionItems.filter((item) => item.type === 'quiz')
+  const attachmentConfig = submissionItems.find((item) => item.type === 'attachment') || null
   const closure = selectedForm?.closure || null
   const formClosed = Boolean(closure?.closed)
   const mySubmission = selectedForm?.my_submission || null
@@ -340,13 +343,13 @@ export default function FormResponses() {
   }
 
   const handleSubmit = async () => {
-    const missingRequiredField = activeFormFields.some((field, index) => {
+    const missingRequiredField = activeFormFields.some((field) => {
       if (!field.required) return false
-      return !String(answers[`form:${field.id || index}`] || '').trim()
+      return !String(answers[`form:${field.id}`] || '').trim()
     })
-    const missingQuizAnswer = activeQuizItems.some((item, index) => {
+    const missingQuizAnswer = activeQuizItems.some((item) => {
       if (item.required === false) return false
-      return answers[`quiz:${item.id || index}`] === undefined
+      return answers[`quiz:${item.id}`] === undefined
     })
     if (missingRequiredField || missingQuizAnswer) {
       setSubmitState('error')
@@ -382,16 +385,17 @@ export default function FormResponses() {
       }
     }
 
+    // Shape kept as {form, quiz} so grading and the admin drawer stay unchanged.
     const responsePayload = {
-      form: activeFormFields.map((field, index) => ({
-        id: field.id || `field-${index}`,
+      form: activeFormFields.map((field) => ({
+        id: field.id,
         label: field.label || '',
-        value: answers[`form:${field.id || index}`] || '',
+        value: answers[`form:${field.id}`] || '',
       })),
-      quiz: activeQuizItems.map((item, index) => ({
-        id: item.id || `quiz-${index}`,
+      quiz: activeQuizItems.map((item) => ({
+        id: item.id,
         question: item.question || '',
-        selectedOption: answers[`quiz:${item.id || index}`],
+        selectedOption: answers[`quiz:${item.id}`],
       })),
     }
 
@@ -503,9 +507,6 @@ export default function FormResponses() {
                 <Card radius={28} className="border border-stone bg-white px-5 py-5">
                   <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Pham vi truy cap</p>
                   <p className="mt-4 font-display text-2xl font-semibold text-ink">{selectedForm.phase_label}</p>
-                  <p className="mt-2 text-sm leading-6 text-ink/55">
-                    Chi nhung doi nam trong phase nay moi thay duoc bieu mau tuong ung.
-                  </p>
                 </Card>
               </div>
             </Card>
@@ -540,51 +541,58 @@ export default function FormResponses() {
               </Card>
             ) : null}
 
-            {activeFormFields.map((field, index) => (
-              <FormFieldCard
-                key={field.id || `${field.label}-${index}`}
-                index={index + 1}
-                label={field.label || `Truong ${index + 1}`}
-                required={field.required}
-                helper={field.placeholder}
-              >
-                <FieldInput
-                  field={field}
-                  value={answers[`form:${field.id || index}`] || ''}
-                  onChange={(value) => setAnswer(`form:${field.id || index}`, value)}
-                />
-              </FormFieldCard>
-            ))}
+            {submissionItems.map((item, index) => {
+              if (item.type === 'quiz') {
+                return (
+                  <FormFieldCard
+                    key={item.id}
+                    index={index + 1}
+                    label={item.question || `Cau hoi ${index + 1}`}
+                    helper="Chon mot dap an"
+                  >
+                    <div className="grid gap-3">
+                      {(item.options || []).map((option, optionIndex) => (
+                        <QuizChoice
+                          key={`${item.id}-${optionIndex}`}
+                          label={option || `Lua chon ${optionIndex + 1}`}
+                          active={answers[`quiz:${item.id}`] === optionIndex}
+                          onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
+                        />
+                      ))}
+                    </div>
+                  </FormFieldCard>
+                )
+              }
 
-            {activeQuizItems.map((item, index) => (
-              <FormFieldCard
-                key={item.id || `quiz-${index}`}
-                index={activeFormFields.length + index + 1}
-                label={item.question || `Cau hoi ${index + 1}`}
-                helper="Chon mot dap an"
-              >
-                <div className="grid gap-3">
-                  {(item.options || []).map((option, optionIndex) => (
-                    <QuizChoice
-                      key={`${item.id || index}-${optionIndex}`}
-                      label={option || `Lua chon ${optionIndex + 1}`}
-                      active={answers[`quiz:${item.id || index}`] === optionIndex}
-                      onClick={() => setAnswer(`quiz:${item.id || index}`, optionIndex)}
-                    />
-                  ))}
-                </div>
-              </FormFieldCard>
-            ))}
+              if (item.type === 'attachment') {
+                return (
+                  <FormFieldCard
+                    key={item.id}
+                    index={index + 1}
+                    label="Tep minh chung"
+                    helper="Tai len theo cau hinh cua tram"
+                  >
+                    <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} />
+                  </FormFieldCard>
+                )
+              }
 
-            {attachmentConfig ? (
-              <FormFieldCard
-                index={activeFormFields.length + activeQuizItems.length + 1}
-                label="Tep minh chung"
-                helper="Tai len theo cau hinh cua tram"
-              >
-                <AttachmentBox attachment={attachmentConfig} files={attachments} onChange={setAttachments} />
-              </FormFieldCard>
-            ) : null}
+              return (
+                <FormFieldCard
+                  key={item.id}
+                  index={index + 1}
+                  label={item.label || `Truong ${index + 1}`}
+                  required={item.required}
+                  helper={item.placeholder}
+                >
+                  <FieldInput
+                    field={item}
+                    value={answers[`form:${item.id}`] || ''}
+                    onChange={(value) => setAnswer(`form:${item.id}`, value)}
+                  />
+                </FormFieldCard>
+              )
+            })}
 
             <Card radius={32} className="border border-ink bg-ink px-5 py-5 text-white sm:px-6" style={{ boxShadow: '0 18px 50px rgba(32,49,43,0.3)' }}>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

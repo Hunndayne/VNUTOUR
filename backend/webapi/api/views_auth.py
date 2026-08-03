@@ -16,7 +16,7 @@ from api.services.auth_service import (
     find_by_token, register_account, register_with_google,
 )
 from api.services.registration_service import validate_account_mssv_claim
-from api.services.team_service import _get_setting, link_account_profile
+from api.services.team_service import link_account_profile, registration_is_open
 from api.models import Account, Participant
 
 from .views_shared import (
@@ -307,8 +307,13 @@ def register_view(request: HttpRequest):
     if len(password) < settings.AUTH_MIN_PASSWORD_LENGTH:
         return JsonResponse({"error": "password_too_short"}, status=400)
 
-    # Gate: if any admin exists, require secret
-    admin_exists = Account.objects.filter(role=Account.ROLE_ADMIN, is_active=True).exists()
+    # Gate: if any admin exists, require secret. Master admins count — a system
+    # holding only master accounts is still bootstrapped, and leaving them out
+    # would swing this endpoint back open.
+    admin_exists = Account.objects.filter(
+        role__in=[Account.ROLE_ADMIN, Account.ROLE_MASTER_ADMIN],
+        is_active=True,
+    ).exists()
     if admin_exists:
         server_secret = os.getenv("ADMIN_REGISTER_SECRET")
         provided = str((data.get("secret") or request.headers.get("X-Register-Secret") or "").strip())
@@ -335,7 +340,7 @@ def signup_view(request: HttpRequest):
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
-    if not _get_setting("registration_open"):
+    if not registration_is_open():
         return JsonResponse({"error": "registration_closed"}, status=403)
     limited, _ = _consume_rate_limit(
         request,
@@ -457,7 +462,7 @@ def google_login_view(request: HttpRequest):
     google_name = (id_info.get("name") or "").strip()
     google_sub = id_info.get("sub")
 
-    if not _get_setting("registration_open"):
+    if not registration_is_open():
         # Only allow existing accounts to log in
         acc = Account.objects.filter(email__iexact=email, is_active=True).first()
         if not acc:

@@ -137,9 +137,6 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
               <h2 className="font-display text-lg font-bold text-ink">VNUTour Discord</h2>
               <Badge label={`${status.provisioning.done} đã xong`} cls="bg-trail/12 text-trail" />
             </div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/50">
-              Theo dõi trạng thái provision kênh/role, đội cần retry, và lịch sử thông báo đã tạo từ trang admin.
-            </p>
           </div>
 
           <button

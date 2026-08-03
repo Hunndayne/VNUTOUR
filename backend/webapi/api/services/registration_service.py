@@ -219,11 +219,27 @@ def _normalize_date(value) -> Optional[date]:
 
 
 def _upsert_participant(columns: dict, extra: dict) -> Tuple[Optional[Participant], Optional[str]]:
-    """Create/update a Participant by mssv, guarding against cross-team reuse."""
+    """Create/update a Participant by mssv, guarding against cross-team reuse.
+
+    Registration is unauthenticated, so the mssv alone cannot be treated as proof
+    of identity: anyone who knows a student code could otherwise overwrite that
+    person's record — name, email, phone — and then claim the account. When a
+    record already exists, the submitted email has to match the stored one. A
+    record the organisers preloaded without an email has nothing to match
+    against, so it stays claimable.
+    """
     mssv = columns["mssv"]
     existing = TeamMembership.objects.filter(participant__mssv=mssv).first()
     if existing:
         return None, f"mssv_in_other_team:{mssv}"
+
+    known = Participant.objects.filter(mssv=mssv).only("id", "email").first()
+    if known:
+        stored_email = (known.email or "").strip().lower()
+        supplied_email = str(columns.get("email") or "").strip().lower()
+        if stored_email and stored_email != supplied_email:
+            return None, f"mssv_email_mismatch:{mssv}"
+
     defaults = {k: v for k, v in columns.items() if k != "mssv"}
     if extra:
         defaults["extra"] = extra
@@ -272,8 +288,13 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     total_members = len(validated_members) + 1
     if total_members < min_size or total_members > max_size:
         return None, f"team_size_out_of_range:{min_size}-{max_size}"
+    # Naming is reserved for full teams: an under-strength team is still going to
+    # be merged with others by the organisers, so whatever it called itself would
+    # not survive anyway.
     if total_members == max_size and not team_name:
         return None, "missing:team:team_name"
+    if total_members < max_size and team_name:
+        return None, f"team_name_requires_full_team:{max_size}"
     if not team_name:
         team_name = f"Pending team {cap_cols['mssv']}"
 

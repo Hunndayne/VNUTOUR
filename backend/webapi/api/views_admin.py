@@ -15,7 +15,8 @@ from api.services.team_service import (
     create_team, approve_team, reject_team,
     get_team_members, add_member, link_account_profile,
 )
-from .views_shared import _json_body, _auth_or_401, _require_role
+from api.services.audit_service import record_audit
+from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 
 
 # =====================================================================
@@ -65,7 +66,7 @@ def teams_collection_view(request: HttpRequest):
                     "is_late_registration": t.is_late_registration,
                     "created_at": t.created_at.isoformat(),
             }
-            if acc.role == Account.ROLE_ADMIN:
+            if is_admin(acc):
                 item.update({
                     "owner_username": t.owner_account.username if t.owner_account else None,
                     "provision_state": t.provision_state,
@@ -83,7 +84,7 @@ def teams_collection_view(request: HttpRequest):
         })
 
     if request.method == "POST":
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
 
         data = _json_body(request)
@@ -121,6 +122,7 @@ def teams_collection_view(request: HttpRequest):
                 faculty=owner_account.faculty,
                 school=owner_account.school,
                 is_captain=True,
+                actor=owner_account,
             )
             if member_err:
                 team.delete()
@@ -158,11 +160,11 @@ def team_item_view(request: HttpRequest, team_key: str):
             "created_at": team.created_at.isoformat(),
             "members": get_team_members(
                 team,
-                visibility="full" if acc.role == Account.ROLE_ADMIN else "basic",
+                visibility="full" if is_admin(acc) else "basic",
                 requester=acc,
             ),
         }
-        if acc.role == Account.ROLE_ADMIN:
+        if is_admin(acc):
             payload.update({
                 "owner_username": team.owner_account.username if team.owner_account else None,
                 "approval_note": team.approval_note,
@@ -178,7 +180,7 @@ def team_item_view(request: HttpRequest, team_key: str):
         return JsonResponse(payload)
 
     if request.method == "PATCH":
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
 
         data = _json_body(request)
@@ -211,7 +213,7 @@ def team_item_view(request: HttpRequest, team_key: str):
         })
 
     if request.method == "DELETE":
-        if acc.role != Account.ROLE_ADMIN:
+        if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
         code = team.code
         team.delete()
@@ -242,6 +244,15 @@ def team_approve_view(request: HttpRequest, team_key: str):
         team.save(update_fields=["is_late_registration", "updated_at"])
 
     team = approve_team(team, acc)
+    record_audit(
+        actor=acc,
+        action="team.approve",
+        summary=f"Duyệt đội {team.code} - {team.name}",
+        target_type="Team",
+        target_id=team.id,
+        after_data={"approval_status": team.approval_status},
+        reversible=False,
+    )
     return JsonResponse({
         "code": team.code, "approval_status": team.approval_status,
         "provision_state": team.provision_state,
@@ -266,6 +277,18 @@ def team_reject_view(request: HttpRequest, team_key: str):
     data = _json_body(request) or {}
     note = str((data.get("note") or data.get("reason") or "").strip()) or None
     team = reject_team(team, acc, note)
+    record_audit(
+        actor=acc,
+        action="team.reject",
+        summary=f"Từ chối đội {team.code} - {team.name}",
+        target_type="Team",
+        target_id=team.id,
+        after_data={
+            "approval_status": team.approval_status,
+            "approval_note": team.approval_note,
+        },
+        reversible=False,
+    )
     return JsonResponse({
         "code": team.code, "approval_status": team.approval_status,
         "approval_note": team.approval_note,
@@ -275,6 +298,20 @@ def team_reject_view(request: HttpRequest, team_key: str):
 # =====================================================================
 # Accounts (admin)
 # =====================================================================
+
+def _master_admin_forbidden():
+    return JsonResponse({"error": "master_admin_required"}, status=403)
+
+
+def _may_touch_master(acc: Account) -> bool:
+    """Only a master admin may grant the master role or edit a master account.
+
+    Without this an admin could simply promote themselves and take back the
+    program-structure powers the role split withholds — or reset a master's
+    password and use their account. Both make the separation cosmetic.
+    """
+    return acc.role == Account.ROLE_MASTER_ADMIN
+
 
 @csrf_exempt
 def admin_accounts_view(request: HttpRequest):
@@ -297,6 +334,7 @@ def admin_accounts_view(request: HttpRequest):
         counts = {
             "all": qs.count(),
             "admin": qs.filter(role=Account.ROLE_ADMIN).count(),
+            "master_admin": qs.filter(role=Account.ROLE_MASTER_ADMIN).count(),
             "collab": qs.filter(role=Account.ROLE_COLLAB).count(),
             "participant": qs.filter(role=Account.ROLE_PARTICIPANT).count(),
             "inactive": qs.filter(is_active=False).count(),
@@ -351,6 +389,8 @@ def admin_accounts_view(request: HttpRequest):
         role = str((data.get("role") or Account.ROLE_COLLAB).strip())
         if role not in dict(Account.ROLE_CHOICES):
             role = Account.ROLE_COLLAB
+        if role == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
+            return _master_admin_forbidden()
 
         if not username or not password or not email:
             return JsonResponse({"error": "missing_fields"}, status=400)
@@ -390,6 +430,15 @@ def admin_account_detail_view(request: HttpRequest, username: str):
     except Account.DoesNotExist:
         return JsonResponse({"error": "not_found"}, status=404)
 
+    # A master account is off-limits to plain admins for anything but reading:
+    # its password, its active flag and its role are all routes to taking it over.
+    if (
+        request.method in ("PATCH", "DELETE")
+        and target.role == Account.ROLE_MASTER_ADMIN
+        and not _may_touch_master(acc)
+    ):
+        return _master_admin_forbidden()
+
     if request.method == "GET":
         membership = TeamMembership.objects.filter(
             participant__mssv=target.mssv,
@@ -415,6 +464,8 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         if "full_name" in data or "fullName" in data:
             target.full_name = str(data.get("full_name") or data.get("fullName") or "").strip() or None
         if "role" in data and data["role"] in dict(Account.ROLE_CHOICES):
+            if data["role"] == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
+                return _master_admin_forbidden()
             target.role = data["role"]
         if "is_active" in data:
             target.is_active = bool(data["is_active"])

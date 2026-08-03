@@ -44,6 +44,24 @@ export function clearStoredSession() {
   window.localStorage.removeItem(USER_KEY)
 }
 
+export const ROLE_MASTER_ADMIN = 'master_admin'
+export const ROLE_ADMIN = 'admin'
+
+/** Master admins are admins too — every admin screen stays open to them. */
+export function isAdminRole(role) {
+  return role === ROLE_ADMIN || role === ROLE_MASTER_ADMIN
+}
+
+/**
+ * Only a master admin may reshape the programme: the current phase, the phase
+ * calendar, sub-events and stations. The backend enforces this on its own and
+ * answers 403 `master_admin_required`; the flag exists so the UI can disable
+ * those controls instead of letting an admin click into a refusal.
+ */
+export function isMasterAdmin(user = getStoredUser()) {
+  return user?.role === ROLE_MASTER_ADMIN
+}
+
 export function redirectToRoot() {
   window.location.replace('/')
 }
@@ -116,6 +134,37 @@ export async function apiRequest(path, options = {}) {
   }
 
   return payload
+}
+
+export async function apiDownload(path, options = {}) {
+  const authToken = options.token ?? getStoredAuthToken()
+  const headers = { ...(options.headers || {}) }
+  if (authToken) {
+    headers.Authorization = headers.Authorization || `Bearer ${authToken}`
+  }
+  const response = await fetch(joinUrl(API_BASE_URL, path), {
+    method: options.method || 'GET',
+    headers,
+    body: options.body,
+  })
+  if (!response.ok) {
+    let payload = null
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+    const error = new Error(payload?.error || `request_failed_${response.status}`)
+    error.status = response.status
+    error.data = payload
+    throw error
+  }
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i)
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] || 'download',
+  }
 }
 
 export function formatApiDateToInput(value) {

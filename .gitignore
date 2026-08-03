@@ -1,1 +1,8 @@
 plan/coop-page-plan.md
+backend/backups/
+backend/media/
+frontend/dist/
+frontend/node_modules/
+backend/webapi/.pytest_cache/
+__pycache__/
+*.pyc

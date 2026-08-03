@@ -1,15 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD, Badge } from './ui.jsx'
-import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, ROLE_MASTER_ADMIN } from './api.js'
 
 const ROLE_DEF = {
+  master_admin: { label: 'Master admin', cls: 'bg-ink text-white' },
   admin: { label: 'Admin', cls: 'bg-clay/12 text-clay' },
   collab: { label: 'Collab', cls: 'bg-gold/12 text-[#9A6B12]' },
   participant: { label: 'Participant', cls: 'bg-trail/12 text-trail' },
 }
 
+/** Avatar chip colours, kept in step with the role badges above. */
+const ROLE_AVATAR_CLS = {
+  master_admin: 'bg-ink text-white',
+  admin: 'bg-clay/15 text-clay',
+  collab: 'bg-gold/15 text-[#9A6B12]',
+  participant: 'bg-trail/15 text-trail',
+}
+
+function avatarCls(role) {
+  return ROLE_AVATAR_CLS[role] || ROLE_AVATAR_CLS.participant
+}
+
+const EMPTY_COUNTS = { all: 0, master_admin: 0, admin: 0, collab: 0, participant: 0, inactive: 0 }
+
 const FILTER_TABS = [
   { key: 'all', label: 'Tất cả' },
+  { key: 'master_admin', label: 'Master admin' },
   { key: 'admin', label: 'Admin' },
   { key: 'collab', label: 'Collab' },
   { key: 'participant', label: 'Participant' },
@@ -43,7 +59,7 @@ function normalizeAccount(account) {
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([])
-  const [counts, setCounts] = useState({ all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
+  const [counts, setCounts] = useState(EMPTY_COUNTS)
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -54,6 +70,9 @@ export default function AccountsPage() {
   const [apiError, setApiError] = useState('')
   const [createForm, setCreateForm] = useState({ username: '', email: '', password: '', role: 'collab', fullName: '', mssv: '' })
   const [editForm, setEditForm] = useState({ email: '', mssv: '', fullName: '', role: 'participant', password: '', isActive: true })
+  // Only a master admin may hand out the master admin role; the backend answers
+  // 403 for anyone else, so plain admins never see the option.
+  const canGrantMasterAdmin = isMasterAdmin()
 
   const loadAccounts = useCallback(async () => {
     const params = new URLSearchParams({ limit: '200' })
@@ -66,7 +85,7 @@ export default function AccountsPage() {
     }
     const payload = await apiRequest(`/admin/accounts?${params.toString()}`)
     setAccounts((payload.items || []).map(normalizeAccount))
-    setCounts(payload.counts || { all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
+    setCounts({ ...EMPTY_COUNTS, ...(payload.counts || {}) })
   }, [debouncedSearch, filter])
 
   useEffect(() => {
@@ -199,7 +218,7 @@ export default function AccountsPage() {
             {filter === tab.key && (
               <span className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full bg-gold" />
             )}
-            <span className="font-mono text-2xl font-semibold text-ink">{counts[tab.key]}</span>
+            <span className="font-mono text-2xl font-semibold text-ink">{counts[tab.key] ?? 0}</span>
             <span className="mt-1 block text-sm text-ink/55">{tab.label}</span>
           </button>
         ))}
@@ -256,6 +275,7 @@ export default function AccountsPage() {
             <div>
               <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Vai trò</label>
               <select value={createForm.role} onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10">
+                {canGrantMasterAdmin && <option value="master_admin">Master admin</option>}
                 <option value="admin">Admin</option>
                 <option value="collab">Collab</option>
                 <option value="participant">Participant</option>
@@ -308,9 +328,7 @@ export default function AccountsPage() {
                     <tr key={acct.username} className={`transition hover:bg-paper/50 ${!acct.isActive ? 'opacity-50' : ''}`}>
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-3">
-                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-bold ${
-                            acct.role === 'admin' ? 'bg-clay/15 text-clay' : acct.role === 'collab' ? 'bg-gold/15 text-[#9A6B12]' : 'bg-trail/15 text-trail'
-                          }`}>
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-bold ${avatarCls(acct.role)}`}>
                             {acct.username.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0">
@@ -382,9 +400,7 @@ export default function AccountsPage() {
               <div className="flex items-center justify-between gap-3 border-b border-stone bg-white px-5 py-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded-full font-display text-xs font-bold ${
-                      acct.role === 'admin' ? 'bg-clay/15 text-clay' : acct.role === 'collab' ? 'bg-gold/15 text-[#9A6B12]' : 'bg-trail/15 text-trail'
-                    }`}>
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-full font-display text-xs font-bold ${avatarCls(acct.role)}`}>
                       {acct.username.charAt(0).toUpperCase()}
                     </div>
                     <div>
@@ -419,6 +435,7 @@ export default function AccountsPage() {
                   <div>
                     <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Vai trò</label>
                     <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10">
+                      {(canGrantMasterAdmin || editForm.role === ROLE_MASTER_ADMIN) && <option value="master_admin">Master admin</option>}
                       <option value="admin">Admin</option>
                       <option value="collab">Collab</option>
                       <option value="participant">Participant</option>

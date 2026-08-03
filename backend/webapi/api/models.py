@@ -12,16 +12,22 @@ class Account(models.Model):
     ROLE_PARTICIPANT = "participant"
     ROLE_COLLAB = "collab"
     ROLE_ADMIN = "admin"
+    # Everything an admin may do, plus sole authority over the shape of the
+    # programme: which phase is current, the phase calendar, sub-events and
+    # stations. Kept separate so a mis-click by an operating admin cannot move
+    # the whole event to another phase mid-run.
+    ROLE_MASTER_ADMIN = "master_admin"
     ROLE_CHOICES = [
         (ROLE_PARTICIPANT, "Participant"),
         (ROLE_COLLAB, "Collaborator"),
         (ROLE_ADMIN, "Admin"),
+        (ROLE_MASTER_ADMIN, "Master Admin"),
     ]
 
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=255, unique=True)
     password_hash = models.CharField(max_length=255)
-    role = models.CharField(max_length=12, choices=ROLE_CHOICES, default=ROLE_PARTICIPANT)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_PARTICIPANT)
     is_active = models.BooleanField(default=True)
     token = models.CharField(max_length=128, null=True, blank=True, unique=True)
     token_created_at = models.DateTimeField(null=True, blank=True)
@@ -645,6 +651,38 @@ class StationSubmission(models.Model):
 
 
 # =====================================================================
+# 14b. TeamFormVariant
+# =====================================================================
+
+class TeamFormVariant(models.Model):
+    """Which quiz questions a team drew, when a station serves a random subset.
+
+    Written once, the first time any member opens the form, then reused. That is
+    what makes the draw a *team* fact rather than a per-request one: teammates on
+    separate devices get the same questions, and a reload never reshuffles them.
+    Stations that serve their whole bank (`quiz.randomCount` = 0) get no row.
+    """
+
+    team = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="form_variants",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="team_form_variants",
+    )
+    # Quiz item ids served to this team, in the station's display order.
+    item_ids = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "team_form_variant"
+        unique_together = [("team", "station")]
+
+    def __str__(self) -> str:
+        return f"Variant for {self.team.code} @ {self.station.code} ({len(self.item_ids)} câu)"
+
+
+# =====================================================================
 # 15. DiscordBroadcast
 # =====================================================================
 
@@ -743,7 +781,52 @@ class EmailQueueItem(models.Model):
 
 
 # =====================================================================
-# 17. SystemSetting
+# 17. AuditLog
+# =====================================================================
+
+class AuditLog(models.Model):
+    actor = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    action = models.CharField(max_length=100, db_index=True)
+    target_type = models.CharField(max_length=100, null=True, blank=True)
+    target_id = models.CharField(max_length=100, null=True, blank=True)
+    summary = models.CharField(max_length=500)
+    before_data = models.JSONField(null=True, blank=True)
+    after_data = models.JSONField(null=True, blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+    reversible = models.BooleanField(default=False, db_index=True)
+    undone_at = models.DateTimeField(null=True, blank=True)
+    undone_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="undone_audit_logs",
+    )
+    undo_audit = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="undoes",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "audit_log"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.action}: {self.summary}"
+
+
+# =====================================================================
+# 18. SystemSetting
 # =====================================================================
 
 class SystemSetting(models.Model):
@@ -759,7 +842,7 @@ class SystemSetting(models.Model):
 
 
 # =====================================================================
-# 18. MssvLinkAudit
+# 19. MssvLinkAudit
 # =====================================================================
 
 class MssvLinkAudit(models.Model):

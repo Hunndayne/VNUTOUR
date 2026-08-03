@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -10,6 +11,7 @@ from django.http import HttpRequest, JsonResponse
 
 from .models import Account, Participant
 from .services.email_service import enqueue_email_messages
+from .services.audit_service import record_audit
 from .views_shared import _require_role
 
 PLACEHOLDER_PATTERN = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
@@ -31,10 +33,18 @@ def _participant_name_by_account_ids(accounts: list[Account]) -> dict[int, str]:
     }
 
 
-def _render_template(template: str, context: dict[str, str]) -> str:
+def _render_template(template: str, context: dict[str, str], *, as_html: bool = False) -> str:
+    """Fill {{...}} placeholders from a recipient's record.
+
+    `as_html` escapes the substituted values, not the template — the sender's own
+    markup must survive, but a recipient's name is data they typed and would
+    otherwise become markup in everyone's inbox. The subject is plain text, so it
+    is rendered without escaping; escaping there would show a literal `&amp;`.
+    """
     def replace(match: re.Match[str]) -> str:
         key = match.group(1).strip().lower()
-        return context.get(key, "")
+        value = context.get(key, "")
+        return escape(value) if as_html else value
 
     return PLACEHOLDER_PATTERN.sub(replace, template)
 
@@ -164,6 +174,14 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             }],
             created_by=acc,
         )
+        record_audit(
+            actor=acc,
+            action="email.enqueue",
+            summary=f"Xếp hàng email tới {len(to_list) + len(cc_list) + len(bcc_list)} địa chỉ",
+            target_type="EmailQueueItem",
+            metadata={"queue_ids": [item.id for item in queued_items]},
+            reversible=False,
+        )
         return JsonResponse({
             "queued": len(queued_items),
             "queue_ids": [item.id for item in queued_items],
@@ -187,7 +205,7 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             "cc_emails": cc_list,
             "bcc_emails": bcc_list,
             "subject": _render_template(subject, context),
-            "html_body": _render_template(html_body, context),
+            "html_body": _render_template(html_body, context, as_html=True),
         })
 
     if not messages:
@@ -196,6 +214,14 @@ def send_email_view(request: HttpRequest) -> JsonResponse:
             status=400,
         )
     queued_items = enqueue_email_messages(messages=messages, created_by=acc)
+    record_audit(
+        actor=acc,
+        action="email.enqueue_personalized",
+        summary=f"Xếp hàng {len(queued_items)} email cá nhân hóa",
+        target_type="EmailQueueItem",
+        metadata={"queue_ids": [item.id for item in queued_items]},
+        reversible=False,
+    )
     return JsonResponse({
         "queued": len(queued_items),
         "queue_ids": [item.id for item in queued_items],

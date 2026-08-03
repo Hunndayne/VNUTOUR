@@ -12,6 +12,7 @@ from api.services.score_service import (
     set_advancement_rule, publish_advancement,
 )
 from api.services.team_service import _get_setting
+from api.services.audit_service import record_audit, serialize_score_entry
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
@@ -69,6 +70,15 @@ def score_entry_create_view(request: HttpRequest):
             created_by=acc,
             note=data.get("note"),
         )
+        record_audit(
+            actor=acc,
+            action="score.create",
+            summary=f"Tạo điểm {entry.kind} cho đội {entry.team.code}: {entry.points:+d}",
+            target_type="ScoreEntry",
+            target_id=entry.id,
+            after_data=serialize_score_entry(entry),
+            reversible=True,
+        )
         return JsonResponse({
             "id": entry.id, "team_code": entry.team.code,
             "kind": entry.kind, "points": entry.points,
@@ -102,10 +112,22 @@ def score_entry_detail_view(request: HttpRequest, entry_id: int):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
         try:
+            before_entry = ScoreEntry.objects.get(id=entry_id)
+            before = serialize_score_entry(before_entry)
             entry = update_score_entry(
                 entry_id,
                 points=data.get("points"),
                 note=data.get("note"),
+            )
+            record_audit(
+                actor=acc,
+                action="score.update",
+                summary=f"Sửa điểm #{entry.id} của đội {entry.team.code}",
+                target_type="ScoreEntry",
+                target_id=entry.id,
+                before_data=before,
+                after_data=serialize_score_entry(entry),
+                reversible=True,
             )
             return JsonResponse({
                 "id": entry.id, "kind": entry.kind, "points": entry.points,
@@ -119,7 +141,18 @@ def score_entry_detail_view(request: HttpRequest, entry_id: int):
 
     if request.method == "DELETE":
         try:
+            entry = ScoreEntry.objects.get(id=entry_id)
+            before = serialize_score_entry(entry)
             delete_score_entry(entry_id)
+            record_audit(
+                actor=acc,
+                action="score.delete",
+                summary=f"Xóa điểm #{entry_id}",
+                target_type="ScoreEntry",
+                target_id=entry_id,
+                before_data=before,
+                reversible=True,
+            )
             return JsonResponse({"status": "deleted"})
         except ScoreEntry.DoesNotExist:
             return JsonResponse({"error": "not_found"}, status=404)
