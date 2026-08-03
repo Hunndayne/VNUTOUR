@@ -10,8 +10,18 @@ const FILTERS = [
   { key: 'rejected', label: 'Từ chối' },
 ]
 
+const MAX_TEAM_SIZE = 5
+
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
+  if (code?.startsWith('merge_would_exceed_max')) {
+    const max = code.split(':')[1] || MAX_TEAM_SIZE
+    return `Tổng thành viên sau khi ghép vượt quá tối đa ${max} người. Hãy chọn cặp đội khác.`
+  }
+  if (code?.startsWith('merge_team_has_history')) {
+    const teamCode = code.split(':')[1]
+    return `Đội ${teamCode || 'này'} đã có điểm, lượt điểm danh hoặc bài nộp nên không thể ghép.`
+  }
   const map = {
     owner_not_found: 'Không tìm thấy tài khoản đội trưởng.',
     invalid_owner_role: 'Tài khoản này không phải participant.',
@@ -19,6 +29,8 @@ function explainApiError(error) {
     owner_already_has_team: 'Tài khoản đội trưởng đã thuộc một đội khác.',
     conflict: 'Dữ liệu đội bị trùng hoặc đang xung đột.',
     not_found: 'Không tìm thấy đội cần thao tác.',
+    merge_same_team: 'Không thể ghép một đội với chính nó.',
+    missing_team_codes: 'Cần chọn đủ cả đội nguồn và đội đích.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu đội.'
 }
@@ -339,6 +351,272 @@ function CreateTeamDrawer({ open, form, busy, onClose, onChange, onCreate }) {
   )
 }
 
+function MergeRoleButton({ label, active, tone, onClick }) {
+  const activeCls = tone === 'source'
+    ? 'border-clay bg-clay text-white'
+    : 'border-trail bg-trail text-white'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+        active ? activeCls : 'border-stone bg-white text-ink/45 hover:border-ink/25 hover:text-ink/70'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function MergeCandidateRow({ team, isSource, isTarget, onPickSource, onPickTarget }) {
+  const missing = MAX_TEAM_SIZE - team.memberCount
+  const rowTone = isSource
+    ? 'border-clay/40 bg-clay/[0.05]'
+    : isTarget
+      ? 'border-trail/40 bg-trail/[0.05]'
+      : 'border-stone bg-white'
+
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 transition ${rowTone}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-mono text-xs font-semibold text-ink/55">{team.id}</span>
+            <Badge {...APPROVAL[team.status]} />
+            {isSource && <Badge label="Nguồn · sẽ bị xoá" cls="bg-clay/15 text-clay" />}
+            {isTarget && <Badge label="Đích · được giữ" cls="bg-trail/15 text-trail" />}
+          </div>
+          <p className="mt-0.5 truncate text-sm font-medium text-ink">{team.name || '(Chưa đặt tên)'}</p>
+          <p className="mt-0.5 font-mono text-[11px] text-ink/40">
+            {team.memberCount}/{MAX_TEAM_SIZE} thành viên
+            {missing > 0 ? <span className="text-clay"> · thiếu {missing}</span> : <span className="text-trail"> · đã đủ</span>}
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-1.5">
+          <MergeRoleButton label="Nguồn" tone="source" active={isSource} onClick={onPickSource} />
+          <MergeRoleButton label="Đích" tone="target" active={isTarget} onClick={onPickTarget} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MergeTeamsDrawer({
+  open, teams, loading, busy, error,
+  sourceId, targetId,
+  onClose, onPickSource, onPickTarget, onSwap, onMerge,
+}) {
+  const [search, setSearch] = useState('')
+  const [onlyUnderStrength, setOnlyUnderStrength] = useState(true)
+  const [confirming, setConfirming] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setSearch('')
+    setOnlyUnderStrength(true)
+    setConfirming(false)
+  }, [open])
+
+  useEffect(() => {
+    setConfirming(false)
+  }, [sourceId, targetId])
+
+  if (!open) return null
+
+  const source = teams.find(team => team.id === sourceId) || null
+  const target = teams.find(team => team.id === targetId) || null
+  const combined = (source?.memberCount || 0) + (target?.memberCount || 0)
+  const sameTeam = Boolean(source && target && source.id === target.id)
+  const exceedsMax = combined > MAX_TEAM_SIZE
+  const ready = Boolean(source && target) && !sameTeam && !exceedsMax
+
+  const term = search.trim().toLowerCase()
+  const visible = teams
+    .filter(team => (
+      !onlyUnderStrength
+      || team.memberCount < MAX_TEAM_SIZE
+      || team.id === sourceId
+      || team.id === targetId
+    ))
+    .filter(team => (
+      !term
+      || team.id.toLowerCase().includes(term)
+      || team.name.toLowerCase().includes(term)
+    ))
+    .sort((a, b) => (a.memberCount - b.memberCount) || a.id.localeCompare(b.id))
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[520px] flex-col border-l border-stone bg-paper shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
+          <div>
+            <h2 className="font-display text-xl font-bold text-ink">Ghép đội thiếu người</h2>
+            <p className="mt-0.5 text-sm text-ink/45">
+              Dồn toàn bộ thành viên của đội nguồn sang đội đích, đội nguồn bị xoá
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink">
+            <Icon name="close" className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="border-b border-stone bg-white px-5 pb-4">
+          <div className={`${CARD} px-4 py-3`}>
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-clay/70">Nguồn · sẽ bị xoá</p>
+                <p className="mt-0.5 truncate text-sm font-semibold text-ink">
+                  {source ? `${source.id} · ${source.name || '(Chưa đặt tên)'}` : <span className="font-normal text-ink/30">Chưa chọn</span>}
+                </p>
+                <p className="font-mono text-[11px] text-ink/40">{source ? `${source.memberCount} TV` : '—'}</p>
+              </div>
+              <span className="shrink-0 text-ink/25">
+                <Icon name="chevronR" className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-trail/70">Đích · được giữ lại</p>
+                <p className="mt-0.5 truncate text-sm font-semibold text-ink">
+                  {target ? `${target.id} · ${target.name || '(Chưa đặt tên)'}` : <span className="font-normal text-ink/30">Chưa chọn</span>}
+                </p>
+                <p className="font-mono text-[11px] text-ink/40">{target ? `${target.memberCount} TV` : '—'}</p>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-stone/70 pt-3">
+              <p className="text-xs text-ink/55">
+                Sau khi ghép:{' '}
+                <span className={`font-mono text-sm font-bold ${exceedsMax ? 'text-clay' : 'text-ink'}`}>
+                  {source && target ? `${combined}/${MAX_TEAM_SIZE}` : `—/${MAX_TEAM_SIZE}`}
+                </span>{' '}
+                thành viên
+              </p>
+              <button
+                type="button"
+                onClick={onSwap}
+                disabled={!source || !target}
+                className="rounded-md border border-stone bg-white px-2.5 py-1 text-xs font-medium text-ink/55 transition hover:bg-paper disabled:opacity-35"
+              >
+                Đổi chiều
+              </button>
+            </div>
+
+            {exceedsMax && (
+              <p className="mt-2 rounded-md bg-clay/10 px-2.5 py-1.5 text-xs font-medium text-clay">
+                Tổng {combined} thành viên vượt quá tối đa {MAX_TEAM_SIZE}. Hãy chọn cặp đội khác.
+              </p>
+            )}
+            {sameTeam && (
+              <p className="mt-2 rounded-md bg-clay/10 px-2.5 py-1.5 text-xs font-medium text-clay">
+                Đội nguồn và đội đích phải khác nhau.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 border-b border-stone bg-white px-5 py-3">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink/30">
+              <Icon name="search" className="h-4 w-4" />
+            </span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Lọc theo mã đội hoặc tên đội..."
+              className="w-full rounded-lg border border-stone bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            />
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs text-ink/55">
+            <input
+              type="checkbox"
+              checked={onlyUnderStrength}
+              onChange={e => setOnlyUnderStrength(e.target.checked)}
+              className="h-3.5 w-3.5 accent-trail"
+            />
+            Chỉ hiện đội chưa đủ {MAX_TEAM_SIZE} thành viên
+          </label>
+        </div>
+
+        <div className="flex-1 space-y-2 overflow-y-auto px-5 py-4">
+          {loading ? (
+            <p className="py-12 text-center text-sm text-ink/35">Đang tải danh sách đội...</p>
+          ) : visible.length === 0 ? (
+            <p className="py-12 text-center text-sm text-ink/35">Không có đội nào khớp bộ lọc.</p>
+          ) : (
+            visible.map(team => (
+              <MergeCandidateRow
+                key={team.id}
+                team={team}
+                isSource={team.id === sourceId}
+                isTarget={team.id === targetId}
+                onPickSource={() => onPickSource(team.id)}
+                onPickTarget={() => onPickTarget(team.id)}
+              />
+            ))
+          )}
+        </div>
+
+        <div className="border-t border-stone bg-white">
+          {error && (
+            <p className="mx-5 mt-4 rounded-lg border border-clay/20 bg-clay/10 px-3.5 py-2.5 text-sm text-clay">
+              {error}
+            </p>
+          )}
+
+          {!confirming ? (
+            <div className="flex items-center justify-end gap-3 px-5 py-4">
+              <button type="button" onClick={onClose} className="rounded-lg border border-stone bg-white px-4 py-2 text-sm font-medium text-ink/60 transition hover:bg-paper">
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(true)}
+                disabled={!ready || busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-ink px-5 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Icon name="link" className="h-4 w-4" />
+                Ghép đội
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3 px-5 py-4">
+              <div className="rounded-lg border border-clay/25 bg-clay/[0.06] px-4 py-3">
+                <p className="text-sm font-semibold text-ink">
+                  Xoá đội {source?.id} và dồn về đội {target?.id}?
+                </p>
+                <ul className="mt-2 space-y-1 text-xs leading-relaxed text-ink/60">
+                  <li>
+                    • Đội <span className="font-mono font-semibold text-ink">{source?.id}</span>
+                    {' '}({source?.name || 'chưa đặt tên'}) <span className="font-semibold text-clay">bị xoá vĩnh viễn</span>,
+                    {' '}toàn bộ {source?.memberCount} thành viên chuyển sang đội{' '}
+                    <span className="font-mono font-semibold text-ink">{target?.id}</span>.
+                  </li>
+                  <li>
+                    • Đội <span className="font-mono font-semibold text-ink">{target?.id}</span>
+                    {' '}({target?.name || 'chưa đặt tên'}) được giữ lại và có{' '}
+                    <span className="font-semibold text-ink">{combined}/{MAX_TEAM_SIZE}</span> thành viên.
+                  </li>
+                  <li>• Đội sau ghép mất cả hai đội trưởng, bị đổi tên thành {target?.id} và mở bỏ phiếu kín chọn đội trưởng mới.</li>
+                </ul>
+                <p className="mt-2 text-xs font-semibold text-clay">Thao tác này không thể hoàn tác.</p>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper disabled:opacity-40">
+                  Quay lại
+                </button>
+                <button type="button" onClick={onMerge} disabled={busy || !ready} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-clay py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96] disabled:opacity-40">
+                  <Icon name="link" className="h-4 w-4" />
+                  {busy ? 'Đang ghép...' : `Xoá ${source?.id}, ghép vào ${target?.id}`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function TeamsPage() {
   const [teams, setTeams] = useState([])
   const [filter, setFilter] = useState('all')
@@ -351,6 +629,13 @@ function TeamsPage() {
   const [apiError, setApiError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [createForm, setCreateForm] = useState({ name: '', owner: '' })
+  const [showMerge, setShowMerge] = useState(false)
+  const [mergeCandidates, setMergeCandidates] = useState([])
+  const [mergeLoading, setMergeLoading] = useState(false)
+  const [mergeSourceId, setMergeSourceId] = useState('')
+  const [mergeTargetId, setMergeTargetId] = useState('')
+  const [mergeError, setMergeError] = useState('')
+  const [mergeNotice, setMergeNotice] = useState('')
 
   const loadTeams = useCallback(async () => {
     const params = new URLSearchParams({ limit: '200' })
@@ -504,6 +789,95 @@ function TeamsPage() {
     }
   })
 
+  const loadMergeCandidates = useCallback(async () => {
+    setMergeLoading(true)
+    try {
+      const payload = await apiRequest('/teams?limit=200')
+      setMergeCandidates((payload.items || []).map(normalizeTeamSummary))
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setMergeError(explainApiError(error))
+    } finally {
+      setMergeLoading(false)
+    }
+  }, [])
+
+  const openMergeDrawer = () => {
+    setMergeSourceId('')
+    setMergeTargetId('')
+    setMergeError('')
+    setMergeNotice('')
+    setShowMerge(true)
+    loadMergeCandidates()
+  }
+
+  const pickMergeSource = (teamId) => {
+    setMergeError('')
+    setMergeSourceId(prev => (prev === teamId ? '' : teamId))
+    setMergeTargetId(prev => (prev === teamId ? '' : prev))
+  }
+
+  const pickMergeTarget = (teamId) => {
+    setMergeError('')
+    setMergeTargetId(prev => (prev === teamId ? '' : teamId))
+    setMergeSourceId(prev => (prev === teamId ? '' : prev))
+  }
+
+  const swapMergeSides = () => {
+    setMergeError('')
+    setMergeSourceId(mergeTargetId)
+    setMergeTargetId(mergeSourceId)
+  }
+
+  const handleMergeTeams = async () => {
+    const source = mergeCandidates.find(team => team.id === mergeSourceId)
+    const target = mergeCandidates.find(team => team.id === mergeTargetId)
+    if (!source || !target || source.id === target.id) return
+
+    setBusy('merge')
+    setMergeError('')
+    try {
+      const result = await apiRequest('/admin/teams/merge', {
+        method: 'POST',
+        body: { source_code: source.id, target_code: target.id },
+      })
+      const keptCode = result?.code || target.id
+      const memberCount = result?.member_count ?? (source.memberCount + target.memberCount)
+      setShowMerge(false)
+      setMergeSourceId('')
+      setMergeTargetId('')
+      if (selectedId === source.id) setSelectedId(null)
+      setMergeNotice(
+        `Đã ghép ${source.id} vào ${keptCode}. Đội ${source.id} đã bị xoá, `
+        + `${memberCount} thành viên nay thuộc đội ${keptCode}`
+        + (result?.captain_vote_open
+          ? ' và đội này đang mở bỏ phiếu kín chọn đội trưởng mới.'
+          : '. Đội này hiện chưa có đội trưởng.'),
+      )
+      try {
+        await loadTeams()
+      } catch (reloadError) {
+        if (reloadError?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        setApiError(explainApiError(reloadError))
+      }
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setMergeError(explainApiError(error))
+      await loadMergeCandidates()
+    } finally {
+      setBusy('')
+    }
+  }
+
   const handleCreateTeam = () => withBusy('create', async () => {
     await apiRequest('/teams', {
       method: 'POST',
@@ -522,6 +896,19 @@ function TeamsPage() {
       {apiError && (
         <div className="rounded-lg border border-clay/20 bg-clay/10 px-4 py-3 text-sm text-clay">
           {apiError}
+        </div>
+      )}
+
+      {mergeNotice && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-trail/25 bg-trail/[0.08] px-4 py-3 text-sm text-trail">
+          <span>{mergeNotice}</span>
+          <button
+            type="button"
+            onClick={() => setMergeNotice('')}
+            className="shrink-0 rounded-md p-0.5 text-trail/60 transition hover:text-trail"
+          >
+            <Icon name="close" className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -559,14 +946,25 @@ function TeamsPage() {
           />
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 active:scale-[0.98]"
-        >
-          <Icon name="plus" className="h-4 w-4" />
-          Tạo đội mới
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={openMergeDrawer}
+            className="inline-flex items-center gap-2 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper active:scale-[0.98]"
+          >
+            <Icon name="link" className="h-4 w-4" />
+            Ghép đội
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 active:scale-[0.98]"
+          >
+            <Icon name="plus" className="h-4 w-4" />
+            Tạo đội mới
+          </button>
+        </div>
       </div>
 
       <div className={`${CARD} overflow-hidden`}>
@@ -641,6 +1039,21 @@ function TeamsPage() {
         onClose={() => setShowCreate(false)}
         onChange={setCreateForm}
         onCreate={handleCreateTeam}
+      />
+
+      <MergeTeamsDrawer
+        open={showMerge}
+        teams={mergeCandidates}
+        loading={mergeLoading}
+        busy={busy === 'merge'}
+        error={mergeError}
+        sourceId={mergeSourceId}
+        targetId={mergeTargetId}
+        onClose={() => setShowMerge(false)}
+        onPickSource={pickMergeSource}
+        onPickTarget={pickMergeTarget}
+        onSwap={swapMergeSides}
+        onMerge={handleMergeTeams}
       />
     </div>
   )

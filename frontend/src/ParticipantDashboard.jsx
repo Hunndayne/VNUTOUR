@@ -158,6 +158,10 @@ function explainApiError(error) {
     mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
+    not_a_team_member: 'Bạn không thuộc đội này nên không bỏ phiếu được.',
+    candidate_not_in_team: 'Người bạn chọn không thuộc đội của bạn.',
+    candidate_not_found: 'Không tìm thấy thành viên bạn vừa chọn.',
+    captain_already_elected: 'Đội đã có đội trưởng, cuộc bỏ phiếu đã kết thúc.',
     no_team: 'Bạn chưa có đội.',
     already_has_team: 'Tài khoản này đã có đội.',
     already_approved: 'Đội này đã được duyệt rồi.',
@@ -750,6 +754,136 @@ function TeamCheckinQrCard({ qrInfo, teamName }) {
   )
 }
 
+// The ballot is a side call: a team that was never merged has no election to
+// show, and a failure here must not blank the dashboard the way the old
+// `/teams/{code}` 403 did. Losing it only costs us the captain-aware half of
+// the rename rule, which falls back to the member-count check.
+async function fetchCaptainVote() {
+  try {
+    return await apiRequest('/my-team/captain-vote')
+  } catch {
+    return null
+  }
+}
+
+// A merged team loses both captains, so it elects one by secret ballot. The
+// payload never says who voted for whom — only tallies — and neither does this
+// card: it shows totals, progress, and whether *you* have voted.
+function CaptainVoteCard({ vote, myMssv, selected, onSelect, onVote, busy }) {
+  const candidates = vote?.candidates || []
+  const memberCount = vote?.member_count || candidates.length
+  const votesCast = vote?.votes_cast || 0
+  const progress = memberCount > 0 ? Math.min(100, (votesCast / memberCount) * 100) : 0
+  // The ballot only stays open past the last vote when nobody leads outright,
+  // so a full box with the card still showing means the team is deadlocked.
+  const deadlocked = memberCount > 0 && votesCast >= memberCount
+
+  return (
+    <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
+      <div className="border-b border-[#DCD8CC] px-5 py-4 sm:px-6">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bỏ phiếu kín</p>
+            <h2 className="mt-1 font-display text-xl font-bold text-ink">Bầu đội trưởng mới</h2>
+          </div>
+          <Badge
+            label={vote?.i_have_voted ? 'Bạn đã bỏ phiếu' : 'Bạn chưa bỏ phiếu'}
+            cls={vote?.i_have_voted ? 'bg-[#1F7A6B]/12 text-[#1F7A6B]' : 'bg-[#E0A23A]/15 text-[#9A6B12]'}
+          />
+        </div>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/55">
+          Đội của bạn được BTC ghép từ hai đội nên hiện chưa có đội trưởng. Cả đội cùng chọn một
+          người, và chỉ đội trưởng mới được đặt tên chính thức cho đội.
+        </p>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/55">
+          <span className="font-semibold text-ink">Phiếu của bạn là kín.</span> Hệ thống chỉ công bố
+          tổng số phiếu của từng người — không ai, kể cả BTC, biết bạn đã bầu cho ai.
+        </p>
+      </div>
+
+      <div className="px-5 py-5 sm:px-6">
+        <div className="rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/70 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-ink">Tiến độ bỏ phiếu</p>
+            <p className="font-mono text-xs text-ink/45">{votesCast}/{memberCount}</p>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+            <div className="h-full" style={{ width: `${progress}%`, backgroundColor: COLORS.trail }} />
+          </div>
+          <p className="mt-2 text-xs leading-5 text-ink/45">
+            {vote?.i_have_voted
+              ? 'Bạn đã bỏ phiếu rồi. Muốn đổi ý thì chọn người khác và gửi lại — phiếu mới sẽ thay phiếu cũ.'
+              : 'Bạn có thể bầu cho bất kỳ thành viên nào trong đội, kể cả chính mình.'}
+          </p>
+        </div>
+
+        {deadlocked && (
+          <div className="mt-3 rounded-lg border border-[#E0A23A]/35 bg-[#E0A23A]/[0.08] px-4 py-3 text-sm leading-6 text-[#9A6B12]">
+            Cả đội đã bỏ phiếu nhưng đang hoà — chưa có ai dẫn đầu một mình nên cuộc bầu vẫn để mở.
+            Cần ít nhất một người đổi phiếu thì mới chọn được đội trưởng.
+          </div>
+        )}
+
+        <div className="mt-4 space-y-2">
+          {candidates.map((candidate) => {
+            const chosen = selected === candidate.mssv
+            return (
+              <label
+                key={candidate.mssv}
+                className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-4 py-3 transition ${
+                  chosen
+                    ? 'border-[#1F7A6B]/45 bg-[#1F7A6B]/[0.07]'
+                    : 'border-[#DCD8CC] bg-white hover:bg-[#F3F4F1]'
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <input
+                    type="radio"
+                    name="captain-vote-candidate"
+                    className="h-4 w-4 shrink-0 accent-[#1F7A6B]"
+                    value={candidate.mssv}
+                    checked={chosen}
+                    disabled={busy}
+                    onChange={() => onSelect(candidate.mssv)}
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-ink">
+                        {candidate.full_name || candidate.mssv}
+                      </span>
+                      {candidate.mssv === myMssv && (
+                        <Badge label="Bạn" cls="bg-[#E0A23A]/15 text-[#9A6B12]" />
+                      )}
+                    </span>
+                    <span className="mt-1 block font-mono text-xs text-ink/45">{candidate.mssv}</span>
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-full bg-[#20312B]/[0.06] px-2.5 py-1 font-mono text-xs font-semibold text-[#20312B]/55">
+                  {candidate.votes || 0} phiếu
+                </span>
+              </label>
+            )
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onVote(selected)}
+          disabled={!selected || busy}
+          className={`mt-4 w-full ${PRIMARY_BUTTON}`}
+        >
+          <Icon name="checkPlain" className="h-4 w-4" />
+          {busy
+            ? 'Đang gửi phiếu...'
+            : vote?.i_have_voted
+              ? 'Đổi phiếu cho người đã chọn'
+              : 'Bỏ phiếu cho người đã chọn'}
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function ParticipantDashboard() {
   const [user, setUser] = useState(() => getStoredUser() || {
     username: 'participant',
@@ -773,6 +907,8 @@ function ParticipantDashboard() {
   const [registrationSchema, setRegistrationSchema] = useState(null)
   const [experience, setExperience] = useState(null)
   const [qrInfo, setQrInfo] = useState(null)
+  const [captainVote, setCaptainVote] = useState(null)
+  const [voteChoice, setVoteChoice] = useState('')
 
   const loadDashboard = async () => {
     const me = await apiRequest('/auth/me')
@@ -795,6 +931,7 @@ function ParticipantDashboard() {
     setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
     setRegistrationSchema(schemaPayload)
     setExperience(experiencePayload)
+    setCaptainVote(normalizedTeam ? await fetchCaptainVote() : null)
   }
 
   useEffect(() => {
@@ -867,7 +1004,23 @@ function ParticipantDashboard() {
   // Freshers sign up before they know four other people, so an under-strength
   // team may still be submitted; the organisers merge teams up to full size.
   const minMembers = registrationSchema?.team_size_min || 1
-  const canRenameTeam = members.length >= maxMembers
+  const teamHasFullRoster = members.length >= maxMembers
+  // Two separate backend rules gate a rename: PATCH /my-team wants a full
+  // roster, and only the captain may name the team. The member list cannot tell
+  // us who the captain is on a merged team, so the ballot payload is the
+  // authority — when it has not loaded we fall back to the roster rule alone.
+  const hasElectedCaptain = Boolean(captainVote?.captain_mssv)
+  const captainMayRename = captainVote ? captainVote.can_rename_team !== false : true
+  const canRenameTeam = teamHasFullRoster && captainMayRename
+  const teamNameHint = !teamHasFullRoster
+    ? `Đội đang có ${members.length}/${maxMembers} thành viên nên tạm mang tên mặc định. Đủ ${maxMembers} người thì đội trưởng đặt tên được — BTC có thể ghép các đội chưa đủ với nhau, nên tên đặt sớm sẽ không giữ lại.`
+    : hasElectedCaptain
+      ? 'Chỉ đội trưởng mới đổi được tên đội. Nhờ đội trưởng đặt tên giúp nhé.'
+      : 'Đội chưa có đội trưởng nên chưa ai đổi được tên. Bầu xong đội trưởng thì người đó sẽ đặt tên chính thức.'
+  // A merged team is left named after its code until the new captain renames it.
+  const teamNameIsCode = Boolean(team && team.team_name && team.team_name === team.team_id)
+  const captainShouldNameTeam = hasElectedCaptain && canRenameTeam && teamNameIsCode
+  const captainVoteOpen = Boolean(captainVote?.open)
   const missingProfileFields = useMemo(
     () => getMissingProfileFields(profile, personFields),
     [profile, personFields],
@@ -936,6 +1089,28 @@ function ParticipantDashboard() {
   const createTeam = () => withBusy('create-team', async () => {
     await apiRequest('/my-team', { method: 'POST', body: {} })
     await loadDashboard()
+  })
+
+  const castCaptainVote = (candidateMssv) => withBusy('captain-vote', async () => {
+    if (!candidateMssv) return
+    try {
+      const payload = await apiRequest('/my-team/captain-vote', {
+        method: 'POST',
+        body: { candidate_mssv: candidateMssv },
+      })
+      setCaptainVote(payload)
+      // Keeping the ballot secret means not leaving the choice highlighted
+      // afterwards; the "đã bỏ phiếu" badge and the tally are the feedback.
+      setVoteChoice('')
+      // The winner is promoted server-side the moment the last vote lands, and
+      // that changes the captain badge and the rename right on this page.
+      if (payload?.captain_mssv) await loadDashboard()
+    } catch (error) {
+      // A rejected vote usually means the election moved on under us, so resync
+      // the ballot before surfacing the message.
+      setCaptainVote(await fetchCaptainVote())
+      throw error
+    }
   })
 
   const saveProfile = async (event) => {
@@ -1093,6 +1268,16 @@ function ParticipantDashboard() {
         {team?.approval_status === 'approved' && (
           <TeamCheckinQrCard qrInfo={qrInfo} teamName={team.team_name} />
         )}
+        {captainVoteOpen && (
+          <CaptainVoteCard
+            vote={captainVote}
+            myMssv={profile.mssv || user.mssv || ''}
+            selected={voteChoice}
+            onSelect={setVoteChoice}
+            onVote={castCaptainVote}
+            busy={busyAction === 'captain-vote'}
+          />
+        )}
         {registrationOpen ? (
           <>
             <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
@@ -1167,13 +1352,14 @@ function ParticipantDashboard() {
                     onChange={setTeamNameDraft}
                     required
                   />
-                  {!canRenameTeam && (
-                    <p className="mt-1 text-xs leading-5 text-ink/45">
-                      Đội đang có {members.length}/{maxMembers} thành viên nên tạm mang tên mặc định.
-                      Đủ {maxMembers} người thì bạn đặt tên được — BTC có thể ghép các đội chưa đủ
-                      với nhau, nên tên đặt sớm sẽ không giữ lại.
+                  {!canRenameTeam ? (
+                    <p className="mt-1 text-xs leading-5 text-ink/45">{teamNameHint}</p>
+                  ) : captainShouldNameTeam ? (
+                    <p className="mt-1 text-xs leading-5 text-[#9A6B12]">
+                      Đội vừa bầu xong và vẫn đang lấy mã đội làm tên. Bạn là đội trưởng — hãy đặt
+                      tên chính thức cho đội.
                     </p>
-                  )}
+                  ) : null}
                 </div>
                 {teamFields.some((field) => field.key === 'payment_proof') && (
                   <div className="mt-3">
