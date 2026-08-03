@@ -23,15 +23,37 @@ function explainApiError(error) {
   return 'Có lỗi xảy ra. Vui lòng thử lại.'
 }
 
-function applyPreviewTemplate(source, preview) {
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => HTML_ESCAPES[char])
+}
+
+/**
+ * Fill the {{...}} placeholders from a recipient's record.
+ *
+ * `forHtml` escapes the substituted values — never the template. The admin's own
+ * markup has to stay live for the preview to be worth anything, but a recipient's
+ * name is data they typed themselves: left raw it becomes markup, and a name like
+ * `<img src=x onerror=...>` would run script in whoever opens the preview.
+ *
+ * The replacements go through functions because a literal replacement string
+ * treats `$&`, `$'` and friends as capture references, so a name containing `$&`
+ * would come out mangled.
+ */
+function applyPreviewTemplate(source, preview, { forHtml = false } = {}) {
+  const value = (key) => {
+    const raw = String(preview?.[key] ?? '')
+    return () => (forHtml ? escapeHtml(raw) : raw)
+  }
   return String(source || '')
-    .replaceAll('{{ten}}', preview.name)
-    .replaceAll('{{name}}', preview.name)
-    .replaceAll('{{full_name}}', preview.name)
-    .replaceAll('{{ho_ten}}', preview.name)
-    .replaceAll('{{email}}', preview.email)
-    .replaceAll('{{username}}', preview.username)
-    .replaceAll('{{role}}', preview.role)
+    .replaceAll('{{ten}}', value('name'))
+    .replaceAll('{{name}}', value('name'))
+    .replaceAll('{{full_name}}', value('name'))
+    .replaceAll('{{ho_ten}}', value('name'))
+    .replaceAll('{{email}}', value('email'))
+    .replaceAll('{{username}}', value('username'))
+    .replaceAll('{{role}}', value('role'))
 }
 
 export default function EmailPage() {
@@ -127,6 +149,25 @@ export default function EmailPage() {
     }
   }, [accounts, currentUser, recipientType, selectedUsernames])
 
+  // Rendered inside a sandboxed iframe rather than into this document. Escaping
+  // the placeholder values already stops the injection, but the sandbox is what
+  // keeps it stopped: nothing in here can reach localStorage or the admin
+  // session even if the body later grows another untrusted source. No mail
+  // client runs scripts either, so blocking them makes the preview truer, not
+  // weaker.
+  const previewDocument = useMemo(() => {
+    const body = isHtmlMode
+      ? applyPreviewTemplate(htmlBody, personalizationPreview, { forHtml: true })
+      : `<pre>${escapeHtml(applyPreviewTemplate(htmlBody, personalizationPreview))}</pre>`
+    return `<!doctype html><html><head><meta charset="utf-8"><style>
+      body { margin: 0; padding: 12px; font: 14px/1.5 Inter, system-ui, sans-serif; color: #20312B; }
+      pre { margin: 0; white-space: pre-wrap; font: inherit; }
+      h1 { font-size: 1.125rem; } h2 { font-size: 1rem; }
+      a { color: #B8860B; }
+      img { max-width: 100%; }
+    </style></head><body>${body}</body></html>`
+  }, [htmlBody, isHtmlMode, personalizationPreview])
+
   const handleSend = useCallback(async () => {
     const parseEmails = (value) => value.split(/[\n,;]/).map((email) => email.trim()).filter(Boolean)
     const extEmails = parseEmails(externalEmails)
@@ -160,7 +201,10 @@ export default function EmailPage() {
           cc_emails: ccList,
           bcc_emails: bccList,
           subject: subject.trim(),
-          html_body: isHtmlMode ? htmlBody.trim() : `<pre>${htmlBody.trim()}</pre>`,
+          // "Văn bản thường" has to mean it: escape before wrapping, or a typed
+          // `<b>` (or a pasted tag) silently becomes live markup in the email.
+          // The {{...}} placeholders survive escaping and are filled server-side.
+          html_body: isHtmlMode ? htmlBody.trim() : `<pre>${escapeHtml(htmlBody.trim())}</pre>`,
         },
       })
       setResult(response)
@@ -433,16 +477,12 @@ export default function EmailPage() {
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Nội dung</p>
                 {htmlBody.trim() ? (
-                  isHtmlMode ? (
-                    <div
-                      className="mt-2 rounded-lg border border-stone bg-paper px-4 py-3 text-sm [&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-semibold [&_a]:text-gold [&_a]:underline"
-                      dangerouslySetInnerHTML={{ __html: applyPreviewTemplate(htmlBody, personalizationPreview) }}
-                    />
-                  ) : (
-                    <pre className="mt-2 whitespace-pre-wrap rounded-lg border border-stone bg-paper px-4 py-3 text-sm text-ink/70">
-                      {applyPreviewTemplate(htmlBody, personalizationPreview)}
-                    </pre>
-                  )
+                  <iframe
+                    title="Xem thử nội dung email"
+                    sandbox=""
+                    srcDoc={previewDocument}
+                    className="mt-2 h-72 w-full rounded-lg border border-stone bg-paper"
+                  />
                 ) : (
                   <p className="mt-2 text-sm text-ink/45">Chưa có nội dung để xem trước.</p>
                 )}
