@@ -686,19 +686,18 @@ function ParticipantDashboard() {
     const teamPayload = await apiRequest('/my-team')
     const schemaPayload = await apiRequest('/register/schema', { auth: false })
     const experiencePayload = await apiRequest('/me/experience')
-    let teamDetail = null
 
-    if (teamPayload?.team?.code) {
-      teamDetail = await apiRequest(`/teams/${teamPayload.team.code}`)
-    }
-
+    // `/teams/{code}` is admin/collab only, so for a participant it could only
+    // ever 403 — and the throw skipped every setter below it, leaving the whole
+    // dashboard blank. `/my-team` already carries the same fields, and its
+    // members come back at "self" visibility rather than the thinner "basic".
     setUser((current) => ({ ...current, ...me }))
     setProfile(normalizeProfile(me, profilePayload))
-    const normalizedTeam = normalizeTeam(teamPayload, teamDetail)
+    const normalizedTeam = normalizeTeam(teamPayload)
     setTeam(normalizedTeam)
     setTeamNameDraft(normalizedTeam?.team_name || '')
     setPaymentProofDraft(normalizedTeam?.payment_proof || '')
-    setMembers(Array.isArray(teamDetail?.members) ? teamDetail.members : Array.isArray(teamPayload?.members) ? teamPayload.members : [])
+    setMembers(Array.isArray(teamPayload?.members) ? teamPayload.members : [])
     setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
     setRegistrationSchema(schemaPayload)
     setExperience(experiencePayload)
@@ -985,9 +984,6 @@ function ParticipantDashboard() {
                   <h1 className="mt-4 max-w-2xl font-display text-3xl font-bold tracking-normal text-ink sm:text-4xl">
                     {team ? team.team_name : 'Bắt đầu đăng ký đội VNUTour'}
                   </h1>
-                  <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/55 sm:text-base">
-                    Quản lý hồ sơ, danh sách thành viên và trạng thái duyệt trong một nơi để đội trưởng luôn biết bước tiếp theo.
-                  </p>
                 </div>
 
                 <div className="border-t border-[#DCD8CC] bg-[#F3F4F1]/65 p-5 lg:border-l lg:border-t-0">
@@ -1121,7 +1117,7 @@ function ParticipantDashboard() {
                   {experience?.current_phase_label || currentPhase}
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-ink/55">
-                  Giai đoạn đăng ký đã đóng. Participant dashboard hiện ưu tiên nội dung thi đấu của event đang mở thay vì các thao tác tạo đội và gửi duyệt.
+                  Giai đoạn đăng ký đã đóng.
                 </p>
               </div>
             )}

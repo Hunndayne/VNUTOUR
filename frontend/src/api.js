@@ -44,6 +44,24 @@ export function clearStoredSession() {
   window.localStorage.removeItem(USER_KEY)
 }
 
+export const ROLE_MASTER_ADMIN = 'master_admin'
+export const ROLE_ADMIN = 'admin'
+
+/** Master admins are admins too — every admin screen stays open to them. */
+export function isAdminRole(role) {
+  return role === ROLE_ADMIN || role === ROLE_MASTER_ADMIN
+}
+
+/**
+ * Only a master admin may reshape the programme: the current phase, the phase
+ * calendar, sub-events and stations. The backend enforces this on its own and
+ * answers 403 `master_admin_required`; the flag exists so the UI can disable
+ * those controls instead of letting an admin click into a refusal.
+ */
+export function isMasterAdmin(user = getStoredUser()) {
+  return user?.role === ROLE_MASTER_ADMIN
+}
+
 export function redirectToRoot() {
   window.location.replace('/')
 }

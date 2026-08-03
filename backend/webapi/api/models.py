@@ -12,16 +12,22 @@ class Account(models.Model):
     ROLE_PARTICIPANT = "participant"
     ROLE_COLLAB = "collab"
     ROLE_ADMIN = "admin"
+    # Everything an admin may do, plus sole authority over the shape of the
+    # programme: which phase is current, the phase calendar, sub-events and
+    # stations. Kept separate so a mis-click by an operating admin cannot move
+    # the whole event to another phase mid-run.
+    ROLE_MASTER_ADMIN = "master_admin"
     ROLE_CHOICES = [
         (ROLE_PARTICIPANT, "Participant"),
         (ROLE_COLLAB, "Collaborator"),
         (ROLE_ADMIN, "Admin"),
+        (ROLE_MASTER_ADMIN, "Master Admin"),
     ]
 
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=255, unique=True)
     password_hash = models.CharField(max_length=255)
-    role = models.CharField(max_length=12, choices=ROLE_CHOICES, default=ROLE_PARTICIPANT)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_PARTICIPANT)
     is_active = models.BooleanField(default=True)
     token = models.CharField(max_length=128, null=True, blank=True, unique=True)
     token_created_at = models.DateTimeField(null=True, blank=True)
@@ -642,6 +648,38 @@ class StationSubmission(models.Model):
 
     def __str__(self) -> str:
         return f"Submission by {self.team.code} @ {self.station.code} ({self.status})"
+
+
+# =====================================================================
+# 14b. TeamFormVariant
+# =====================================================================
+
+class TeamFormVariant(models.Model):
+    """Which quiz questions a team drew, when a station serves a random subset.
+
+    Written once, the first time any member opens the form, then reused. That is
+    what makes the draw a *team* fact rather than a per-request one: teammates on
+    separate devices get the same questions, and a reload never reshuffles them.
+    Stations that serve their whole bank (`quiz.randomCount` = 0) get no row.
+    """
+
+    team = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="form_variants",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="team_form_variants",
+    )
+    # Quiz item ids served to this team, in the station's display order.
+    item_ids = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "team_form_variant"
+        unique_together = [("team", "station")]
+
+    def __str__(self) -> str:
+        return f"Variant for {self.team.code} @ {self.station.code} ({len(self.item_ids)} câu)"
 
 
 # =====================================================================

@@ -5,7 +5,7 @@ import AdminDashboard from './AdminDashboard.jsx'
 import ParticipantDashboard from './ParticipantDashboard.jsx'
 import FormResponses from './FormResponses.jsx'
 import CoopDashboard from './CoopDashboard.jsx'
-import { getStoredAuthToken, getStoredUser } from './api.js'
+import { getStoredAuthToken, getStoredUser, isAdminRole } from './api.js'
 
 const ROLE_ENTRY_PATHS = new Set(['/admin', '/participant', '/paticipant', '/coop', '/checkin'])
 
@@ -14,7 +14,7 @@ function redirectToRoot() {
 }
 
 function renderDashboardByRole(role) {
-  if (role === 'admin') {
+  if (isAdminRole(role)) {
     return <AdminDashboard />
   }
   if (role === 'collab') {

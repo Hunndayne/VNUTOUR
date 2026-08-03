@@ -13,7 +13,7 @@ from api.services.backup_service import (
     restore_backup,
     save_uploaded_backup,
 )
-from .views_shared import _json_body, _require_role
+from .views_shared import _json_body, _require_role, _require_master_admin
 
 
 @csrf_exempt
@@ -59,7 +59,10 @@ def backup_download_view(request: HttpRequest, filename: str):
 
 @csrf_exempt
 def backup_restore_view(request: HttpRequest):
-    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    # A restore overwrites Account, ProgramPhase and Station wholesale, so it is
+    # a back door to every master-only change at once — including handing
+    # yourself the master role. Creating and downloading backups stays open.
+    acc, err = _require_master_admin(request)
     if err:
         return err
     if request.method != "POST":

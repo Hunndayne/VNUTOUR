@@ -307,8 +307,13 @@ def register_view(request: HttpRequest):
     if len(password) < settings.AUTH_MIN_PASSWORD_LENGTH:
         return JsonResponse({"error": "password_too_short"}, status=400)
 
-    # Gate: if any admin exists, require secret
-    admin_exists = Account.objects.filter(role=Account.ROLE_ADMIN, is_active=True).exists()
+    # Gate: if any admin exists, require secret. Master admins count — a system
+    # holding only master accounts is still bootstrapped, and leaving them out
+    # would swing this endpoint back open.
+    admin_exists = Account.objects.filter(
+        role__in=[Account.ROLE_ADMIN, Account.ROLE_MASTER_ADMIN],
+        is_active=True,
+    ).exists()
     if admin_exists:
         server_secret = os.getenv("ADMIN_REGISTER_SECRET")
         provided = str((data.get("secret") or request.headers.get("X-Register-Secret") or "").strip())

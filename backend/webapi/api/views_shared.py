@@ -106,12 +106,37 @@ def _auth_or_401(request: HttpRequest):
 
 
 def _require_role(request: HttpRequest, *roles: str):
-    """Auth + role check. Returns (account, None) or (None, JsonResponse)."""
+    """Auth + role check. Returns (account, None) or (None, JsonResponse).
+
+    A master admin satisfies any gate that admits an admin — the role is a
+    superset, so every existing `_require_role(..., ROLE_ADMIN)` keeps working
+    without being rewritten. Gates that must exclude plain admins use
+    `_require_master_admin` instead.
+    """
     acc, err = _auth_or_401(request)
     if err:
         return None, err
-    if acc.role not in roles:
+    allowed = set(roles)
+    if Account.ROLE_ADMIN in allowed:
+        allowed.add(Account.ROLE_MASTER_ADMIN)
+    if acc.role not in allowed:
         return None, JsonResponse({"error": "forbidden"}, status=403)
+    return acc, None
+
+
+def _require_master_admin(request: HttpRequest):
+    """Auth + master-admin check, for changes to the shape of the programme.
+
+    Guards the current phase, the phase calendar, sub-events and stations, plus
+    the two indirect routes to the same outcome: undoing a `phase.change` audit
+    entry, and restoring a backup (which rewrites accounts, phases and stations
+    wholesale).
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return None, err
+    if acc.role != Account.ROLE_MASTER_ADMIN:
+        return None, JsonResponse({"error": "master_admin_required"}, status=403)
     return acc, None
 
 

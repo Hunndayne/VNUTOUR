@@ -35,8 +35,21 @@ class BackupRestoreApiTests(TestCase):
         )
         self.token = generate_session(self.admin)
 
+        # Restoring rewrites accounts, phases and stations at once, so it is
+        # master-only; creating and downloading backups stays with admins.
+        self.master = Account.objects.create(
+            username="master",
+            email="master@example.com",
+            password_hash="x",
+            role=Account.ROLE_MASTER_ADMIN,
+        )
+        self.master_token = generate_session(self.master)
+
     def _auth(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {self.token}"}
+
+    def _master_auth(self):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.master_token}"}
 
     def test_create_list_and_download_backup(self):
         created = self.client.post("/api/admin/backups", **self._auth())
@@ -65,7 +78,7 @@ class BackupRestoreApiTests(TestCase):
                 "confirmation": "no",
             }),
             content_type="application/json",
-            **self._auth(),
+            **self._master_auth(),
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
@@ -86,7 +99,7 @@ class BackupRestoreApiTests(TestCase):
                 "confirmation": "RESTORE",
             }),
             content_type="application/json",
-            **self._auth(),
+            **self._master_auth(),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -97,3 +110,24 @@ class BackupRestoreApiTests(TestCase):
         self.assertTrue(AuditLog.objects.filter(action="backup.restore").exists())
         restored_admin = Account.objects.get(username="admin")
         self.assertIsNone(restored_admin.token)
+
+    def test_plain_admin_cannot_restore(self):
+        """Restore overwrites Account rows, so it would hand back every power."""
+        created = self.client.post("/api/admin/backups", **self._auth())
+        self.team.name = "Modified Team"
+        self.team.save(update_fields=["name", "updated_at"])
+
+        response = self.client.post(
+            "/api/admin/backups/restore",
+            data=json.dumps({
+                "backup_name": created.json()["filename"],
+                "confirmation": "RESTORE",
+            }),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "master_admin_required")
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.name, "Modified Team")

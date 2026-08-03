@@ -3,7 +3,6 @@ Participant self-service views — §9.2
 """
 
 import json
-from copy import deepcopy
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
@@ -21,6 +20,14 @@ from api.services.program_service import get_current_sub_event
 from api.services.checkin_qr_service import team_qr_visible
 from api.services.station_service import set_submission_score
 from api.services.submission_storage_service import save_submission_files
+from api.services.submission_config_service import (
+    normalize_config as normalize_submission_config,
+    public_config as public_submission_config,
+    has_items as has_submission_items,
+    attachment_item as submission_attachment_item,
+    grade_quiz as grade_submission_quiz,
+)
+from api.services.team_form_variant_service import variant_item_ids
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -124,89 +131,12 @@ def _member_resolution(data: dict):
     return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
 
 
-def _has_submission_config(config: dict | None) -> bool:
-    config = config or {}
-    return bool(
-        config.get("form", {}).get("enabled")
-        or config.get("quiz", {}).get("enabled")
-        or config.get("attachment", {}).get("enabled")
-    )
-
-
-def _public_submission_config(config: dict) -> dict:
-    public_config = deepcopy(config or {})
-    quiz = public_config.get("quiz")
-    if isinstance(quiz, dict):
-        for item in quiz.get("items") or []:
-            if isinstance(item, dict):
-                for key in (
-                    "correctOption", "correct_option",
-                    "correctAnswer", "correct_answer", "answer",
-                ):
-                    item.pop(key, None)
-    return public_config
-
-
 def _submission_limits(config: dict | None) -> dict:
-    limits = (config or {}).get("limits") or {}
-    try:
-        max_submissions = max(0, int(limits.get("maxSubmissions") or 0))
-    except (TypeError, ValueError):
-        max_submissions = 0
+    limits = normalize_submission_config(config)["limits"]
     return {
-        "max_submissions": max_submissions,
-        "close_on_correct": bool(limits.get("closeOnCorrect")),
-        "manual_closed": bool(limits.get("manualClosed")),
-    }
-
-
-def _quiz_item_points(item: dict) -> int:
-    try:
-        return max(0, int(item.get("points")))
-    except (TypeError, ValueError):
-        return 1
-
-
-def _grade_quiz(config: dict | None, response_payload: dict) -> dict | None:
-    """Grade quiz answers against the station config; None when there is no quiz.
-
-    Returns {correct_count, total, points, max_points, all_correct} — points sum
-    per-question weights (config item "points", default 1).
-    """
-    quiz = (config or {}).get("quiz") or {}
-    items = (quiz.get("items") or []) if quiz.get("enabled") else []
-    if not items:
-        return None
-
-    answers = {}
-    for answer in (response_payload or {}).get("quiz") or []:
-        if isinstance(answer, dict):
-            answers[str(answer.get("id"))] = answer.get("selectedOption")
-
-    correct_count = 0
-    total = 0
-    points = 0
-    max_points = 0
-    for index, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
-        correct = item.get("correctOption")
-        if not isinstance(correct, int):
-            continue
-        item_points = _quiz_item_points(item)
-        total += 1
-        max_points += item_points
-        selected = answers.get(str(item.get("id") or f"quiz-{index}"))
-        if selected == correct:
-            correct_count += 1
-            points += item_points
-
-    return {
-        "correct_count": correct_count,
-        "total": total,
-        "points": points,
-        "max_points": max_points,
-        "all_correct": total > 0 and correct_count == total,
+        "max_submissions": limits["maxSubmissions"],
+        "close_on_correct": limits["closeOnCorrect"],
+        "manual_closed": limits["manualClosed"],
     }
 
 
@@ -238,6 +168,9 @@ def _form_closure_state(station: Station) -> dict:
 def _station_form_payload(station: Station, team: Team | None = None) -> dict:
     phase = station.sub_event.phase
     event = station.sub_event
+    # Drawing here (rather than only on submit) is what pins the question set:
+    # whichever member opens the form first fixes it for the whole team.
+    drawn_items = variant_item_ids(station, team)
     payload = {
         "station_id": station.id,
         "station_code": station.code,
@@ -247,7 +180,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "event_name": event.name,
         "phase_key": phase.key,
         "phase_label": phase.label,
-        "submission_config": _public_submission_config(station.submission_config or {}),
+        "submission_config": public_submission_config(station.submission_config, drawn_items),
         "closure": _form_closure_state(station),
     }
     if team is not None:
@@ -761,7 +694,7 @@ def my_team_forms_view(request: HttpRequest):
 
     accessible_forms = []
     for station in stations:
-        if not _has_submission_config(station.submission_config):
+        if not has_submission_items(station.submission_config):
             continue
 
         phase_key = station.sub_event.phase.key
@@ -809,7 +742,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         id=station_id,
         active=True,
     ).first()
-    if not station or not _has_submission_config(station.submission_config):
+    if not station or not has_submission_items(station.submission_config):
         return JsonResponse({"error": "form_not_found"}, status=404)
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -857,8 +790,8 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
 
     config = station.submission_config or {}
     if uploaded_files:
-        attachment_config = config.get("attachment") or {}
-        if not attachment_config.get("enabled"):
+        attachment_config = submission_attachment_item(config)
+        if attachment_config is None:
             return JsonResponse({"error": "attachment_not_allowed"}, status=400)
         try:
             stored_files = save_submission_files(
@@ -880,7 +813,8 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if not submission:
         submission = StationSubmission(team=team, station=station)
 
-    quiz_result = _grade_quiz(config, response_payload)
+    # Same draw the team was served; answers to any other question are ignored.
+    quiz_result = grade_submission_quiz(config, response_payload, variant_item_ids(station, team))
     if isinstance(response_payload, dict):
         # quiz_result is server-computed only; never trust a client-sent one
         response_payload.pop("quiz_result", None)
@@ -895,7 +829,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     submission.submitted_at = timezone.now()
     submission.save()
 
-    if quiz_result is not None and (config.get("quiz") or {}).get("autoScore"):
+    if quiz_result is not None and normalize_submission_config(config)["quiz"]["autoScore"]:
         # Optional per-form setting: push the quiz points straight to the
         # team's phase score. Ignore lock errors — the submission itself stands.
         set_submission_score(
@@ -944,7 +878,7 @@ def my_experience_view(request: HttpRequest):
             checkin_policy=Station.POLICY_FREE_PLAY,
         ).order_by("order", "id")
         for station in stations:
-            if _has_submission_config(station.submission_config):
+            if has_submission_items(station.submission_config):
                 open_forms.append(_station_form_payload(station, team=team))
 
     return JsonResponse({

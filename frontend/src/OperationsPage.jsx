@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FIXED_PHASES } from './adminProgram.js'
-import { apiDownload, apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import { apiDownload, apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect } from './api.js'
 import { CARD, Icon } from './ui.jsx'
 
 function saveDownload({ blob, filename }) {
@@ -30,8 +30,18 @@ function explainError(error) {
     restore_confirmation_required: 'Cần nhập chính xác RESTORE để xác nhận.',
     invalid_backup: 'File backup không hợp lệ.',
     backup_too_large: 'File backup vượt quá giới hạn.',
+    master_admin_required: 'Chỉ master admin mới được hoàn tác thao tác đổi phase.',
   }
   return messages[code] || 'Không thể hoàn thành thao tác.'
+}
+
+/**
+ * Hoàn tác một `phase.change` là đổi phase toàn hệ thống, nên backend chỉ cho
+ * master admin làm; các action khác (score.*, checkin.reset, settings.update)
+ * admin thường vẫn hoàn tác bình thường.
+ */
+function isUndoLocked(item, masterAdmin) {
+  return item?.action === 'phase.change' && !masterAdmin
 }
 
 export default function OperationsPage() {
@@ -45,6 +55,7 @@ export default function OperationsPage() {
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const canUndoPhaseChange = isMasterAdmin()
 
   const loadAudit = useCallback(async () => {
     const payload = await apiRequest('/admin/audit-logs?limit=100')
@@ -94,6 +105,10 @@ export default function OperationsPage() {
   }
 
   const undoAudit = (item) => run(`undo:${item.id}`, async () => {
+    if (isUndoLocked(item, canUndoPhaseChange)) {
+      setError(explainError({ data: { error: 'master_admin_required' } }))
+      return
+    }
     if (!window.confirm(`Hoàn tác thao tác “${item.summary}”?`)) return
     await apiRequest(`/admin/audit-logs/${item.id}/undo`, { method: 'POST' })
     setNotice('Đã hoàn tác và ghi thêm một audit log mới.')
@@ -182,37 +197,41 @@ export default function OperationsPage() {
             <p className="mt-1 text-xs text-ink/45">Undo chỉ thực hiện khi trạng thái hiện tại vẫn khớp với trạng thái sau thao tác gốc.</p>
           </div>
           <div className="divide-y divide-stone">
-            {auditLogs.map((item) => (
-              <div key={item.id} className="space-y-2 px-5 py-4">
-                <div className="flex flex-wrap items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs text-ink/35">#{item.id}</span>
-                      <span className="rounded bg-paper px-2 py-0.5 font-mono text-xs text-ink/60">{item.action}</span>
-                      <span className="text-xs text-ink/40">{formatDateTime(item.created_at)}</span>
+            {auditLogs.map((item) => {
+              const undoLocked = isUndoLocked(item, canUndoPhaseChange)
+              return (
+                <div key={item.id} className="space-y-2 px-5 py-4">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs text-ink/35">#{item.id}</span>
+                        <span className="rounded bg-paper px-2 py-0.5 font-mono text-xs text-ink/60">{item.action}</span>
+                        <span className="text-xs text-ink/40">{formatDateTime(item.created_at)}</span>
+                      </div>
+                      <p className="mt-1 text-sm font-medium text-ink">{item.summary}</p>
+                      <p className="mt-1 text-xs text-ink/45">Bởi {item.actor || 'hệ thống'}{item.undone_at ? ` · Đã undo bởi ${item.undone_by || 'hệ thống'}` : ''}</p>
                     </div>
-                    <p className="mt-1 text-sm font-medium text-ink">{item.summary}</p>
-                    <p className="mt-1 text-xs text-ink/45">Bởi {item.actor || 'hệ thống'}{item.undone_at ? ` · Đã undo bởi ${item.undone_by || 'hệ thống'}` : ''}</p>
+                    {item.can_undo && (
+                      <button
+                        type="button"
+                        disabled={busy === `undo:${item.id}` || undoLocked}
+                        title={undoLocked ? 'Chỉ master admin mới hoàn tác được thao tác đổi phase.' : undefined}
+                        onClick={() => undoAudit(item)}
+                        className="rounded-lg border border-clay/20 px-3 py-1.5 text-xs font-semibold text-clay hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Hoàn tác
+                      </button>
+                    )}
                   </div>
-                  {item.can_undo && (
-                    <button
-                      type="button"
-                      disabled={busy === `undo:${item.id}`}
-                      onClick={() => undoAudit(item)}
-                      className="rounded-lg border border-clay/20 px-3 py-1.5 text-xs font-semibold text-clay hover:bg-clay/5"
-                    >
-                      Hoàn tác
-                    </button>
+                  {(item.before_data || item.after_data) && (
+                    <details className="text-xs text-ink/50">
+                      <summary className="cursor-pointer">Xem trạng thái trước/sau</summary>
+                      <pre className="mt-2 overflow-x-auto rounded-lg bg-paper p-3">{JSON.stringify({ before: item.before_data, after: item.after_data }, null, 2)}</pre>
+                    </details>
                   )}
                 </div>
-                {(item.before_data || item.after_data) && (
-                  <details className="text-xs text-ink/50">
-                    <summary className="cursor-pointer">Xem trạng thái trước/sau</summary>
-                    <pre className="mt-2 overflow-x-auto rounded-lg bg-paper p-3">{JSON.stringify({ before: item.before_data, after: item.after_data }, null, 2)}</pre>
-                  </details>
-                )}
-              </div>
-            ))}
+              )
+            })}
             {auditLogs.length === 0 && <p className="px-5 py-10 text-center text-sm text-ink/40">Chưa có audit log.</p>}
           </div>
         </div>

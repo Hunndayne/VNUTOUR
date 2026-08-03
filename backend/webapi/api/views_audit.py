@@ -48,6 +48,16 @@ def audit_undo_view(request: HttpRequest, audit_id: int):
         return err
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
+    # Undoing a phase change moves the whole event, so it answers to the same
+    # authority as making one. Score, check-in and settings undos stay with
+    # admins — those are ordinary operating corrections.
+    target = AuditLog.objects.filter(id=audit_id).first()
+    if (
+        target
+        and target.action == "phase.change"
+        and acc.role != Account.ROLE_MASTER_ADMIN
+    ):
+        return JsonResponse({"error": "master_admin_required"}, status=403)
     try:
         log = undo_audit(audit_id, acc)
     except AuditLog.DoesNotExist:

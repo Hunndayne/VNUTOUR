@@ -299,6 +299,20 @@ def team_reject_view(request: HttpRequest, team_key: str):
 # Accounts (admin)
 # =====================================================================
 
+def _master_admin_forbidden():
+    return JsonResponse({"error": "master_admin_required"}, status=403)
+
+
+def _may_touch_master(acc: Account) -> bool:
+    """Only a master admin may grant the master role or edit a master account.
+
+    Without this an admin could simply promote themselves and take back the
+    program-structure powers the role split withholds — or reset a master's
+    password and use their account. Both make the separation cosmetic.
+    """
+    return acc.role == Account.ROLE_MASTER_ADMIN
+
+
 @csrf_exempt
 def admin_accounts_view(request: HttpRequest):
     """GET: list accounts. POST: create account."""
@@ -320,6 +334,7 @@ def admin_accounts_view(request: HttpRequest):
         counts = {
             "all": qs.count(),
             "admin": qs.filter(role=Account.ROLE_ADMIN).count(),
+            "master_admin": qs.filter(role=Account.ROLE_MASTER_ADMIN).count(),
             "collab": qs.filter(role=Account.ROLE_COLLAB).count(),
             "participant": qs.filter(role=Account.ROLE_PARTICIPANT).count(),
             "inactive": qs.filter(is_active=False).count(),
@@ -374,6 +389,8 @@ def admin_accounts_view(request: HttpRequest):
         role = str((data.get("role") or Account.ROLE_COLLAB).strip())
         if role not in dict(Account.ROLE_CHOICES):
             role = Account.ROLE_COLLAB
+        if role == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
+            return _master_admin_forbidden()
 
         if not username or not password or not email:
             return JsonResponse({"error": "missing_fields"}, status=400)
@@ -413,6 +430,15 @@ def admin_account_detail_view(request: HttpRequest, username: str):
     except Account.DoesNotExist:
         return JsonResponse({"error": "not_found"}, status=404)
 
+    # A master account is off-limits to plain admins for anything but reading:
+    # its password, its active flag and its role are all routes to taking it over.
+    if (
+        request.method in ("PATCH", "DELETE")
+        and target.role == Account.ROLE_MASTER_ADMIN
+        and not _may_touch_master(acc)
+    ):
+        return _master_admin_forbidden()
+
     if request.method == "GET":
         membership = TeamMembership.objects.filter(
             participant__mssv=target.mssv,
@@ -438,6 +464,8 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         if "full_name" in data or "fullName" in data:
             target.full_name = str(data.get("full_name") or data.get("fullName") or "").strip() or None
         if "role" in data and data["role"] in dict(Account.ROLE_CHOICES):
+            if data["role"] == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
+                return _master_admin_forbidden()
             target.role = data["role"]
         if "is_active" in data:
             target.is_active = bool(data["is_active"])

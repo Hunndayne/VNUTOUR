@@ -19,7 +19,7 @@ function MetricCard({ value, label, accent = 'default' }) {
   )
 }
 
-function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurrent, onDateChange }) {
+function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurrent, onDateChange, canEdit = true }) {
   return (
     <div
       role="button"
@@ -56,7 +56,8 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
               event.stopPropagation()
               onSetCurrent()
             }}
-            className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
+            disabled={!canEdit}
+            className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             Chuyển phase
           </button>
@@ -71,9 +72,10 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
           <input
             type="date"
             value={schedule.startDate}
+            disabled={!canEdit}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => onDateChange({ startDate: event.target.value })}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
           />
         </div>
         <div>
@@ -83,9 +85,10 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
           <input
             type="date"
             value={schedule.endDate}
+            disabled={!canEdit}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => onDateChange({ endDate: event.target.value })}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
           />
         </div>
       </div>
@@ -93,7 +96,7 @@ function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurr
   )
 }
 
-function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
+function SubEventCard({ subEvent, isSelected, onSelect, onDelete, canEdit = true }) {
   const typeMeta = SUB_EVENT_TYPE_META[subEvent.type] ?? SUB_EVENT_TYPE_META.custom
 
   return (
@@ -135,8 +138,9 @@ function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
             event.stopPropagation()
             onDelete()
           }}
-          className="rounded-lg p-1.5 text-ink/30 transition hover:bg-paper hover:text-clay"
-          title="Xóa event"
+          disabled={!canEdit}
+          className="rounded-lg p-1.5 text-ink/30 transition hover:bg-paper hover:text-clay disabled:cursor-not-allowed disabled:opacity-40"
+          title={canEdit ? 'Xóa event' : 'Chỉ master admin mới xóa được event'}
         >
           <Icon name="trash" className="h-4 w-4" />
         </button>
@@ -145,7 +149,7 @@ function SubEventCard({ subEvent, isSelected, onSelect, onDelete }) {
   )
 }
 
-function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCancel }) {
+function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCancel, canEdit = true }) {
   const [form, setForm] = useState(() => ({ ...initialEvent }))
   const [error, setError] = useState('')
 
@@ -180,8 +184,9 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
           </label>
           <input
             value={form.name}
+            disabled={!canEdit}
             onChange={(event) => set('name', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
             placeholder="Ví dụ: Chạy trạm bản đồ"
           />
         </div>
@@ -197,8 +202,9 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
           </label>
           <select
             value={form.type}
+            disabled={!canEdit}
             onChange={(event) => set('type', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {Object.entries(SUB_EVENT_TYPE_META).map(([key, meta]) => (
               <option key={key} value={key}>{meta.label}</option>
@@ -211,8 +217,9 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
             <input
               type="checkbox"
               checked={form.usesStations}
+              disabled={!canEdit}
               onChange={(event) => set('usesStations', event.target.checked)}
-              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20 disabled:cursor-not-allowed disabled:opacity-40"
             />
             Event này có trạm
           </label>
@@ -225,8 +232,9 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
           <input
             type="date"
             value={form.startDate}
+            disabled={!canEdit}
             onChange={(event) => set('startDate', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
           />
         </div>
 
@@ -237,8 +245,9 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
           <input
             type="date"
             value={form.endDate}
+            disabled={!canEdit}
             onChange={(event) => set('endDate', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
           />
         </div>
       </div>
@@ -250,8 +259,9 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
         <textarea
           rows={4}
           value={form.note}
+          disabled={!canEdit}
           onChange={(event) => set('note', event.target.value)}
-          className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
           placeholder="Mô tả event này dùng để làm gì, cách chấm điểm, và mối liên hệ với trạm nếu có."
         />
       </div>
@@ -267,7 +277,8 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
         <button
           type="button"
           onClick={handleSave}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
+          disabled={!canEdit}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Icon name="checkPlain" className="h-4 w-4" />
           {submitLabel}
@@ -288,6 +299,7 @@ function EventManagementPage({
   onCreateSubEvent,
   onUpdateSubEvent,
   onDeleteSubEvent,
+  canEditProgram = true,
 }) {
   const [selectedPhase, setSelectedPhase] = useState(currentPhase)
   const [selectedSubEventId, setSelectedSubEventId] = useState('')
@@ -346,12 +358,20 @@ function EventManagementPage({
             <button
               type="button"
               onClick={() => setCreating(true)}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
+              disabled={!canEditProgram}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Icon name="plus" className="h-4 w-4" />
               Tạo event trong phase
             </button>
           </div>
+
+          {!canEditProgram && (
+            <p className="mt-3 text-xs leading-5 text-ink/45">
+              Bạn đang ở quyền admin thường nên chỉ xem được cấu trúc chương trình. Chuyển phase,
+              sửa lịch phase và tạo/sửa/xóa event con là quyền của master admin.
+            </p>
+          )}
         </div>
       </div>
 
@@ -373,6 +393,7 @@ function EventManagementPage({
             onSelect={() => setSelectedPhase(phase.key)}
             onSetCurrent={() => onSetCurrentPhase(phase.key)}
             onDateChange={(patch) => onUpdatePhaseSchedule(phase.key, patch)}
+            canEdit={canEditProgram}
           />
         ))}
       </section>
@@ -398,6 +419,7 @@ function EventManagementPage({
                 onDeleteSubEvent(selectedPhase, subEvent.id)
                 setSelectedSubEventId('')
               }}
+              canEdit={canEditProgram}
             />
           ))}
 
@@ -442,6 +464,7 @@ function EventManagementPage({
                     setCreating(false)
                   }}
                   onCancel={() => setCreating(false)}
+                  canEdit={canEditProgram}
                 />
               </div>
             </div>
@@ -477,7 +500,8 @@ function EventManagementPage({
                         <button
                           type="button"
                           onClick={() => onSetCurrentSubEvent(selectedSubEvent.id)}
-                          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.9]"
+                          disabled={!canEditProgram}
+                          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Mở event này
                         </button>
@@ -496,6 +520,7 @@ function EventManagementPage({
                   submitLabel="Lưu event"
                   onSave={(draft) => onUpdateSubEvent(selectedPhase, selectedSubEvent.id, draft)}
                   onCancel={() => setDetailSeed(value => value + 1)}
+                  canEdit={canEditProgram}
                 />
               </div>
             </div>

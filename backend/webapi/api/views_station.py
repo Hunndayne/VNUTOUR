@@ -15,8 +15,19 @@ from api.services.station_service import (
     set_submission_score,
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
+from api.services.submission_config_service import normalize_config, public_config
 from api.services.audit_service import record_audit
-from .views_shared import _json_body, _auth_or_401, _require_role
+from .views_shared import _json_body, _auth_or_401, _require_role, _require_master_admin
+
+
+def _stored_submission_config(config):
+    """Persist the canonical item-list shape, converting legacy section configs.
+
+    Keeps `None` as-is so "station has no form" stays distinct from an empty form.
+    """
+    if config is None:
+        return None
+    return normalize_config(config)
 
 
 @csrf_exempt
@@ -170,6 +181,17 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
 
     include_inactive = request.GET.get("include_inactive") in ("1", "true", "yes")
     stations = get_stations_for_event(event_id, include_inactive=include_inactive)
+
+    # Collabs run the stations but never need the answer key: grading reads the
+    # server-computed `quiz_result` on each submission. Admins edit the forms
+    # here, so they keep the config exactly as stored.
+    hide_answers = acc.role == Account.ROLE_COLLAB
+
+    def station_config(station):
+        if hide_answers:
+            return public_config(station.submission_config)
+        return station.submission_config
+
     return JsonResponse({
         "stations": [
             {
@@ -179,7 +201,7 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
                 "checkin_policy": s.checkin_policy,
                 "capacity_mode": s.capacity_mode,
                 "max_concurrent_teams": s.max_concurrent_teams,
-                "submission_config": s.submission_config,
+                "submission_config": station_config(s),
             }
             for s in stations
         ],
@@ -189,7 +211,7 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
 @csrf_exempt
 def station_create_view(request: HttpRequest, event_id: int):
     """POST: create station for a sub-event."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 
@@ -214,7 +236,7 @@ def station_create_view(request: HttpRequest, event_id: int):
             checkin_policy=data.get("checkin_policy", "staff_scan"),
             capacity_mode=data.get("capacity_mode", "unlimited"),
             max_concurrent_teams=data.get("max_concurrent_teams"),
-            submission_config=data.get("submission_config"),
+            submission_config=_stored_submission_config(data.get("submission_config")),
         )
     except ValueError as exc:
         if str(exc) == "duplicate_station_code":
@@ -228,7 +250,7 @@ def station_create_view(request: HttpRequest, event_id: int):
 @csrf_exempt
 def station_detail_view(request: HttpRequest, station_id: int):
     """PATCH/DELETE a station."""
-    acc, err = _require_role(request, "admin")
+    acc, err = _require_master_admin(request)
     if err:
         return err
 
@@ -242,6 +264,8 @@ def station_detail_view(request: HttpRequest, station_id: int):
                   "capacity_mode", "max_concurrent_teams", "submission_config"):
             if f in data:
                 kwargs[f] = data[f]
+        if "submission_config" in kwargs:
+            kwargs["submission_config"] = _stored_submission_config(kwargs["submission_config"])
         station = update_station(station_id, **kwargs)
         return JsonResponse({
             "id": station.id, "code": station.code, "name": station.name,

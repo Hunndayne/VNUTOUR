@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { Icon, CARD, Badge } from './ui.jsx'
-import { apiRequest, formatDateTime, logoutAndRedirect, API_BASE_URL } from './api.js'
+import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, API_BASE_URL } from './api.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 
@@ -54,9 +54,10 @@ const DEFAULT_PHASE_OPTIONS = [
 ]
 
 const MODE_META = {
-  form: {
-    label: 'Biểu mẫu',
+  text: {
+    label: 'Tự luận',
     hint: 'Thu thập câu trả lời tự do theo từng trường.',
+    addLabel: 'Câu tự luận',
     icon: 'doc',
     cls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]',
     selectedCls: 'border-[#3E7CA8]/25 bg-[#3E7CA8]/10 text-[#3E7CA8]',
@@ -64,6 +65,7 @@ const MODE_META = {
   quiz: {
     label: 'Trắc nghiệm',
     hint: 'Câu hỏi có đáp án lựa chọn và đáp án đúng.',
+    addLabel: 'Câu trắc nghiệm',
     icon: 'listBullet',
     cls: 'bg-gold/15 text-gold',
     selectedCls: 'border-gold/30 bg-gold/10 text-gold',
@@ -71,6 +73,7 @@ const MODE_META = {
   attachment: {
     label: 'Tệp',
     hint: 'Yêu cầu đội nộp ảnh, PDF hoặc tệp minh chứng.',
+    addLabel: 'Ô nộp tệp',
     icon: 'paperclip',
     cls: 'bg-trail/12 text-trail',
     selectedCls: 'border-trail/30 bg-trail/10 text-trail',
@@ -105,9 +108,10 @@ function makeLocalId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function createFormField(field = {}) {
+function createTextItem(field = {}) {
   return {
     id: field.id ?? makeLocalId('field'),
+    type: 'text',
     label: field.label ?? '',
     placeholder: field.placeholder ?? '',
     required: field.required ?? true,
@@ -121,6 +125,7 @@ function createQuizItem(item = {}) {
 
   return {
     id: item.id ?? makeLocalId('quiz'),
+    type: 'quiz',
     question: item.question ?? '',
     options: nextOptions.slice(0, 4),
     correctOption: Number.isInteger(item.correctOption) ? item.correctOption : 0,
@@ -128,14 +133,41 @@ function createQuizItem(item = {}) {
   }
 }
 
-function createAttachmentConfig(attachment = {}) {
+function createAttachmentItem(attachment = {}) {
   return {
-    enabled: attachment.enabled ?? false,
+    id: attachment.id ?? makeLocalId('file'),
+    type: 'attachment',
     maxFiles: Math.max(1, Number(attachment.maxFiles) || 1),
     maxSizeMb: Math.max(1, Number(attachment.maxSizeMb) || 20),
     allowedTypes: attachment.allowedTypes ?? 'JPG, PNG, PDF',
     note: attachment.note ?? '',
   }
+}
+
+const ITEM_FACTORIES = {
+  text: createTextItem,
+  quiz: createQuizItem,
+  attachment: createAttachmentItem,
+}
+
+function createSubmissionItem(type, raw = {}) {
+  const factory = ITEM_FACTORIES[type] ?? createTextItem
+  return factory(raw)
+}
+
+/** Convert the old three-section config into one ordered list, keeping its order. */
+function itemsFromLegacyConfig(submission) {
+  const items = []
+  if (submission.form?.enabled) {
+    for (const field of submission.form.fields ?? []) items.push(createTextItem(field))
+  }
+  if (submission.quiz?.enabled) {
+    for (const entry of submission.quiz.items ?? []) items.push(createQuizItem(entry))
+  }
+  if (submission.attachment?.enabled) {
+    items.push(createAttachmentItem(submission.attachment))
+  }
+  return items
 }
 
 function createSubmissionLimits(limits = {}) {
@@ -147,25 +179,31 @@ function createSubmissionLimits(limits = {}) {
 }
 
 function createSubmissionConfig(submission = {}) {
-  const formFields = Array.isArray(submission.form?.fields) && submission.form.fields.length > 0
-    ? submission.form.fields.map(createFormField)
-    : [createFormField()]
-  const quizItems = Array.isArray(submission.quiz?.items) && submission.quiz.items.length > 0
-    ? submission.quiz.items.map(createQuizItem)
-    : [createQuizItem()]
+  const rawItems = Array.isArray(submission.items)
+    ? submission.items
+    : itemsFromLegacyConfig(submission)
+
+  // Only one file-upload block is meaningful: uploads arrive as a single list.
+  let seenAttachment = false
+  const items = []
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== 'object') continue
+    const type = ITEM_FACTORIES[raw.type] ? raw.type : 'text'
+    if (type === 'attachment') {
+      if (seenAttachment) continue
+      seenAttachment = true
+    }
+    items.push(createSubmissionItem(type, raw))
+  }
 
   return {
     brief: submission.brief ?? '',
-    form: {
-      enabled: submission.form?.enabled ?? false,
-      fields: formFields,
-    },
+    items,
     quiz: {
-      enabled: submission.quiz?.enabled ?? false,
       autoScore: submission.quiz?.autoScore ?? false,
-      items: quizItems,
+      // 0 = phát hết bộ đề; N > 0 = mỗi đội nhận N câu bốc ngẫu nhiên (cố định theo đội).
+      randomCount: Math.max(0, Math.trunc(Number(submission.quiz?.randomCount)) || 0),
     },
-    attachment: createAttachmentConfig(submission.attachment),
     limits: createSubmissionLimits(submission.limits),
   }
 }
@@ -594,6 +632,7 @@ function explainApiError(error) {
     submission_not_found: 'Không tìm thấy bài nộp cần thao tác.',
     invalid_score: 'Điểm không hợp lệ.',
     results_locked: 'Kết quả đã khóa (chương trình kết thúc), không thể sửa điểm.',
+    master_admin_required: 'Chỉ master admin mới được tạo/sửa/xoá trạm và đổi phase hiện tại.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu trạm.'
 }
@@ -766,11 +805,11 @@ function makeStationId(phase, stations) {
 }
 
 function getSubmissionModes(submission) {
-  const modes = []
-  if (submission?.form?.enabled) modes.push({ key: 'form', ...MODE_META.form })
-  if (submission?.quiz?.enabled) modes.push({ key: 'quiz', ...MODE_META.quiz })
-  if (submission?.attachment?.enabled) modes.push({ key: 'attachment', ...MODE_META.attachment })
-  return modes
+  const items = createSubmissionConfig(submission ?? {}).items
+  const order = ['text', 'quiz', 'attachment']
+  return order
+    .filter(type => items.some(item => item.type === type))
+    .map(type => ({ key: type, ...MODE_META[type] }))
 }
 
 function hasSubmissionConfig(submission) {
@@ -997,42 +1036,60 @@ function MarkdownPreview({ content, emptyMessage = 'Chưa có mô tả markdown.
 function sanitizeSubmission(submission) {
   const next = createSubmissionConfig(submission)
   next.brief = next.brief.trim()
-  next.form.fields = next.form.fields.map(field => ({
-    ...field,
-    label: field.label.trim(),
-    placeholder: field.placeholder.trim(),
-  }))
-  next.quiz.items = next.quiz.items.map(item => ({
-    ...item,
-    question: item.question.trim(),
-    options: item.options.map(option => option.trim()),
-  }))
-  next.attachment.allowedTypes = next.attachment.allowedTypes.trim()
-  next.attachment.note = next.attachment.note.trim()
+  next.items = next.items.map(item => {
+    if (item.type === 'quiz') {
+      return {
+        ...item,
+        question: item.question.trim(),
+        options: item.options.map(option => option.trim()),
+      }
+    }
+    if (item.type === 'attachment') {
+      return {
+        ...item,
+        allowedTypes: item.allowedTypes.trim(),
+        note: item.note.trim(),
+      }
+    }
+    return {
+      ...item,
+      label: item.label.trim(),
+      placeholder: item.placeholder.trim(),
+    }
+  })
   return next
 }
 
-function PhaseSwitcher({ phase, phaseOptions, onChange }) {
+function PhaseSwitcher({ phase, phaseOptions, onChange, disabled = false }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {phaseOptions.map(option => {
-        const active = option.key === phase
-        const meta = PHASE_META[option.key] ?? PHASE_META.registration
-        return (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => onChange(option.key)}
-            className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${
-              active
-                ? meta.selectedCls
-                : 'border-stone bg-white text-ink/55 hover:bg-paper hover:text-ink'
-            }`}
-          >
-            {option.label}
-          </button>
-        )
-      })}
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {phaseOptions.map(option => {
+          const active = option.key === phase
+          const meta = PHASE_META[option.key] ?? PHASE_META.registration
+          return (
+            <button
+              key={option.key}
+              type="button"
+              disabled={disabled}
+              title={disabled ? 'Chỉ master admin mới được đổi phase hiện tại.' : undefined}
+              onClick={() => onChange(option.key)}
+              className={`rounded-full border px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                active
+                  ? meta.selectedCls
+                  : 'border-stone bg-white text-ink/55 hover:bg-paper hover:text-ink'
+              }`}
+            >
+              {option.label}
+            </button>
+          )
+        })}
+      </div>
+      {disabled && (
+        <p className="text-xs leading-5 text-ink/45">
+          Các nút phase ở đây đổi phase của cả hệ thống — chỉ master admin mới thao tác được.
+        </p>
+      )}
     </div>
   )
 }
@@ -1229,126 +1286,266 @@ function MarkdownComposer({ value, onChange, placeholder }) {
   )
 }
 
-function ModeCard({ modeKey, enabled, onToggle }) {
-  const mode = MODE_META[modeKey]
+const INPUT_CLS = 'w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10'
+const MICRO_LABEL_CLS = 'mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40'
+
+/** One row of the station form builder: drag to reorder, edit in place. */
+function SubmissionItemCard({
+  item, index, total, isDragging, isDropTarget,
+  onDragStart, onDragEnter, onDragEnd, onRemove, onChange, onChangeOption,
+}) {
+  const meta = MODE_META[item.type] ?? MODE_META.text
+
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`rounded-xl border p-3 text-left transition ${
-        enabled
-          ? mode.selectedCls
-          : 'border-stone bg-white text-ink/60 hover:bg-paper hover:text-ink'
-      }`}
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragOver={event => event.preventDefault()}
+      onDragEnd={onDragEnd}
+      onDrop={event => { event.preventDefault(); onDragEnd() }}
+      className={`rounded-lg border bg-paper px-3 py-3 transition ${
+        isDragging ? 'border-trail/40 opacity-50' : 'border-stone'
+      } ${isDropTarget ? 'ring-2 ring-trail/30' : ''}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${enabled ? mode.cls : 'bg-paper text-ink/35'}`}>
-          <Icon name={mode.icon} className="h-5 w-5" />
-        </span>
-        <span className={`mt-1 h-2.5 w-2.5 rounded-full ${enabled ? 'bg-trail' : 'bg-ink/20'}`} />
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span
+            className="cursor-grab rounded p-1 text-ink/30 transition hover:bg-white hover:text-ink/60 active:cursor-grabbing"
+            title="Kéo để đổi thứ tự"
+            aria-label={`Kéo để đổi thứ tự, đang ở vị trí ${index + 1} trên ${total}`}
+          >
+            <Icon name="grip" className="h-4 w-4" />
+          </span>
+          <span className="font-mono text-xs text-ink/40">{index + 1}</span>
+          <Badge label={meta.label} cls={meta.cls} />
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded-lg p-1.5 text-ink/35 transition hover:bg-white hover:text-clay"
+          title="Xoá mục này"
+        >
+          <Icon name="trash" className="h-4 w-4" />
+        </button>
       </div>
-      <p className="mt-3 text-sm font-semibold text-ink">{mode.label}</p>
-      <p className="mt-1 text-xs leading-5 text-ink/50">{mode.hint}</p>
-    </button>
+
+      {item.type === 'text' && (
+        <div className="grid gap-3">
+          <input
+            value={item.label}
+            onChange={event => onChange('label', event.target.value)}
+            placeholder="Nội dung câu hỏi, vd: Mật mã tìm được"
+            className={INPUT_CLS}
+          />
+          <input
+            value={item.placeholder}
+            onChange={event => onChange('placeholder', event.target.value)}
+            placeholder="Gợi ý cách nhập dữ liệu"
+            className={INPUT_CLS}
+          />
+          <label className="inline-flex items-center gap-2 text-sm text-ink/60">
+            <input
+              type="checkbox"
+              checked={item.required}
+              onChange={event => onChange('required', event.target.checked)}
+              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            Bắt buộc
+          </label>
+        </div>
+      )}
+
+      {item.type === 'quiz' && (
+        <>
+          <textarea
+            rows={2}
+            value={item.question}
+            onChange={event => onChange('question', event.target.value)}
+            placeholder="Nhập nội dung câu hỏi"
+            className={`${INPUT_CLS} leading-6 placeholder:text-ink/30`}
+          />
+          <div className="mt-3 space-y-2.5">
+            {item.options.map((option, optionIndex) => (
+              <div key={`${item.id}-${optionIndex}`} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onChange('correctOption', optionIndex)}
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold transition ${
+                    optionIndex === item.correctOption
+                      ? 'border-gold/40 bg-gold/10 text-gold'
+                      : 'border-stone bg-white text-ink/40 hover:bg-paper'
+                  }`}
+                  title="Đánh dấu đáp án đúng"
+                >
+                  {String.fromCharCode(65 + optionIndex)}
+                </button>
+                <input
+                  value={option}
+                  onChange={event => onChangeOption(optionIndex, event.target.value)}
+                  placeholder={`Lựa chọn ${String.fromCharCode(65 + optionIndex)}`}
+                  className={INPUT_CLS}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <label className="font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Điểm khi đúng câu này
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={item.points}
+              onChange={event => onChange('points', Math.max(0, Number(event.target.value) || 0))}
+              className="w-20 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            />
+          </div>
+        </>
+      )}
+
+      {item.type === 'attachment' && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className={MICRO_LABEL_CLS}>Số file tối đa</label>
+            <input
+              type="number"
+              min={1}
+              value={item.maxFiles}
+              onChange={event => onChange('maxFiles', Math.max(1, Number(event.target.value) || 1))}
+              className={INPUT_CLS}
+            />
+          </div>
+          <div>
+            <label className={MICRO_LABEL_CLS}>Định dạng cho phép</label>
+            <input
+              value={item.allowedTypes}
+              onChange={event => onChange('allowedTypes', event.target.value)}
+              placeholder="JPG, PNG, PDF"
+              className={INPUT_CLS}
+            />
+          </div>
+          <div>
+            <label className={MICRO_LABEL_CLS}>Dung lượng tối đa mỗi file (MB)</label>
+            <input
+              type="number"
+              min={1}
+              value={item.maxSizeMb}
+              onChange={event => onChange('maxSizeMb', Math.max(1, Number(event.target.value) || 1))}
+              className={INPUT_CLS}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={MICRO_LABEL_CLS}>Ghi chú cho file đính kèm</label>
+            <textarea
+              rows={3}
+              value={item.note}
+              onChange={event => onChange('note', event.target.value)}
+              placeholder="Hướng dẫn đội cần chụp gì, đặt tên file ra sao, cần bao nhiêu ảnh..."
+              className={`${INPUT_CLS} leading-6 placeholder:text-ink/30`}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
 function StationSubmissionOverview({ submission }) {
-  const modes = getSubmissionModes(submission)
+  const config = createSubmissionConfig(submission ?? {})
 
   return (
     <div className="px-4 pb-4">
       <SectionTitle title="Cấu hình bài nộp" action={<SubmissionModeList submission={submission} />} />
 
-      {modes.length === 0 ? (
+      {config.items.length === 0 ? (
         <div className={`${CARD} px-4 py-4 text-sm italic text-ink/35`}>
-          Trạm này hiện chưa yêu cầu đội nộp form, trắc nghiệm hay file đính kèm.
+          Trạm này hiện chưa yêu cầu đội nộp gì.
         </div>
       ) : (
         <div className="space-y-3">
-          {submission.brief && (
+          {config.brief && (
             <div className={`${CARD} px-4 py-3`}>
-              <MarkdownPreview content={submission.brief} />
+              <MarkdownPreview content={config.brief} />
             </div>
           )}
 
-          {submission.form.enabled && (
-            <div className={`${CARD} px-4 py-4`}>
-              <SectionTitle title="Form tra loi" />
-              <div className="space-y-2.5">
-                {submission.form.fields.map((field, index) => (
-                  <div key={field.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-ink">{field.label || `Truong ${index + 1}`}</p>
-                        <p className="mt-1 text-xs text-ink/45">{field.placeholder || 'Chưa có gợi ý nhập liệu'}</p>
-                      </div>
-                      <Badge
-                        label={field.required ? 'Bắt buộc' : 'Tuỳ chọn'}
-                        cls={field.required ? 'bg-[#3E7CA8]/12 text-[#3E7CA8]' : 'bg-ink/[0.07] text-ink/45'}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div className={`${CARD} px-4 py-4`}>
+            <SectionTitle title="Các mục đội phải hoàn thành" />
+            <div className="space-y-2.5">
+              {config.items.map((item, index) => (
+                <SubmissionItemSummary key={item.id} item={item} index={index} />
+              ))}
             </div>
-          )}
-
-          {submission.quiz.enabled && (
-            <div className={`${CARD} px-4 py-4`}>
-              <SectionTitle title="Cau hoi trac nghiem" />
-              <div className="space-y-3">
-                {submission.quiz.items.map((item, index) => (
-                  <div key={item.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
-                    <p className="text-sm font-medium text-ink">{index + 1}. {item.question || 'Chưa đặt nội dung câu hỏi'}</p>
-                    <div className="mt-3 grid gap-2">
-                      {item.options.map((option, optionIndex) => (
-                        <div
-                          key={`${item.id}-${optionIndex}`}
-                          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                            optionIndex === item.correctOption
-                              ? 'border-gold/40 bg-gold/10 text-ink'
-                              : 'border-stone bg-white text-ink/55'
-                          }`}
-                        >
-                          <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                            optionIndex === item.correctOption
-                              ? 'bg-gold text-white'
-                              : 'bg-paper text-ink/40'
-                          }`}>
-                            {String.fromCharCode(65 + optionIndex)}
-                          </span>
-                          <span>{option || 'Chưa nhập lựa chọn'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {submission.attachment.enabled && (
-            <div className={`${CARD} px-4 py-4`}>
-              <SectionTitle title="File đính kèm" />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-lg border border-stone bg-paper px-3 py-3">
-                  <p className="text-xs text-ink/40">Số file tối đa</p>
-                  <p className="mt-1 text-sm font-semibold text-ink">{submission.attachment.maxFiles} file</p>
-                </div>
-                <div className="rounded-lg border border-stone bg-paper px-3 py-3">
-                  <p className="text-xs text-ink/40">Loại file cho phép</p>
-                  <p className="mt-1 text-sm font-semibold text-ink">{submission.attachment.allowedTypes || 'Chưa cấu hình'}</p>
-                </div>
-              </div>
-              {submission.attachment.note && (
-                <div className="mt-3 rounded-lg border border-stone bg-paper px-3 py-3 text-sm leading-6 text-ink/70">
-                  {submission.attachment.note}
-                </div>
-              )}
-            </div>
-          )}
+          </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+/** Read-only rendering of one builder item, in the order admins arranged it. */
+function SubmissionItemSummary({ item, index }) {
+  const meta = MODE_META[item.type] ?? MODE_META.text
+
+  return (
+    <div className="rounded-lg border border-stone bg-paper px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-medium text-ink">
+          <span className="font-mono text-xs text-ink/40">{index + 1}. </span>
+          {item.type === 'quiz' && (item.question || 'Chưa đặt nội dung câu hỏi')}
+          {item.type === 'text' && (item.label || 'Chưa đặt nội dung câu hỏi')}
+          {item.type === 'attachment' && `Nộp tệp · tối đa ${item.maxFiles} file`}
+        </p>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {item.type === 'text' && (
+            <Badge
+              label={item.required ? 'Bắt buộc' : 'Tuỳ chọn'}
+              cls={item.required ? 'bg-[#3E7CA8]/12 text-[#3E7CA8]' : 'bg-ink/[0.07] text-ink/45'}
+            />
+          )}
+          {item.type === 'quiz' && (
+            <Badge label={`${item.points} điểm`} cls="bg-gold/15 text-gold" />
+          )}
+          <Badge label={meta.label} cls={meta.cls} />
+        </div>
+      </div>
+
+      {item.type === 'text' && (
+        <p className="mt-1 text-xs text-ink/45">{item.placeholder || 'Chưa có gợi ý nhập liệu'}</p>
+      )}
+
+      {item.type === 'quiz' && (
+        <div className="mt-3 grid gap-2">
+          {item.options.map((option, optionIndex) => (
+            <div
+              key={`${item.id}-${optionIndex}`}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                optionIndex === item.correctOption
+                  ? 'border-gold/40 bg-gold/10 text-ink'
+                  : 'border-stone bg-white text-ink/55'
+              }`}
+            >
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
+                optionIndex === item.correctOption ? 'bg-gold text-white' : 'bg-paper text-ink/40'
+              }`}>
+                {String.fromCharCode(65 + optionIndex)}
+              </span>
+              <span>{option || 'Chưa nhập lựa chọn'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {item.type === 'attachment' && (
+        <>
+          <p className="mt-1 text-xs text-ink/45">
+            {item.allowedTypes || 'Mọi định dạng'} · tối đa {item.maxSizeMb} MB mỗi file
+          </p>
+          {item.note && (
+            <p className="mt-2 text-sm leading-6 text-ink/70">{item.note}</p>
+          )}
+        </>
       )}
     </div>
   )
@@ -1518,6 +1715,8 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     shiftEnd: '',
     note: '',
   })
+  const [dragIndex, setDragIndex] = useState(null)
+  const [dropIndex, setDropIndex] = useState(null)
 
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
   const updateSubmission = (updater) => {
@@ -1527,112 +1726,66 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     }))
   }
 
-  const toggleMode = (modeKey) => {
+  const addItem = (type) => {
+    updateSubmission(submission => ({
+      ...submission,
+      items: [...submission.items, createSubmissionItem(type)],
+    }))
+  }
+
+  const updateItem = (itemId, key, value) => {
+    updateSubmission(submission => ({
+      ...submission,
+      items: submission.items.map(item => (
+        item.id === itemId ? { ...item, [key]: value } : item
+      )),
+    }))
+  }
+
+  const updateItemOption = (itemId, optionIndex, value) => {
+    updateSubmission(submission => ({
+      ...submission,
+      items: submission.items.map(item => {
+        if (item.id !== itemId) return item
+        const nextOptions = [...item.options]
+        nextOptions[optionIndex] = value
+        return { ...item, options: nextOptions }
+      }),
+    }))
+  }
+
+  const removeItem = (itemId) => {
+    updateSubmission(submission => ({
+      ...submission,
+      items: submission.items.filter(item => item.id !== itemId),
+    }))
+  }
+
+  const moveItem = (fromIndex, toIndex) => {
     updateSubmission(submission => {
-      const next = createSubmissionConfig(submission)
-      if (modeKey === 'form') next.form.enabled = !next.form.enabled
-      if (modeKey === 'quiz') next.quiz.enabled = !next.quiz.enabled
-      if (modeKey === 'attachment') next.attachment.enabled = !next.attachment.enabled
-      return next
+      const items = [...submission.items]
+      if (
+        fromIndex === toIndex
+        || fromIndex < 0 || fromIndex >= items.length
+        || toIndex < 0 || toIndex >= items.length
+      ) return submission
+      const [moved] = items.splice(fromIndex, 1)
+      items.splice(toIndex, 0, moved)
+      return { ...submission, items }
     })
   }
 
-  const updateField = (fieldId, key, value) => {
-    updateSubmission(submission => ({
-      ...submission,
-      form: {
-        ...submission.form,
-        fields: submission.form.fields.map(field => (
-          field.id === fieldId
-            ? { ...field, [key]: value }
-            : field
-        )),
-      },
-    }))
+  const commitDrag = () => {
+    if (dragIndex !== null && dropIndex !== null) moveItem(dragIndex, dropIndex)
+    setDragIndex(null)
+    setDropIndex(null)
   }
 
-  const addField = () => {
-    updateSubmission(submission => ({
-      ...submission,
-      form: {
-        ...submission.form,
-        fields: [...submission.form.fields, createFormField()],
-      },
-    }))
-  }
+  const quizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
+  const hasQuizItem = quizItemCount > 0
+  const hasAttachmentItem = form.submission.items.some(item => item.type === 'attachment')
+  const quizRandomCount = form.submission.quiz.randomCount ?? 0
 
-  const removeField = (fieldId) => {
-    updateSubmission(submission => ({
-      ...submission,
-      form: {
-        ...submission.form,
-        fields: submission.form.fields.length > 1
-          ? submission.form.fields.filter(field => field.id !== fieldId)
-          : submission.form.fields,
-      },
-    }))
-  }
-
-  const updateQuizItem = (itemId, key, value) => {
-    updateSubmission(submission => ({
-      ...submission,
-      quiz: {
-        ...submission.quiz,
-        items: submission.quiz.items.map(item => (
-          item.id === itemId
-            ? { ...item, [key]: value }
-            : item
-        )),
-      },
-    }))
-  }
-
-  const updateQuizOption = (itemId, optionIndex, value) => {
-    updateSubmission(submission => ({
-      ...submission,
-      quiz: {
-        ...submission.quiz,
-        items: submission.quiz.items.map(item => {
-          if (item.id !== itemId) return item
-          const nextOptions = [...item.options]
-          nextOptions[optionIndex] = value
-          return { ...item, options: nextOptions }
-        }),
-      },
-    }))
-  }
-
-  const addQuizItem = () => {
-    updateSubmission(submission => ({
-      ...submission,
-      quiz: {
-        ...submission.quiz,
-        items: [...submission.quiz.items, createQuizItem()],
-      },
-    }))
-  }
-
-  const removeQuizItem = (itemId) => {
-    updateSubmission(submission => ({
-      ...submission,
-      quiz: {
-        ...submission.quiz,
-        items: submission.quiz.items.length > 1
-          ? submission.quiz.items.filter(item => item.id !== itemId)
-          : submission.quiz.items,
-      },
-    }))
-  }
-
-  const updateAttachment = (key, value) => {
-    updateSubmission(submission => ({
-      ...submission,
-      attachment: {
-        ...submission.attachment,
-        [key]: value,
-      },
-    }))
-  }
 
   const updateLimits = (key, value) => {
     updateSubmission(submission => ({
@@ -1766,223 +1919,113 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
       </div>
 
       <div className="space-y-3">
-        <SectionTitle title="Kiểu bài nộp" />
-        <div className="grid gap-3 lg:grid-cols-3">
-          <ModeCard modeKey="form" enabled={form.submission.form.enabled} onToggle={() => toggleMode('form')} />
-          <ModeCard modeKey="quiz" enabled={form.submission.quiz.enabled} onToggle={() => toggleMode('quiz')} />
-          <ModeCard modeKey="attachment" enabled={form.submission.attachment.enabled} onToggle={() => toggleMode('attachment')} />
-        </div>
+        <SectionTitle
+          title="Nội dung bài nộp"
+          action={(
+            <div className="flex flex-wrap gap-1.5">
+              {['text', 'quiz', 'attachment'].map(type => {
+                const meta = MODE_META[type]
+                const blocked = type === 'attachment' && hasAttachmentItem
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    disabled={blocked}
+                    onClick={() => addItem(type)}
+                    title={blocked ? 'Mỗi trạm chỉ dùng được một ô nộp tệp' : undefined}
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                      blocked
+                        ? 'cursor-not-allowed border-stone bg-paper text-ink/25'
+                        : 'border-stone bg-white text-ink/60 hover:bg-paper hover:text-ink'
+                    }`}
+                  >
+                    <Icon name="plus" className="h-3.5 w-3.5" />
+                    {meta.addLabel}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        />
+
+        {form.submission.items.length === 0 ? (
+          <div className={`${CARD} px-4 py-6 text-center text-sm italic text-ink/35`}>
+            Chưa có mục nào. Thêm câu tự luận, câu trắc nghiệm hoặc ô nộp tệp — thứ tự bạn xếp ở đây
+            chính là thứ tự đội nhìn thấy.
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {form.submission.items.map((item, index) => (
+              <SubmissionItemCard
+                key={item.id}
+                item={item}
+                index={index}
+                total={form.submission.items.length}
+                isDragging={dragIndex === index}
+                isDropTarget={dropIndex === index && dragIndex !== index}
+                onDragStart={() => setDragIndex(index)}
+                onDragEnter={() => setDropIndex(index)}
+                onDragEnd={commitDrag}
+                onRemove={() => removeItem(item.id)}
+                onChange={(key, value) => updateItem(item.id, key, value)}
+                onChangeOption={(optionIndex, value) => updateItemOption(item.id, optionIndex, value)}
+              />
+            ))}
+          </div>
+        )}
+
+        {hasQuizItem && (
+          <div className={`${CARD} p-4`}>
+            <label className="inline-flex items-center gap-2 text-sm text-ink/60">
+              <input
+                type="checkbox"
+                checked={form.submission.quiz.autoScore}
+                onChange={event => updateSubmission(submission => ({
+                  ...submission,
+                  quiz: { ...submission.quiz, autoScore: event.target.checked },
+                }))}
+                className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              />
+              Tự cộng điểm quiz vào điểm đội trong phase (leaderboard)
+            </label>
+            <p className="mt-1 text-xs leading-5 text-ink/45">
+              Tắt: điểm quiz chỉ hiển thị ở bài nộp để tham khảo khi chấm. Bật: mỗi lần đội nộp bài,
+              tổng điểm các câu đúng tự ghi vào bảng điểm.
+            </p>
+
+            <div className="mt-4 border-t border-stone pt-4">
+              <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+                Số câu phát ngẫu nhiên cho mỗi đội (0 = phát hết)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={quizItemCount}
+                value={quizRandomCount}
+                onChange={event => updateSubmission(submission => ({
+                  ...submission,
+                  quiz: {
+                    ...submission.quiz,
+                    randomCount: Math.max(0, Number(event.target.value) || 0),
+                  },
+                }))}
+                className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+              />
+              <p className="mt-1 text-xs leading-5 text-ink/45">
+                Bộ đề đang có {quizItemCount} câu. Mỗi đội nhận một bộ cố định, mọi thành viên trong
+                đội thấy cùng bộ câu.
+              </p>
+              {quizRandomCount > 0 && (
+                <p className="mt-1 text-xs leading-5 text-ink/45">
+                  {quizRandomCount < quizItemCount
+                    ? `Mỗi đội sẽ làm ${quizRandomCount}/${quizItemCount} câu.`
+                    : `Số câu đặt ra lớn hơn hoặc bằng ${quizItemCount} câu hiện có — mỗi đội sẽ làm hết bộ đề.`}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-
-      {form.submission.form.enabled && (
-        <div className={`${CARD} p-4`}>
-          <SectionTitle
-            title="Cấu hình form"
-            action={(
-              <button
-                type="button"
-                onClick={addField}
-                className="inline-flex items-center gap-1 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
-              >
-                <Icon name="plus" className="h-3.5 w-3.5" />
-                Thêm trường
-              </button>
-            )}
-          />
-          <div className="space-y-3">
-            {form.submission.form.fields.map((field, index) => (
-              <div key={field.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-ink">Trường {index + 1}</p>
-                  <button
-                    type="button"
-                    onClick={() => removeField(field.id)}
-                    className="rounded-lg p-1.5 text-ink/35 transition hover:bg-white hover:text-clay"
-                    title="Xoá trường"
-                  >
-                    <Icon name="trash" className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="grid gap-3">
-                  <input
-                    value={field.label}
-                    onChange={event => updateField(field.id, 'label', event.target.value)}
-                    placeholder="Nội dung trường, vd: Mật mã tìm được"
-                    className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-                  />
-                  <input
-                    value={field.placeholder}
-                    onChange={event => updateField(field.id, 'placeholder', event.target.value)}
-                    placeholder="Gợi ý cách nhập dữ liệu"
-                    className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-                  />
-                  <label className="inline-flex items-center gap-2 text-sm text-ink/60">
-                    <input
-                      type="checkbox"
-                      checked={field.required}
-                      onChange={event => updateField(field.id, 'required', event.target.checked)}
-                      className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
-                    />
-                    Bắt buộc
-                  </label>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {form.submission.quiz.enabled && (
-        <div className={`${CARD} p-4`}>
-          <SectionTitle
-            title="Cấu hình trắc nghiệm"
-            action={(
-              <button
-                type="button"
-                onClick={addQuizItem}
-                className="inline-flex items-center gap-1 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
-              >
-                <Icon name="plus" className="h-3.5 w-3.5" />
-                Thêm câu hỏi
-              </button>
-            )}
-          />
-          <div className="space-y-3">
-            {form.submission.quiz.items.map((item, index) => (
-              <div key={item.id} className="rounded-lg border border-stone bg-paper px-3 py-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-ink">Câu hỏi {index + 1}</p>
-                  <button
-                    type="button"
-                    onClick={() => removeQuizItem(item.id)}
-                    className="rounded-lg p-1.5 text-ink/35 transition hover:bg-white hover:text-clay"
-                    title="Xoá câu hỏi"
-                  >
-                    <Icon name="trash" className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <textarea
-                  rows={2}
-                  value={item.question}
-                  onChange={event => updateQuizItem(item.id, 'question', event.target.value)}
-                  placeholder="Nhập nội dung câu hỏi"
-                  className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-                />
-
-                <div className="mt-3 space-y-2.5">
-                  {item.options.map((option, optionIndex) => (
-                    <div key={`${item.id}-${optionIndex}`} className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => updateQuizItem(item.id, 'correctOption', optionIndex)}
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold transition ${
-                          optionIndex === item.correctOption
-                            ? 'border-gold/40 bg-gold/10 text-gold'
-                            : 'border-stone bg-white text-ink/40 hover:bg-paper'
-                        }`}
-                        title="Đánh dấu đáp án đúng"
-                      >
-                        {String.fromCharCode(65 + optionIndex)}
-                      </button>
-                      <input
-                        value={option}
-                        onChange={event => updateQuizOption(item.id, optionIndex, event.target.value)}
-                        placeholder={`Lựa chọn ${String.fromCharCode(65 + optionIndex)}`}
-                        className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-3 flex items-center gap-2">
-                  <label className="font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                    Điểm khi đúng câu này
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={item.points}
-                    onChange={event => updateQuizItem(item.id, 'points', Math.max(0, Number(event.target.value) || 0))}
-                    className="w-20 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
-            <input
-              type="checkbox"
-              checked={form.submission.quiz.autoScore}
-              onChange={event => updateSubmission(submission => ({
-                ...submission,
-                quiz: { ...submission.quiz, autoScore: event.target.checked },
-              }))}
-              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
-            />
-            Tự cộng điểm quiz vào điểm đội trong phase (leaderboard)
-          </label>
-          <p className="mt-1 text-xs leading-5 text-ink/45">
-            Tắt: điểm quiz chỉ hiển thị ở bài nộp để tham khảo khi chấm. Bật: mỗi lần đội nộp bài, tổng điểm các câu đúng tự ghi vào bảng điểm.
-          </p>
-        </div>
-      )}
-
-      {form.submission.attachment.enabled && (
-        <div className={`${CARD} p-4`}>
-          <SectionTitle title="Cấu hình file đính kèm" />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                Số file tối đa
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={form.submission.attachment.maxFiles}
-                onChange={event => updateAttachment('maxFiles', Math.max(1, Number(event.target.value) || 1))}
-                className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                Định dạng cho phép
-              </label>
-              <input
-                value={form.submission.attachment.allowedTypes}
-                onChange={event => updateAttachment('allowedTypes', event.target.value)}
-                placeholder="JPG, PNG, PDF"
-                className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                Dung lượng tối đa mỗi file (MB)
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={form.submission.attachment.maxSizeMb}
-                onChange={event => updateAttachment('maxSizeMb', Math.max(1, Number(event.target.value) || 1))}
-                className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-                Ghi chú cho file đính kèm
-              </label>
-              <textarea
-                rows={3}
-                value={form.submission.attachment.note}
-                onChange={event => updateAttachment('note', event.target.value)}
-                placeholder="Hướng dẫn đội cần chụp gì, đặt tên file ra sao, cần bao nhiêu ảnh..."
-                className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className={`${CARD} p-4`}>
         <SectionTitle title="Giới hạn nộp bài" />
@@ -2528,6 +2571,11 @@ function StationsPage({
   const [busyKey, setBusyKey] = useState('')
   const [apiError, setApiError] = useState('')
 
+  // Tạo/sửa/xoá trạm và đổi phase hiện tại là đặc quyền master admin; backend
+  // trả 403 `master_admin_required`, ở đây chỉ khoá UI cho khỏi bấm vào chỗ cấm.
+  const canEditStations = isMasterAdmin()
+  const masterAdminOnlyMessage = () => explainApiError({ data: { error: 'master_admin_required' } })
+
   useEffect(() => {
     setStationsByPhaseEvent((current) => {
       let changed = false
@@ -2631,12 +2679,19 @@ function StationsPage({
   const totalHere = stations.reduce((total, station) => total + station.teamsHere.length, 0)
   const totalDone = stations.reduce((total, station) => total + station.teamsDone.length, 0)
   const configured = stations.filter(station => hasSubmissionConfig(station.submission))
-  const attachmentRequired = stations.filter(station => station.submission.attachment.enabled)
+  const attachmentRequired = stations.filter(station => (
+    createSubmissionConfig(station.submission).items.some(item => item.type === 'attachment')
+  ))
   const totalScore = stations.reduce((total, station) => total + sumStationScore(station), 0)
 
   const toggleActive = async (id) => {
     const station = stations.find(item => item.id === id)
     if (!station) return
+    // Bật/tắt trạm cũng là PATCH /stations/{id}, cùng cổng quyền với sửa trạm.
+    if (!canEditStations) {
+      setApiError(masterAdminOnlyMessage())
+      return
+    }
 
     try {
       setBusyKey(`toggle:${id}`)
@@ -2660,6 +2715,10 @@ function StationsPage({
   const saveStation = async (id, form) => {
     const station = stations.find(item => item.id === id)
     if (!station) return
+    if (!canEditStations) {
+      setApiError(masterAdminOnlyMessage())
+      return
+    }
 
     try {
       setBusyKey(`save:${id}`)
@@ -2681,6 +2740,10 @@ function StationsPage({
   }
 
   const deleteStation = async (id) => {
+    if (!canEditStations) {
+      setApiError(masterAdminOnlyMessage())
+      return
+    }
     try {
       setBusyKey(`delete:${id}`)
       setApiError('')
@@ -2700,6 +2763,10 @@ function StationsPage({
 
   const addStation = async (form) => {
     if (!selectedEventId) return
+    if (!canEditStations) {
+      setApiError(masterAdminOnlyMessage())
+      return
+    }
     try {
       setBusyKey('create')
       setApiError('')
@@ -2773,6 +2840,7 @@ function StationsPage({
             phase={phase}
             phaseOptions={phaseOptions}
             onChange={onPhaseChange}
+            disabled={!canEditStations}
           />
           {phaseStationEvents.length > 0 ? (
             <>
@@ -2825,12 +2893,18 @@ function StationsPage({
             <button
               type="button"
               onClick={() => setAdding(true)}
-              disabled={!selectedEvent || Boolean(busyKey)}
+              disabled={!selectedEvent || Boolean(busyKey) || !canEditStations}
+              title={!canEditStations ? 'Chỉ master admin mới được tạo trạm.' : undefined}
               className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Icon name="plus" className="h-4 w-4" />
               Thêm trạm
             </button>
+            {!canEditStations && (
+              <span className="text-xs leading-5 text-ink/45">
+                Chỉ master admin mới tạo/sửa/xoá được trạm.
+              </span>
+            )}
           </div>
         </div>
       </div>
