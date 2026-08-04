@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
+import StationRunPage from './StationRunPage.jsx'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 
 const MAX_MEMBERS = 5
@@ -596,6 +597,27 @@ function MemberModal({ form, fields, editing, saving, onChange, onClose, onSave 
   )
 }
 
+function FixTeamRequestCard({ note, onFix }) {
+  return (
+    <section className={`${PARTICIPANT_CARD} border-[#D6492B]/30 bg-[#D6492B]/[0.05] p-5`}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#D6492B]/70">
+            BTC yêu cầu chỉnh sửa
+          </p>
+          <p className="mt-2 text-sm leading-6 text-ink/70">
+            {note || 'BTC cần đội cập nhật lại thông tin. Sửa xong hãy gửi duyệt lại.'}
+          </p>
+        </div>
+        <button type="button" onClick={onFix} className={SECONDARY_BUTTON}>
+          <Icon name="users" className="h-4 w-4" />
+          Chỉnh sửa đội
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function EmptyTeamCard({ busy, maxMembers, onCreate }) {
   const handleSubmit = (event) => {
     event.preventDefault()
@@ -1012,6 +1034,10 @@ function ParticipantDashboard() {
   const hasElectedCaptain = Boolean(captainVote?.captain_mssv)
   const captainMayRename = captainVote ? captainVote.can_rename_team !== false : true
   const canRenameTeam = teamHasFullRoster && captainMayRename
+  // Rejecting a team is the organisers asking for changes, and that ask can
+  // land after registration closes. The backend allows the edit in that case,
+  // so the editor has to stay reachable — creating a team stays registration-only.
+  const teamEditingOpen = registrationOpen || team?.approval_status === 'rejected'
   const teamNameHint = !teamHasFullRoster
     ? `Đội đang có ${members.length}/${maxMembers} thành viên nên tạm mang tên mặc định. Đủ ${maxMembers} người thì đội trưởng đặt tên được — BTC có thể ghép các đội chưa đủ với nhau, nên tên đặt sớm sẽ không giữ lại.`
     : hasElectedCaptain
@@ -1313,7 +1339,19 @@ function ParticipantDashboard() {
         ) : (
           <>
             <EventExperienceCard experience={experience} />
-            {experience?.open_forms?.length > 0 ? <OpenFormsCard forms={experience.open_forms} /> : null}
+            {team?.approval_status === 'rejected' && (
+              <FixTeamRequestCard
+                note={team.approval_note}
+                onFix={() => document.getElementById('team-editor')?.scrollIntoView({
+                  behavior: 'smooth', block: 'start',
+                })}
+              />
+            )}
+            {/* Once registration closes the screen is about running the course:
+                the stations, and the QR a coop scans. The old open-forms list is
+                folded into this — a station with a form is reached by checking
+                into it, not by a separate link. */}
+            {team ? <StationRunPage embedded /> : null}
           </>
         )}
 
@@ -1325,8 +1363,8 @@ function ParticipantDashboard() {
                 maxMembers={maxMembers}
                 onCreate={createTeam}
               />
-            ) : registrationOpen && team ? (
-              <div className={`${PARTICIPANT_CARD} p-5`}>
+            ) : teamEditingOpen && team ? (
+              <div id="team-editor" className={`${PARTICIPANT_CARD} p-5`}>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Đội của tôi</p>
