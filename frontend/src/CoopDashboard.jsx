@@ -84,6 +84,9 @@ function explainScanError(error) {
   const map = {
     missing_phase_or_event: 'Cần cấu hình phase và event hiện tại trước khi scan sự kiện.',
     team_not_found: 'Không tìm thấy đội với mã QR hoặc mã đội này.',
+    // Mỗi QR chỉ dùng được một lần. Gặp mã này gần như luôn là máy đã quét trúng
+    // đúng ảnh QR đó lần nữa — thao tác trước đó đã thành công rồi.
+    qr_already_used: 'Mã QR này đã được quét rồi. Đề nghị đội mở lại màn hình để lấy mã mới.',
     team_not_approved: 'Đội này chưa được duyệt nên không thể scan.',
     already_checked_in: 'Đội này đã được check-in sự kiện.',
     event_not_found: 'Không tìm thấy event đang thao tác.',

@@ -14,16 +14,9 @@ from api.models import (
     TeamMembership,
 )
 from api.services.checkin_qr_service import get_checkin_qr_state
+from api.services import scan_token_service
 
 
-def _resolve_team_from_scan(raw_code: str) -> Team | None:
-    """Resolve a team from QR token or a manual team code fallback."""
-    clean_token = str(raw_code or "").strip()
-    if not clean_token:
-        return None
-    if clean_token.startswith("t:") or clean_token.startswith("T:"):
-        clean_token = clean_token[2:]
-    return Team.objects.filter(qr_token=clean_token).first() or Team.objects.filter(code=clean_token).first()
 
 
 def scan_event_checkin(
@@ -38,9 +31,9 @@ def scan_event_checkin(
     Scan a team's QR for event check-in.
     Returns (checkin, None) or (None, error_code).
     """
-    team = _resolve_team_from_scan(qr_token)
+    team, resolve_error = scan_token_service.resolve_team(qr_token)
     if not team:
-        return None, "team_not_found"
+        return None, resolve_error
 
     # Check if not already approved
     if team.approval_status != Team.APPROVAL_APPROVED:
@@ -89,6 +82,8 @@ def scan_event_checkin(
             ip=ip,
             user_agent=user_agent,
         )
+        # Retire the scanned QR: the same image must not check them in twice.
+        scan_token_service.consume(qr_token, team)
         return checkin, None
     except IntegrityError:
         return None, "already_checked_in"

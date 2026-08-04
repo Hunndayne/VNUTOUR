@@ -332,7 +332,7 @@ def station_enter_view(request: HttpRequest):
     )
     if err:
         status_map = {
-            "team_not_found": 404, "station_not_found": 404,
+            "team_not_found": 404, "qr_already_used": 409, "station_not_found": 404,
             "team_not_approved": 403,
             "station_inactive": 400, "policy_free_play": 400,
             "station_full": 409, "session_already_active": 409,
@@ -391,7 +391,7 @@ def station_exit_view(request: HttpRequest):
     )
     if err:
         status_map = {
-            "team_not_found": 404,
+            "team_not_found": 404, "qr_already_used": 409,
             "session_not_found": 404,
             "results_locked": 409,
         }
