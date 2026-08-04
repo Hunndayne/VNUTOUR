@@ -7,6 +7,7 @@ import json
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
@@ -26,6 +27,7 @@ from api.services.submission_config_service import (
     has_items as has_submission_items,
     attachment_item as submission_attachment_item,
     grade_quiz as grade_submission_quiz,
+    checkout_after_submit,
 )
 from api.services.team_form_variant_service import variant_item_ids
 from api.services import team_merge_service
@@ -700,6 +702,116 @@ def my_team_qr_view(request: HttpRequest):
         "team_code": team.code,
         "qr_payload": f"t:{team.qr_token}",
     })
+
+
+def my_team_stations_view(request: HttpRequest):
+    """GET every active station of the running sub-event, plus this team's state at each.
+
+    This is the map the qualifying-round app draws: a team has to see a station
+    before it can walk up to it, so nothing is filtered on `checkin_policy` or on
+    whether a form is configured. `/api/me/experience` deliberately lists only the
+    free-play stations that *have* a form, which left `staff_scan` stations — the
+    ones needing a collab to scan the team's QR — invisible to participants.
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    ensure_default_phase_roster_for_team(team)
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    current_phase_key = current_phase.key if current_phase else None
+    current_event = get_current_sub_event()
+
+    payload = {
+        "current_phase": current_phase_key,
+        "current_sub_event_id": current_event.id if current_event else None,
+        "stations": [],
+    }
+    # Between events there is simply nothing to show. The app polls this endpoint,
+    # so an empty list beats an error the client would have to special-case.
+    if not current_event:
+        return JsonResponse(payload)
+
+    # Same gate as `my_team_forms_view`: a phase that has a roster admits only the
+    # teams on it; a phase without one is open to whoever is in the current phase.
+    # Every station here belongs to `current_event`, so the phase is decided once.
+    phase_key = current_event.phase.key
+    team_phase_keys = set(
+        PhaseRoster.objects.filter(team=team).values_list("phase__key", flat=True)
+    )
+    phases_with_roster = set(
+        PhaseRoster.objects.values_list("phase__key", flat=True).distinct()
+    )
+    if phase_key in phases_with_roster:
+        if phase_key not in team_phase_keys:
+            return JsonResponse(payload)
+    elif current_phase_key and phase_key != current_phase_key:
+        return JsonResponse(payload)
+
+    stations = list(
+        Station.objects.filter(sub_event=current_event, active=True).order_by("order", "id")
+    )
+    station_ids = [station.id for station in stations]
+
+    # Three grouped queries rather than three per station.
+    occupancy = {
+        row["station_id"]: row["total"]
+        for row in StationSession.objects.filter(
+            station_id__in=station_ids,
+            status=StationSession.STATUS_ACTIVE,
+        ).values("station_id").annotate(total=Count("id"))
+    }
+    my_sessions: dict[int, StationSession] = {}
+    for session in StationSession.objects.filter(
+        team=team, station_id__in=station_ids,
+    ).order_by("station_id", "-entered_at"):
+        my_sessions.setdefault(session.station_id, session)
+    my_submissions: dict[int, StationSubmission] = {}
+    for submission in StationSubmission.objects.filter(
+        team=team, station_id__in=station_ids,
+    ).order_by("station_id", "-created_at"):
+        my_submissions.setdefault(submission.station_id, submission)
+
+    for station in stations:
+        session = my_sessions.get(station.id)
+        submission = my_submissions.get(station.id)
+        payload["stations"].append({
+            "station_id": station.id,
+            "station_code": station.code,
+            "station_name": station.name,
+            "station_location": station.location,
+            # Tells the app whether to show a QR for a collab to scan, or to let
+            # the team open the station on its own.
+            "checkin_policy": station.checkin_policy,
+            "has_form": has_submission_items(station.submission_config),
+            # Only meaningful where `has_form` — whether submitting ends the visit.
+            "checkout_after_submit": checkout_after_submit(station.submission_config),
+            "capacity": {
+                # 0/None means unlimited.
+                "max_concurrent_teams": station.max_concurrent_teams,
+                "current_teams": occupancy.get(station.id, 0),
+            },
+            "my_session": {
+                "status": session.status,
+                "entered_at": session.entered_at.isoformat() if session.entered_at else None,
+                "exited_at": session.exited_at.isoformat() if session.exited_at else None,
+            } if session else None,
+            "my_submission": {
+                "status": submission.status,
+                "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+            } if submission else None,
+        })
+
+    return JsonResponse(payload)
 
 
 def my_team_forms_view(request: HttpRequest):
