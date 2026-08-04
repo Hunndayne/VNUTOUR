@@ -1110,3 +1110,84 @@ def my_team_captain_vote_view(request: HttpRequest):
         ],
         "can_rename_team": team_merge_service.may_rename(team, me),
     })
+
+
+def my_team_station_state_view(request: HttpRequest):
+    """GET the one thing the QR screen polls for: has anything changed yet?
+
+    Deliberately narrow. The station list is the expensive call and the screen
+    only needs it once; while a QR is on display the question is just whether a
+    coop has scanned it, so this answers that and nothing else.
+
+    The current QR payload rides along because a successful scan rotates it —
+    fetching state and QR separately would leave a window where the screen shows
+    a code the server has already retired.
+    """
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+
+    raw_station_id = request.GET.get("station_id")
+    station_id = None
+    if raw_station_id:
+        try:
+            station_id = int(raw_station_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "invalid_station_id"}, status=400)
+
+    sessions = StationSession.objects.filter(team=team)
+    submissions = StationSubmission.objects.filter(team=team)
+    if station_id is not None:
+        sessions = sessions.filter(station_id=station_id)
+        submissions = submissions.filter(station_id=station_id)
+    else:
+        # No station named: report wherever they currently are, so the list
+        # screen can send them straight back to the station they are inside.
+        sessions = sessions.filter(status=StationSession.STATUS_ACTIVE)
+
+    session = sessions.order_by("-entered_at").values(
+        "station_id", "status", "entered_at", "exited_at",
+    ).first()
+    submission = submissions.order_by("-created_at").values(
+        "station_id", "status", "submitted_at",
+    ).first()
+
+    def stamp(value):
+        return value.isoformat() if value else None
+
+    qr = {"enabled": False}
+    if team.approval_status == Team.APPROVAL_APPROVED and team_qr_visible(team):
+        if not team.qr_token:
+            rotate_qr_token(team)
+            team.refresh_from_db(fields=["qr_token"])
+        qr = {"enabled": True, "payload": f"t:{team.qr_token}"}
+
+    return JsonResponse({
+        "team_code": team.code,
+        "station_id": station_id,
+        "session": {
+            "station_id": session["station_id"],
+            "status": session["status"],
+            "entered_at": stamp(session["entered_at"]),
+            "exited_at": stamp(session["exited_at"]),
+        } if session else None,
+        "submission": {
+            "station_id": submission["station_id"],
+            "status": submission["status"],
+            "submitted_at": stamp(submission["submitted_at"]),
+        } if submission else None,
+        "qr": qr,
+    })
