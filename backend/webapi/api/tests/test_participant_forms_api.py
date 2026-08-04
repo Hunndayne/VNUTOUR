@@ -11,6 +11,7 @@ from api.models import (
     StationSubmission, SubEvent, SystemSetting, Team, TeamFormVariant, TeamMembership,
 )
 from api.services import team_form_variant_service as variant_service
+from api.services.submission_config_service import checkout_after_submit
 from api.services.auth_service import generate_session
 
 
@@ -812,3 +813,67 @@ class RandomQuizDrawTests(FormsApiTestBase):
         )
         for variant in TeamFormVariant.objects.filter(station=self.station):
             self.assertEqual(len(variant.item_ids), self.DRAW_SIZE)
+
+
+class CheckoutAfterSubmitSettingTests(FormsApiTestBase):
+    """`flow.checkoutAfterSubmit` — does submitting the form end the visit?"""
+
+    def _configure(self, flow=None):
+        config = {"items": [{"id": "t1", "type": "text", "label": "Ghi chu"}]}
+        if flow is not None:
+            config["flow"] = flow
+        self.station.submission_config = config
+        self.station.save(update_fields=["submission_config"])
+
+    def _participant_flow(self):
+        response = self.client.get(
+            "/api/my-team/forms", HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.json()["accessible_forms"][0]["submission_config"]["flow"]
+
+    def test_checkout_is_required_by_default(self):
+        """Every check-in should have a matching check-out unless told otherwise."""
+        self._configure()
+
+        self.assertTrue(checkout_after_submit(self.station.submission_config))
+        self.assertTrue(self._participant_flow()["checkoutAfterSubmit"])
+
+    def test_a_station_can_treat_submitting_as_leaving(self):
+        self._configure({"checkoutAfterSubmit": False})
+
+        self.assertFalse(checkout_after_submit(self.station.submission_config))
+        self.assertFalse(self._participant_flow()["checkoutAfterSubmit"])
+
+    def test_a_legacy_config_without_the_key_still_requires_checkout(self):
+        self.station.submission_config = {
+            "quiz": {"enabled": True, "items": [
+                {"id": "q1", "question": "?", "options": ["A"], "correctOption": 0},
+            ]},
+        }
+        self.station.save(update_fields=["submission_config"])
+
+        self.assertTrue(checkout_after_submit(self.station.submission_config))
+
+    def test_the_setting_survives_being_saved_by_an_admin(self):
+        """normalize_config rebuilds from a whitelist, so a new key can be dropped."""
+        master = Account.objects.create(
+            username="cfg-master", email="cfg-master@example.com",
+            password_hash="x", role=Account.ROLE_MASTER_ADMIN,
+        )
+
+        response = self.client.patch(
+            f"/api/stations/{self.station.id}",
+            data=json.dumps({"submission_config": {
+                "items": [{"id": "t1", "type": "text", "label": "Ghi chu"}],
+                "flow": {"checkoutAfterSubmit": False},
+            }}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(master)}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.station.refresh_from_db()
+        self.assertEqual(
+            self.station.submission_config["flow"], {"checkoutAfterSubmit": False},
+        )

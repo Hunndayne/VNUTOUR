@@ -205,6 +205,11 @@ function createSubmissionConfig(submission = {}) {
       randomCount: Math.max(0, Math.trunc(Number(submission.quiz?.randomCount)) || 0),
     },
     limits: createSubmissionLimits(submission.limits),
+    flow: {
+      // Mặc định bật: mỗi lượt vào trạm nên có một lượt ra tương ứng, nếu không
+      // số đội đang ở trạm sẽ sai. Tắt khi nộp bài đã coi như xong việc ở trạm.
+      checkoutAfterSubmit: submission.flow?.checkoutAfterSubmit !== false,
+    },
   }
 }
 
@@ -1784,6 +1789,8 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   const quizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
   const hasQuizItem = quizItemCount > 0
   const hasAttachmentItem = form.submission.items.some(item => item.type === 'attachment')
+  // Chỉ có form thì mới có chuyện "nộp xong rồi sao nữa".
+  const hasSubmissionItem = form.submission.items.length > 0
   const quizRandomCount = form.submission.quiz.randomCount ?? 0
 
 
@@ -2065,6 +2072,28 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </label>
         </div>
       </div>
+
+      {hasSubmissionItem && (
+        <div className={`${CARD} p-4`}>
+          <SectionTitle title="Kết thúc lượt tại trạm" />
+          <label className="mt-2 inline-flex items-start gap-2 text-sm text-ink/60">
+            <input
+              type="checkbox"
+              checked={form.submission.flow.checkoutAfterSubmit}
+              onChange={event => updateSubmission(submission => ({
+                ...submission,
+                flow: { ...submission.flow, checkoutAfterSubmit: event.target.checked },
+              }))}
+              className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            Nộp bài xong vẫn phải quét QR rời trạm
+          </label>
+          <p className="mt-1 text-xs leading-5 text-ink/45">
+            Bật: nộp xong đội thấy QR rời trạm, coop quét thì trạm mới trống chỗ.
+            Tắt: nộp bài coi như đã rời trạm, phù hợp với trạm không giới hạn chỗ.
+          </p>
+        </div>
+      )}
 
       <div className="flex gap-2 pt-1">
         <button

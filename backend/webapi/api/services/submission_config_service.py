@@ -15,7 +15,8 @@ questions, quiz questions and the file-upload block in any order:
          "allowedTypes": "JPG, PNG, PDF", "note": ""}
       ],
       "quiz": {"autoScore": false, "randomCount": 0},
-      "limits": {"maxSubmissions": 0, "closeOnCorrect": false, "manualClosed": false}
+      "limits": {"maxSubmissions": 0, "closeOnCorrect": false, "manualClosed": false},
+      "flow": {"checkoutAfterSubmit": true}
     }
 
 Configs saved before this shape existed used three fixed sections
@@ -31,6 +32,11 @@ and are stored in one `attachment_payload`. Extra attachment items are dropped.
 `TeamFormVariant`, so every member opening the form sees the same set and a reload
 never reshuffles it. Callers pass that stored id list as `item_ids` to
 `public_config` and `grade_quiz`, which then ignore questions outside the draw.
+
+`flow.checkoutAfterSubmit` decides how a visit ends at a station that has a form:
+on (the default) the team is still scanned out afterwards, off means submitting
+counts as leaving. It sits here rather than on the Station because it only has
+meaning where a form exists, and it is edited alongside the form.
 """
 
 from __future__ import annotations
@@ -155,6 +161,19 @@ def _limits(config: dict) -> dict:
     }
 
 
+def _flow(config: dict) -> dict:
+    """How the station visit ends once the form is submitted.
+
+    Defaults to True so every check-in still has a matching check-out, which is
+    what keeps a station's occupancy count honest. Stations where submitting the
+    form obviously means "done" can turn it off and let the team walk away.
+    """
+    flow = config.get("flow") if isinstance(config.get("flow"), dict) else {}
+    return {
+        "checkoutAfterSubmit": flow.get("checkoutAfterSubmit", True) is not False,
+    }
+
+
 def normalize_config(config: dict | None) -> dict:
     """Return the config in canonical form, converting the legacy shape if needed."""
     config = config if isinstance(config, dict) else {}
@@ -192,7 +211,13 @@ def normalize_config(config: dict | None) -> dict:
             "randomCount": random_count,
         },
         "limits": _limits(config),
+        "flow": _flow(config),
     }
+
+
+def checkout_after_submit(config: dict | None) -> bool:
+    """Whether a team still has to be scanned out after submitting this form."""
+    return normalize_config(config)["flow"]["checkoutAfterSubmit"]
 
 
 def submission_items(config: dict | None, item_type: str | None = None) -> list[dict]:
