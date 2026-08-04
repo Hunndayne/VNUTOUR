@@ -215,6 +215,19 @@ def _registration_phase_open() -> bool:
     return registration_is_open()
 
 
+def _team_edits_allowed(team: Team | None) -> bool:
+    """Editing a team belongs to registration, with one deliberate exception.
+
+    Rejecting a team *is* an admin asking for changes, so that request has to
+    stay actionable after registration closes — otherwise the note ("thiếu ảnh
+    chuyển khoản") arrives with no way to act on it, and the captain has to find
+    an organiser in person. Creating a brand new team stays registration-only.
+    """
+    if _registration_phase_open():
+        return True
+    return team is not None and team.approval_status == Team.APPROVAL_REJECTED
+
+
 def _registration_closed_response():
     return JsonResponse({"error": "registration_closed"}, status=409)
 
@@ -415,13 +428,13 @@ def my_team_view(request: HttpRequest):
         }, status=201)
 
     if request.method == "PATCH":
-        if not _registration_phase_open():
-            return _registration_closed_response()
         membership = TeamMembership.objects.filter(
             participant__mssv=acc.mssv, is_captain=True,
         ).select_related("team").first()
         if not membership:
             return JsonResponse({"error": "not_team_owner"}, status=403)
+        if not _team_edits_allowed(membership.team):
+            return _registration_closed_response()
 
         team = membership.team
         if not team_is_editable(team):
@@ -468,14 +481,13 @@ def my_team_submit_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
 
     team = membership.team
     schema = get_schema()
@@ -523,14 +535,13 @@ def my_team_member_resolve_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
     if not team_is_editable(membership.team):
         return JsonResponse({"error": "team_locked"}, status=409)
 
@@ -553,14 +564,13 @@ def my_team_members_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
 
     team = membership.team
     if not team_is_editable(team):
@@ -603,14 +613,13 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
 
     team = membership.team
     if not team_is_editable(team):

@@ -227,3 +227,99 @@ class StationStateCostTests(StationStateTestBase):
                 f"/api/my-team/station-state?station_id={self.station.id}",
                 HTTP_AUTHORIZATION=f"Bearer {self.token}",
             )
+
+
+class RejectedTeamMayStillBeFixedTests(StationStateTestBase):
+    """Rejecting a team is an admin asking for changes; the ask must be actionable.
+
+    Team edits are otherwise a registration-phase activity, but the note arrives
+    whenever an organiser writes it — including mid-event. If the gate stayed
+    closed, the captain would read "thiếu ảnh chuyển khoản" with no way to act.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # Registration is over. The gate reads this setting, not the phase, so
+        # the test has to close it explicitly rather than lean on a default.
+        SystemSetting.objects.update_or_create(
+            key="registration_open", defaults={"value": False},
+        )
+        self.team.payment_proof = "https://example.com/bill.jpg"
+        self.team.save(update_fields=["payment_proof"])
+
+    def _patch_team(self, name):
+        import json
+        return self.client.patch(
+            "/api/my-team",
+            data=json.dumps({"team_name": name}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+    def test_an_approved_team_cannot_be_edited_after_registration(self):
+        response = self._patch_team("Ten moi")
+
+        # This module's helper answers 409, unlike the same-named one in
+        # views_register.py which answers 403.
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "registration_closed")
+
+    def test_a_rejected_team_can_be_edited_after_registration(self):
+        """The motivating case: "thieu anh chuyen khoan", fixed mid-event.
+
+        The name is resent unchanged — renaming has its own rule (full teams
+        only), and what the captain actually needs to change here is the proof.
+        """
+        self.team.approval_status = Team.APPROVAL_REJECTED
+        self.team.approval_note = "Thieu anh chuyen khoan"
+        self.team.save(update_fields=["approval_status", "approval_note"])
+
+        import json
+        response = self.client.patch(
+            "/api/my-team",
+            data=json.dumps({
+                "team_name": self.team.name,
+                "payment_proof": "https://example.com/bill-moi.jpg",
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.payment_proof, "https://example.com/bill-moi.jpg")
+
+    def test_a_rejected_team_can_resubmit_after_fixing(self):
+        """Editing without being able to resubmit would only be half a fix."""
+        self.team.approval_status = Team.APPROVAL_REJECTED
+        self.team.save(update_fields=["approval_status"])
+
+        response = self.client.post(
+            "/api/my-team/submit", HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        # Whatever else the submit validates (profile completeness, roster size),
+        # the closed registration phase must no longer be what stops it.
+        self.assertNotEqual(response.json().get("error"), "registration_closed")
+
+    def test_creating_a_new_team_stays_shut(self):
+        """The exception is for fixing an existing team, not joining late."""
+        import json
+        loner = Account.objects.create(
+            username="muon", email="muon@example.com",
+            password_hash="x", role=Account.ROLE_PARTICIPANT, mssv="SV900",
+        )
+        Participant.objects.create(
+            account=loner, mssv="SV900", full_name="Den Muon",
+            email="muon@example.com",
+        )
+
+        response = self.client.post(
+            "/api/my-team",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(loner)}",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "registration_closed")
