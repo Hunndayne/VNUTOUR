@@ -1,0 +1,395 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  # Service discovery: find the pods and nodes worth scraping.
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+
+  # Kubelet and cAdvisor are reached through the API server's proxy rather than
+  # by dialling each kubelet directly, because k3s serves those ports with a
+  # self-signed certificate that is not in the cluster CA bundle. Going through
+  # the proxy means one trusted TLS path instead of insecure_skip_verify.
+  - apiGroups: [""]
+    resources:
+      - nodes/metrics
+      - nodes/proxy
+    verbs: ["get"]
+
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      # 15s matches what an autoscaler can actually react to. Going finer is
+      # possible for control-loop experiments, but every halving doubles the
+      # series volume on a homelab disk.
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      # Anything that carries prometheus.io/scrape=true. Annotation-based
+      # discovery rather than ServiceMonitor CRs, because a fresh k3s has no
+      # Prometheus Operator to read them.
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+
+          # Rewrite the discovered pod IP to the annotated metrics port. A pod
+          # with several containers is discovered once per declared port, so
+          # without this the exporter sidecars get scraped on the app's port.
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+
+          # Finished migrate Jobs would otherwise stay as permanently failing
+          # targets and keep the "something is down" alert lit.
+          - source_labels: [__meta_kubernetes_pod_phase]
+            action: drop
+            regex: (Succeeded|Failed)
+
+      # Per-container CPU, memory, network and disk, straight from the kubelet.
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+      # The kubelet's own metrics, which is where volume usage lives. cAdvisor
+      # does not report PVC fullness, and a homelab disk that quietly fills is
+      # the failure this cluster is most likely to hit.
+      - job_name: kubernetes-kubelet
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics
+
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+data:
+  vnutour.yml: |
+    groups:
+      - name: vnutour-availability
+        rules:
+          - alert: TargetDown
+            expr: up == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.job }} target {{ $labels.instance }} is not answering scrapes"
+
+          - alert: DeploymentHasNoReplicas
+            expr: kube_deployment_status_replicas_available{namespace="vnutour"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Deployment {{ $labels.deployment }} has zero available replicas"
+
+          # The bot and the email worker have no HTTP endpoint to probe, so a
+          # restart loop is the only signal that they are failing to start.
+          - alert: PodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total{namespace="vnutour"}[15m]) > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted more than 3 times in 15m"
+
+          - alert: MigrationJobFailed
+            expr: kube_job_status_failed{namespace="vnutour"} > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Job {{ $labels.job_name }} failed — the schema may be half-applied"
+
+      - name: vnutour-api
+        rules:
+          - alert: BackendHighErrorRate
+            expr: |
+              sum(rate(django_http_responses_total_by_status_total{status=~"5.."}[5m]))
+                / sum(rate(django_http_responses_total_by_status_total[5m])) > 0.05
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Over 5% of API responses are 5xx"
+
+          - alert: BackendSlowRequests
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket[5m]))
+              ) > 2
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "API p95 latency above 2s"
+
+      - name: vnutour-database
+        rules:
+          - alert: PostgresDown
+            expr: pg_up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "postgres-exporter cannot reach the database"
+
+          - alert: PostgresConnectionsHigh
+            expr: sum(pg_stat_activity_count) > 80
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Postgres is holding more than 80 connections"
+
+      - name: vnutour-capacity
+        rules:
+          # The homelab failure mode called out in docker-compose.prod.yml: a
+          # disk that fills up and stays full.
+          - alert: PersistentVolumeFillingUp
+            expr: |
+              kubelet_volume_stats_available_bytes
+                / kubelet_volume_stats_capacity_bytes < 0.15
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PVC {{ $labels.persistentvolumeclaim }} is over 85% full"
+
+          - alert: NodeDiskFillingUp
+            expr: |
+              node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
+                / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} < 0.15
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.instance }} root filesystem is over 85% full"
+
+          - alert: NodeMemoryPressure
+            expr: |
+              node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.instance }} has under 10% memory available"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  # Single writer against a ReadWriteOnce volume, so the old pod has to release
+  # the disk before the new one claims it.
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: prometheus
+
+  template:
+    metadata:
+      labels:
+        app: prometheus
+
+    spec:
+      serviceAccountName: prometheus
+
+      # local-path hands over a directory owned by root; without fsGroup the
+      # unprivileged Prometheus user cannot create its TSDB.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=15d
+            # A second, harder stop: retention by time alone still fills the
+            # disk if the series count grows, and a full disk wedges the TSDB.
+            - --storage.tsdb.retention.size=15GB
+            - --web.enable-lifecycle
+
+          ports:
+            - name: http
+              containerPort: 9090
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+
+            - name: rules
+              mountPath: /etc/prometheus/rules
+
+            - name: data
+              mountPath: /prometheus
+
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+
+        - name: rules
+          configMap:
+            name: prometheus-rules
+
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data

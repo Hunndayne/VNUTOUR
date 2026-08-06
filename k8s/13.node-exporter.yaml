@@ -1,0 +1,103 @@
+# Per-node CPU, memory, disk and network. cAdvisor reports what each container
+# consumed; this reports what the machine had to give, which is the difference
+# between "the pod is throttled" and "the node is out of CPU". With one server
+# and two agents that distinction decides whether scaling out can even help.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      # Reports the node's own network counters rather than the pod sandbox's,
+      # and keeps the endpoint at a fixed port on every node.
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # A k3s server is schedulable out of the box, but a node with no exporter
+      # is a blind spot rather than a missing nice-to-have, so tolerate the
+      # control-plane taints in case this cluster ever applies them.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.8.2
+
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            # Without this every container overlay and k3s bind mount shows up
+            # as its own filesystem, which buries the real disks.
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/kubelet/.+|var/lib/rancher/.+)($|/)
+
+          ports:
+            - name: metrics
+              containerPort: 9100
+              hostPort: 9100
+
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+
+            - name: root
+              mountPath: /host/root
+              readOnly: true
+              mountPropagation: HostToContainer
+
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+
+        - name: sys
+          hostPath:
+            path: /sys
+
+        - name: root
+          hostPath:
+            path: /

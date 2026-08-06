@@ -1,0 +1,93 @@
+name: Deploy
+
+# The homelab runner picks this job up over an outbound connection, so nothing
+# has to be exposed on the home network.
+#
+# Never add a `pull_request` trigger here. Self-hosted runners execute whatever
+# the workflow says, so a fork could otherwise run arbitrary code on the
+# homelab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing image tag to roll back to. Leave blank to build HEAD."
+        required: false
+
+# Deploys queue instead of cancelling each other: a cancelled run could leave
+# migrations half-applied.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, vnutour]
+    environment: production
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Secrets live on the homelab, never in the repo or in GitHub.
+      BACKEND_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE || '/srv/vnutour/.env.docker' }}
+      COMPOSE_FILE: docker-compose.yml:docker-compose.prod.yml
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the deploy environment file
+        run: |
+          if [ ! -r "$BACKEND_ENV_FILE" ]; then
+            echo "::error::$BACKEND_ENV_FILE is missing or unreadable on the runner"
+            exit 1
+          fi
+
+      # Build before touching the running stack. A broken Dockerfile fails here,
+      # while the current containers keep serving.
+      - name: Build images
+        if: ${{ !inputs.image_tag }}
+        run: docker compose --env-file "$BACKEND_ENV_FILE" build
+
+      # Invoked through bash because the repository is developed on Windows,
+      # where git does not record the executable bit.
+      - name: Back up the database
+        run: bash ./scripts/backup_db.sh
+
+      - name: Copy the dump to R2
+        run: |
+          latest="$(ls -1t backups/vnutour-*.dump 2>/dev/null | head -1 || true)"
+          if [ -z "$latest" ]; then
+            echo "no dump to upload"
+            exit 0
+          fi
+          docker run --rm \
+            --env-file "$BACKEND_ENV_FILE" \
+            --volume "$PWD/backups:/backups:ro" \
+            "vnutour-backend:$IMAGE_TAG" \
+            python scripts/upload_backup.py "/backups/$(basename "$latest")"
+
+      # `migrate` must exit 0 and `backend` must pass its healthcheck before
+      # Compose starts anything downstream, so this step fails loudly rather
+      # than leaving a half-started stack.
+      - name: Migrate and start
+        run: docker compose --env-file "$BACKEND_ENV_FILE" up -d --remove-orphans
+
+      - name: Verify
+        run: |
+          docker compose --env-file "$BACKEND_ENV_FILE" ps
+          docker compose --env-file "$BACKEND_ENV_FILE" exec -T frontend \
+            wget --quiet --output-document=- http://127.0.0.1/healthz
+
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "::error::Deploy failed. Roll back with workflow_dispatch and a previous image tag."
+          docker compose --env-file "$BACKEND_ENV_FILE" ps
+          docker compose --env-file "$BACKEND_ENV_FILE" logs --tail 60 migrate backend
+
+      # Keep two weeks of images so a rollback still has something to start.
+      - name: Prune old images
+        if: always()
+        run: docker image prune --force --filter "until=336h"

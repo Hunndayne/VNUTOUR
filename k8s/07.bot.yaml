@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot
+  namespace: vnutour
+spec:
+  # Singleton, and not just for tidiness: two pods means two gateway sessions on
+  # the same token, so Discord delivers every interaction twice and each slash
+  # command runs twice. A rolling update would briefly overlap the old and new
+  # pod, so the old one has to be gone before the new one starts. Never put an
+  # HPA on this Deployment.
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: bot
+
+  template:
+    metadata:
+      labels:
+        app: bot
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: bot
+          image: yourdockerhub/vnutour-backend:1.0.0
+
+          command:
+            - python
+            - main.py
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          env:
+            - name: DJANGO_AUTOSTART
+              value: "0"
+
+            - name: RUN_DISCORD_BOT
+              value: "1"
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"

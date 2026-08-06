@@ -7,6 +7,8 @@
 # Python cache
 __pycache__/
 **/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -23,3 +25,7 @@ __pycache__/
 sheet_snapshot.json
 data/
 credentials/
+backups/
+media/
+webapi/media/
+*.sqlite3

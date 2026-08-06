@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: vnutour
+spec:
+  selector:
+    app: frontend
+
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: vnutour
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: frontend
+
+  template:
+    metadata:
+      labels:
+        app: frontend
+
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      containers:
+        - name: frontend
+          image: yourdockerhub/vnutour-frontend:1.0.0
+
+          ports:
+            - name: http
+              containerPort: 80
+
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 20
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+
+        # Request rate measured at the edge. Django's own counters miss static
+        # assets and anything Nginx answers or rejects on its own, so this is
+        # the closest in-cluster stand-in for what a browser actually sees.
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:1.3.0
+
+          args:
+            - --nginx.scrape-uri=http://127.0.0.1/nginx_status
+
+          ports:
+            - name: metrics
+              containerPort: 9113
+
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

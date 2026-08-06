@@ -1,63 +1,113 @@
-version: "3.8"
+name: vnutour
+
+x-backend-common: &backend-common
+  image: vnutour-backend:${IMAGE_TAG:-latest}
+  build:
+    context: .
+  env_file:
+    - ${BACKEND_ENV_FILE:-.env.docker}
+  environment:
+    DJANGO_ENV: production
+    DJANGO_DEBUG: "0"
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?set DJANGO_ALLOWED_HOSTS},localhost,127.0.0.1
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    FFMPEG_EXE: ffmpeg
+  init: true
+  networks:
+    - app
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: vnutour-db
     restart: unless-stopped
+    env_file:
+      - ${BACKEND_ENV_FILE:-.env.docker}
     environment:
-      POSTGRES_USER: vnutour
-      POSTGRES_PASSWORD: vnutour
-      POSTGRES_DB: vnutour
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${DB_NAME:?set DB_NAME}
+      POSTGRES_USER: ${DB_USER:?set DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app
+
+  migrate:
+    <<: *backend-common
+    command: python webapi/manage.py migrate --noinput
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    <<: *backend-common
+    restart: unless-stopped
+    volumes:
+      - media_data:/app/webapi/media
+      - backup_data:/app/backups
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+  frontend:
+    image: vnutour-frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app
 
   bot:
-    build: .
-    container_name: vnutour-bot
+    <<: *backend-common
+    command: python main.py
     restart: unless-stopped
-    env_file:
-      - .env.docker
     environment:
-      - FFMPEG_EXE=ffmpeg
-      - SHEET_CACHE_FILE=/data/sheet_snapshot.json
-    volumes:
-      - ./data:/data
-
-  web:
-    build: .
-    container_name: vnutour-web
-    restart: unless-stopped
-    command: python webapi/manage.py runserver 0.0.0.0:8080
-    env_file:
-      - .env.docker
-    environment:
-      - DJANGO_DEBUG=1
-      - DB_HOST=postgres
-    ports:
-      - "8080:8080"
-    volumes:
-      - .:/app
+      DJANGO_ENV: production
+      DJANGO_AUTOSTART: "0"
+      RUN_DISCORD_BOT: "1"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      FFMPEG_EXE: ffmpeg
+    healthcheck:
+      disable: true
     depends_on:
-      - postgres
-      - bot
+      backend:
+        condition: service_healthy
+    stop_grace_period: 30s
 
   email-worker:
-    build: .
-    container_name: vnutour-email-worker
-    restart: unless-stopped
+    <<: *backend-common
     command: python webapi/manage.py process_email_queue --watch --sleep 5
-    env_file:
-      - .env.docker
-    environment:
-      - DB_HOST=postgres
-    volumes:
-      - .:/app
+    restart: unless-stopped
+    healthcheck:
+      disable: true
     depends_on:
-      - postgres
-      - web
+      backend:
+        condition: service_healthy
+    stop_grace_period: 30s
 
 volumes:
-  pgdata:
+  postgres_data:
+  media_data:
+  backup_data:
+
+networks:
+  app:

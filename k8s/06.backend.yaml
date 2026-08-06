@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: vnutour
+spec:
+  selector:
+    app: backend
+
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: vnutour
+spec:
+  replicas: 1
+
+  # Recreate rather than a zero-downtime rolling update, because this pod mounts
+  # two ReadWriteOnce local-path volumes. Surging a second pod means the
+  # scheduler has to place it on the node holding those volumes; anywhere else
+  # and it cannot attach them, so the rollout stops with the new pod Pending and
+  # never completes. A few seconds of downtime beats a wedged deploy.
+  #
+  # Switch back to RollingUpdate once media moves to R2 and backups move to
+  # their own CronJob — see Known limitations in README.md. That is also what
+  # unblocks putting an HPA on this Deployment.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+
+      # /metrics sits at the Django root, outside the /api/ and /media/ prefixes
+      # Nginx proxies, so it is reachable on the pod IP but not from the public
+      # hostname.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: backend
+          image: yourdockerhub/vnutour-backend:1.0.0
+
+          ports:
+            - name: http
+              containerPort: 8000
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1500m"
+              memory: "2Gi"
+
+          volumeMounts:
+            - name: media
+              mountPath: /app/webapi/media
+
+            - name: backups
+              mountPath: /app/backups
+
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
+
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backup-data

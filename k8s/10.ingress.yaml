@@ -1,0 +1,63 @@
+# Everything enters through the frontend pod, not through separate rules per
+# service: its Nginx already proxies /api/ and /media/ to the backend and serves
+# the React bundle for everything else. Splitting the routing across the Ingress
+# as well would mean two places to keep in sync.
+#
+# Requires ingress-nginx. A stock k3s installs Traefik instead and will simply
+# ignore this object — see README.md in this directory.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vnutour
+  namespace: vnutour
+  annotations:
+    # Matches client_max_body_size in frontend/nginx.conf. Backup restores and
+    # station submissions carry large files, and the smaller of the two limits
+    # is the one that applies.
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+
+spec:
+  ingressClassName: nginx
+
+  # No tls block on purpose. The homelab has no inbound ports, so HTTPS arrives
+  # through a Cloudflare Tunnel that terminates TLS at the edge and forwards
+  # plain HTTP to this controller — the same arrangement as
+  # backend/docker-compose.prod.yml. Declaring a tls block here would point at a
+  # certificate nobody issues, and ingress-nginx would answer with its built-in
+  # self-signed one.
+  #
+  # If this cluster ever gets reachable ports 80/443 and cert-manager, add the
+  # annotation cert-manager.io/cluster-issuer: letsencrypt-prod and:
+  #
+  #   tls:
+  #     - hosts:
+  #         - vnutour.hunn.io.vn
+  #         - vnutour.suctremmt.com
+  #       secretName: vnutour-tls
+
+  # Both hostnames must also appear in DJANGO_ALLOWED_HOSTS in 01.configmap.yaml
+  # or Django rejects the forwarded Host header with a 400.
+  rules:
+    - host: vnutour.hunn.io.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+    - host: vnutour.suctremmt.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

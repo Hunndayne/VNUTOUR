@@ -1,0 +1,166 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: vnutour
+spec:
+  # Headless, because the StatefulSet below names this as its serviceName and
+  # that contract only holds for a headless service — without it the per-pod
+  # record postgres-0.postgres never resolves. Clients keep using the plain
+  # `postgres` name either way; DNS just answers with the pod address instead
+  # of a virtual IP.
+  #
+  # clusterIP is immutable, so on a cluster where the old Service already
+  # exists this has to be deleted and recreated rather than applied over.
+  clusterIP: None
+
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: vnutour
+spec:
+  serviceName: postgres
+
+  # Must stay 1. Every pod here mounts the same postgres-data claim rather than
+  # a per-pod volumeClaimTemplate, so a second replica would start a second
+  # postgres on the same data directory and corrupt it. A StatefulSet already
+  # replaces the pod in place instead of overlapping two, which is why this one
+  # needs no Recreate strategy the way the bot and worker do.
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: postgres
+
+  template:
+    metadata:
+      labels:
+        app: postgres
+
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+
+          ports:
+            - name: postgres
+              containerPort: 5432
+
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_NAME
+
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_USER
+
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_PASSWORD
+
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+
+        # Connection counts, table sizes, deadlocks, transaction age. Runs as a
+        # sidecar so it reaches the server over the pod loopback and needs no
+        # network exposure of its own.
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+
+          ports:
+            - name: metrics
+              containerPort: 9187
+
+          env:
+            # Referenced by DATA_SOURCE_URI below through $(VAR) expansion,
+            # which keeps the credentials out of a concatenated literal.
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_NAME
+
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_USER
+
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_PASSWORD
+
+            - name: DATA_SOURCE_URI
+              value: "localhost:5432/$(DB_NAME)?sslmode=disable"
+
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data
