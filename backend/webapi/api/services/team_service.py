@@ -101,28 +101,32 @@ def create_team(
     if not name:
         return None, "missing_team_name"
 
-    # Generate unique team code
-    code = _next_team_code()
+    # Concurrent requests can calculate the same sequential code. The database
+    # unique constraint remains the source of truth; a loser retries with the
+    # newly committed maximum instead of surfacing an error to the participant.
+    for _ in range(5):
+        team = Team(
+            code=_next_team_code(),
+            name=name,
+            owner_account=owner_account,
+            approval_status=Team.APPROVAL_APPROVED if auto_approve else Team.APPROVAL_DRAFT,
+            provision_state=Team.PROVISION_PENDING if auto_approve else Team.PROVISION_NONE,
+            qr_token=secrets.token_urlsafe(16),
+            is_late_registration=is_late_registration,
+        )
 
-    team = Team(
-        code=code,
-        name=name,
-        owner_account=owner_account,
-        approval_status=Team.APPROVAL_APPROVED if auto_approve else Team.APPROVAL_DRAFT,
-        provision_state=Team.PROVISION_PENDING if auto_approve else Team.PROVISION_NONE,
-        qr_token=secrets.token_urlsafe(16),
-        is_late_registration=is_late_registration,
-    )
+        try:
+            with transaction.atomic():
+                team.save()
+                if auto_approve:
+                    _ensure_default_qualifying_roster(team)
+            return team, None
+        except IntegrityError:
+            continue
+        except Exception as e:
+            return None, str(e)
 
-    try:
-        team.save()
-        if auto_approve:
-            _ensure_default_qualifying_roster(team)
-        return team, None
-    except IntegrityError:
-        return None, "team_code_conflict"
-    except Exception as e:
-        return None, str(e)
+    return None, "team_code_conflict"
 
 
 def _next_team_code() -> str:
@@ -137,6 +141,7 @@ def _next_team_code() -> str:
     return "T0001"
 
 
+@transaction.atomic
 def add_member(
     team: Team,
     mssv: str,
@@ -161,6 +166,14 @@ def add_member(
     mssv = (mssv or "").strip()
     if not mssv:
         return None, "missing_mssv"
+
+    # Membership count is a team-level invariant. Lock the same Team row used
+    # by batch merge before reading the count, so concurrent adds and merges are
+    # serialized instead of both acting on a stale roster size.
+    locked_team = Team.objects.select_for_update().filter(pk=team.pk).first()
+    if not locked_team:
+        return None, "not_found"
+    team = locked_team
 
     # Check team limits
     max_members = _get_setting("team_max_members", 5)

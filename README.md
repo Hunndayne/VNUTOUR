@@ -19,7 +19,7 @@ vnutour/
 
 ## Luồng tổng thể
 
-Google Sheet (đăng ký) → đồng bộ vào **MongoDB** → Discord bot tạo đội/role/kênh và phát QR → web app quét QR gọi `/api/checkin` → ghi check-in về MongoDB (và xuất ngược ra Google Sheet check-in).
+Web đăng ký và trang quản trị ghi trực tiếp vào **PostgreSQL** qua Django ORM. Discord bot dùng cùng cơ sở dữ liệu để nhận hàng đợi tạo role/kênh, liên kết thành viên và gửi broadcast. QR, check-in, trạm và bảng điểm đều có PostgreSQL làm nguồn dữ liệu duy nhất.
 
 ## Chạy nhanh
 

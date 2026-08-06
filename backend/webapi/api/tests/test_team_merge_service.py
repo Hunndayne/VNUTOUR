@@ -1,24 +1,42 @@
 """Merging under-strength teams, and the captain ballot that follows."""
 
+import json
+from unittest.mock import patch
+
 from django.test import TestCase
+from django.db.models.query import QuerySet
 
 from api.models import (
     Account, CaptainVote, Participant, ScoreEntry, SubEvent, ProgramPhase,
     Team, TeamMembership,
 )
 from api.services import team_merge_service as svc
+from api.services.auth_service import generate_session
+from api.services.team_service import add_member
 
 
 class TeamMergeTestBase(TestCase):
-    def _team(self, code, member_count, captain_index=0):
+    def setUp(self):
+        ProgramPhase.objects.create(
+            key="registration", label="Dang ky", order=0, is_current=True,
+        )
+
+    def _team(
+        self,
+        code,
+        member_count,
+        captain_index=0,
+        approval_status=Team.APPROVAL_APPROVED,
+    ):
         team = Team.objects.create(
-            code=code, name=f"Doi {code}", approval_status=Team.APPROVAL_DRAFT,
+            code=code, name=f"Doi {code}", approval_status=approval_status,
         )
         members = []
         for i in range(member_count):
             mssv = f"{code}-{i}"
             participant = Participant.objects.create(
                 mssv=mssv, full_name=f"TV {mssv}", email=f"{mssv}@example.com".lower(),
+                extra={"gender": "male" if i % 2 == 0 else "female"},
             )
             TeamMembership.objects.create(
                 team=team, participant=participant, is_captain=(i == captain_index),
@@ -34,6 +52,110 @@ class TeamMergeTestBase(TestCase):
 
 
 class MergeRulesTests(TeamMergeTestBase):
+    def test_member_add_cannot_overfill_team_during_merge(self):
+        target, _ = self._team("T0000", 3)
+        source, _ = self._team("T0009", 2)
+        original_count = QuerySet.count
+        original_select_for_update = QuerySet.select_for_update
+        merge_triggered = False
+        team_locked = False
+        merge_error = None
+
+        def track_team_lock(queryset, *args, **kwargs):
+            nonlocal team_locked
+            if queryset.model is Team:
+                team_locked = True
+            return original_select_for_update(queryset, *args, **kwargs)
+
+        def count_with_interleaved_merge(queryset):
+            nonlocal merge_triggered, merge_error
+            count = original_count(queryset)
+            if not merge_triggered and not team_locked and queryset.model is TeamMembership:
+                merge_triggered = True
+                merged, merge_error, _ = svc.merge_team_group([target.code, source.code])
+                self.assertIsNone(merge_error)
+                self.assertEqual(merged.code, target.code)
+            return count
+
+        with (
+            patch.object(QuerySet, "select_for_update", track_team_lock),
+            patch.object(QuerySet, "count", count_with_interleaved_merge),
+        ):
+            participant, error = add_member(
+                target,
+                "NEW-MEMBER",
+                full_name="New member",
+                email="new-member@example.com",
+            )
+
+        if not merge_triggered:
+            _, merge_error, _ = svc.merge_team_group([target.code, source.code])
+
+        self.assertIsNotNone(participant)
+        self.assertIsNone(error)
+        self.assertEqual(merge_error, "merge_would_exceed_max:5")
+        self.assertEqual(TeamMembership.objects.filter(team=target).count(), 4)
+        self.assertTrue(Team.objects.filter(code=source.code).exists())
+
+    def test_three_teams_can_merge_in_one_operation(self):
+        first, first_members = self._team("T0001", 1)
+        second, second_members = self._team("T0002", 2)
+        third, third_members = self._team("T0003", 2)
+
+        merged, error, removed = svc.merge_team_group([
+            third.code, first.code, second.code,
+        ])
+
+        self.assertIsNone(error)
+        self.assertEqual(merged.code, "T0001")
+        self.assertEqual(removed, ["T0002", "T0003"])
+        self.assertEqual(
+            self._mssvs(merged),
+            sorted(
+                [member.mssv for member in first_members]
+                + [member.mssv for member in second_members]
+                + [member.mssv for member in third_members]
+            ),
+        )
+        self.assertFalse(Team.objects.filter(code__in=["T0002", "T0003"]).exists())
+
+    def test_multi_team_merge_does_not_require_a_full_roster(self):
+        first, _ = self._team("T0004", 1)
+        second, _ = self._team("T0005", 2)
+
+        merged, error, _ = svc.merge_team_group([first.code, second.code])
+
+        self.assertIsNone(error)
+        self.assertEqual(TeamMembership.objects.filter(team=merged).count(), 3)
+
+    def test_multi_team_merge_refuses_a_roster_over_maximum(self):
+        first, _ = self._team("T0006", 2)
+        second, _ = self._team("T0007", 2)
+        third, _ = self._team("T0008", 2)
+
+        merged, error, _ = svc.merge_team_group([
+            first.code, second.code, third.code,
+        ])
+
+        self.assertIsNone(merged)
+        self.assertEqual(error, "merge_would_exceed_max:5")
+        self.assertEqual(Team.objects.filter(code__in=["T0006", "T0007", "T0008"]).count(), 3)
+
+    def test_merge_refuses_every_unapproved_status(self):
+        for index, status in enumerate((Team.APPROVAL_DRAFT, Team.APPROVAL_PENDING)):
+            with self.subTest(status=status):
+                approved, _ = self._team(f"T008{index * 2}", 1)
+                blocked, _ = self._team(
+                    f"T008{index * 2 + 1}", 1, approval_status=status,
+                )
+
+                merged, error, _ = svc.merge_team_group([approved.code, blocked.code])
+
+                self.assertIsNone(merged)
+                self.assertEqual(error, f"merge_team_not_approved:{blocked.code}")
+                self.assertTrue(Team.objects.filter(pk=approved.pk).exists())
+                self.assertTrue(Team.objects.filter(pk=blocked.pk).exists())
+
     def test_two_under_strength_teams_merge(self):
         source, _ = self._team("T0001", 2)
         target, _ = self._team("T0002", 3)
@@ -107,6 +229,7 @@ class MergeRulesTests(TeamMergeTestBase):
 
 class CaptainBallotTests(TeamMergeTestBase):
     def setUp(self):
+        super().setUp()
         source, self.source_members = self._team("T0100", 2)
         target, self.target_members = self._team("T0101", 3)
         self.team = svc.merge_teams(source, target)
@@ -208,3 +331,164 @@ class CaptainBallotTests(TeamMergeTestBase):
     def test_nobody_may_rename_a_leaderless_team(self):
         for member in self.members:
             self.assertFalse(svc.may_rename(self.team, member))
+
+
+class MergeTeamsApiTests(TeamMergeTestBase):
+    def setUp(self):
+        super().setUp()
+        self.admin = Account.objects.create(
+            username="merge-admin",
+            email="merge-admin@example.com",
+            password_hash="x",
+            role=Account.ROLE_ADMIN,
+        )
+        self.token = generate_session(self.admin)
+
+    def _auth(self):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.token}"}
+
+    def test_admin_can_merge_multiple_selected_teams(self):
+        first, _ = self._team("T0300", 1)
+        second, _ = self._team("T0301", 1)
+        third, _ = self._team("T0302", 2)
+
+        response = self.client.post(
+            "/api/admin/teams/merge",
+            data=json.dumps({"team_codes": [third.code, first.code, second.code]}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], "T0300")
+        self.assertEqual(body["merged_from"], ["T0301", "T0302"])
+        self.assertEqual(body["member_count"], 4)
+
+    def test_team_list_exposes_member_names_and_gender_for_merging(self):
+        team, _ = self._team("T0303", 3)
+
+        response = self.client.get(
+            "/api/teams?approval_status=approved",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = next(entry for entry in response.json()["items"] if entry["code"] == team.code)
+        self.assertEqual(
+            item["gender_counts"],
+            {"male": 2, "female": 1, "other": 0, "unknown": 0},
+        )
+        self.assertEqual(len(item["member_summaries"]), 3)
+        self.assertEqual(
+            {member["gender"] for member in item["member_summaries"]},
+            {"male", "female"},
+        )
+
+    def test_api_rejects_a_selection_over_maximum(self):
+        first, _ = self._team("T0310", 3)
+        second, _ = self._team("T0311", 3)
+
+        response = self.client.post(
+            "/api/admin/teams/merge",
+            data=json.dumps({"team_codes": [first.code, second.code]}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "merge_would_exceed_max:5")
+
+    def test_draft_team_cannot_be_approved(self):
+        draft, _ = self._team(
+            "T0314", 1, approval_status=Team.APPROVAL_DRAFT,
+        )
+
+        response = self.client.post(
+            f"/api/teams/{draft.code}/approve",
+            data=json.dumps({}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_not_submitted")
+        draft.refresh_from_db()
+        self.assertEqual(draft.approval_status, Team.APPROVAL_DRAFT)
+
+    def test_patch_cannot_bypass_submission_before_approval(self):
+        draft, _ = self._team(
+            "T0316", 1, approval_status=Team.APPROVAL_DRAFT,
+        )
+
+        response = self.client.patch(
+            f"/api/teams/{draft.code}",
+            data=json.dumps({"approval_status": Team.APPROVAL_APPROVED}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_not_submitted")
+        draft.refresh_from_db()
+        self.assertEqual(draft.approval_status, Team.APPROVAL_DRAFT)
+
+    def test_submitted_team_can_be_approved(self):
+        submitted, _ = self._team(
+            "T0315", 1, approval_status=Team.APPROVAL_PENDING,
+        )
+
+        response = self.client.post(
+            f"/api/teams/{submitted.code}/approve",
+            data=json.dumps({}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        submitted.refresh_from_db()
+        self.assertEqual(submitted.approval_status, Team.APPROVAL_APPROVED)
+
+    def test_api_rejects_merge_after_registration_phase(self):
+        first, _ = self._team("T0312", 1)
+        second, _ = self._team("T0313", 1)
+        ProgramPhase.objects.filter(key="registration").update(is_current=False)
+        ProgramPhase.objects.create(
+            key="qualifying", label="Vong loai", order=1, is_current=True,
+        )
+
+        response = self.client.post(
+            "/api/admin/teams/merge",
+            data=json.dumps({"team_codes": [first.code, second.code]}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "registration_phase_closed")
+        self.assertEqual(Team.objects.filter(code__in=[first.code, second.code]).count(), 2)
+
+    def test_stale_overlapping_admin_merge_fails_without_partial_changes(self):
+        first, _ = self._team("T0320", 1)
+        shared, _ = self._team("T0321", 1)
+        untouched, _ = self._team("T0322", 1)
+
+        winner = self.client.post(
+            "/api/admin/teams/merge",
+            data=json.dumps({"team_codes": [first.code, shared.code]}),
+            content_type="application/json",
+            **self._auth(),
+        )
+        stale = self.client.post(
+            "/api/admin/teams/merge",
+            data=json.dumps({"team_codes": [shared.code, untouched.code]}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(winner.status_code, 200)
+        self.assertEqual(stale.status_code, 404)
+        self.assertEqual(stale.json()["error"], "not_found")
+        self.assertEqual(TeamMembership.objects.filter(team=first).count(), 2)
+        self.assertEqual(TeamMembership.objects.filter(team=untouched).count(), 1)
+        self.assertTrue(Team.objects.filter(code=untouched.code).exists())

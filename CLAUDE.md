@@ -8,7 +8,7 @@ VNUTour is a unified tour event management system for VNU students. It consists 
 - **Backend**: Discord bot + Django REST API (Python) — handles team/event management, check-ins, and integrations
 - **Frontend**: React + Vite web app — QR scanning dashboard and admin panels
 
-The system syncs data from Google Sheets into MongoDB, then manages event phases (registration, stations, scores) through Discord and web interfaces.
+PostgreSQL is the single source of truth. The web API writes through Django ORM, while the Discord bot consumes provisioning and broadcast work from the same database.
 
 ## Quick Start Commands
 
@@ -99,8 +99,8 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
 - **bot/**: Core bot setup
   - `bot.py`: Main bot class with cog loading
   - `config.py`: Configuration and constants
-  - `sheet_cog.py`: Google Sheets sync
-  - `team_cog.py`: Team creation and management
+  - `database.py`: Safe async bridge to Django ORM
+  - `team_cog.py`: PostgreSQL-backed team provisioning, broadcasts, and heartbeat
 
 - **commands/**: Command handlers
   - `slash_commands.py`: Slash commands for team/phase management
@@ -147,10 +147,11 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
 4. `checkin_service` validates phase, records check-in, updates scores
 5. Frontend shows success/error, leaderboard updates
 
-### Google Sheets ↔ MongoDB Sync
-- Discord bot (`sheet_cog.py`) polls Google Sheets periodically
-- Syncs team registration data → `Team` and `Account` models
-- Reverse: check-in data exported back to Google Sheets if configured
+### Web ↔ Discord Integration
+- Web registration and admin actions write `Participant`, `Team`, and related records through Django ORM
+- `discord_service.py` exposes PostgreSQL-backed provisioning and broadcast queues to the bot
+- The bot stores created Discord role/channel IDs and its heartbeat back in PostgreSQL
+- Check-ins, station sessions, QR tokens, and scores remain in PostgreSQL; Discord commands read the same state
 
 ## Testing
 
@@ -165,7 +166,7 @@ python -m pytest webapi/api/tests/test_team_service.py::TestTeamCreation -v
 python -m pytest webapi/api/tests/ --cov=webapi/api
 ```
 
-Test files use Django test client and mock Discord/Google APIs.
+Test files use Django's test client and isolate Discord API calls where needed.
 
 ## Important Notes
 
@@ -175,7 +176,7 @@ Test files use Django test client and mock Discord/Google APIs.
 - Use `apiRequest()` for all HTTP; it auto-injects Bearer token and handles auth errors
 
 ### Backend Database
-- SQLite (`db.sqlite3`) for local dev; PostgreSQL for production
+- PostgreSQL is required for both local and production runtime
 - Migrations in `webapi/api/migrations/`; run `python webapi/manage.py migrate` after pulling
 - Models use Django ORM; no raw SQL queries (safer)
 

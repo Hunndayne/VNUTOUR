@@ -732,10 +732,12 @@ class DiscordBroadcast(models.Model):
     ]
 
     STATUS_DRAFT = "draft"
+    STATUS_SENDING = "sending"
     STATUS_SENT = "sent"
     STATUS_FAILED = "failed"
     STATUS_CHOICES = [
         (STATUS_DRAFT, "Draft"),
+        (STATUS_SENDING, "Sending"),
         (STATUS_SENT, "Sent"),
         (STATUS_FAILED, "Failed"),
     ]

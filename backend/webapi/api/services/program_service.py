@@ -57,8 +57,15 @@ def get_program() -> dict:
 
 def set_current_phase(phase_key: str) -> ProgramPhase:
     """Set exactly one phase as current."""
-    phase = ProgramPhase.objects.get(key=phase_key)
     with transaction.atomic():
+        # Phase changes and registration-only operations (such as team merge)
+        # lock the same rows.  A phase cannot therefore advance halfway through
+        # a merge, nor can two admins race while changing the active phase.
+        phases = list(ProgramPhase.objects.select_for_update().order_by("id"))
+        phase = next((item for item in phases if item.key == phase_key), None)
+        if phase is None:
+            raise ProgramPhase.DoesNotExist
+
         ProgramPhase.objects.exclude(id=phase.id).update(is_current=False)
         if not phase.is_current:
             phase.is_current = True

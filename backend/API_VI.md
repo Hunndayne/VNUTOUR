@@ -35,7 +35,7 @@ Mẫu lỗi (Error envelope)
 - Ví dụ code: invalid_credentials, permission_denied, not_found, conflict, validation_error
 
 Thực thể (Entities)
-- Participant (đồng bộ từ Google Sheet)
+- Participant (lưu trong PostgreSQL qua Django ORM)
   - mssv, full_name, email, phone, faculty, school, facebook, team_id, team_name, team_number, is_captain, discord_id?
 - Team
   - team_id, team_name, role_id?, text_channel_id?, voice_channel_id?
@@ -153,4 +153,4 @@ OpenAPI
 Ghi chú
 - Lưu toàn bộ thời gian ở server theo UTC. UI hiển thị GMT+7.
 - Bot và API nên dùng chung TEAM_QR_SECRET để verify QR nhất quán.
-- Nếu webapp đọc cùng MongoDB với bot, nên cấp account chỉ đọc; ghi nên đi qua API hoặc user có quyền hạn chế.
+- Web và bot dùng chung PostgreSQL; mọi thao tác ghi đi qua service Django để giữ phân quyền và audit nhất quán.

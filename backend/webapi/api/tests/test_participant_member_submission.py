@@ -89,6 +89,7 @@ class ParticipantMemberSubmissionTests(TestCase):
             facebook="https://facebook.com/member2",
             cccd="012345678901",
             date_of_birth="2006-01-02",
+            extra={"gender": "female"},
         )
 
         columns, extra, error = _prepare_member_submission(
@@ -118,6 +119,7 @@ class ParticipantMemberSubmissionTests(TestCase):
             {
                 "mssv": "26520004",
                 "email": "member3@gmail.com",
+                "gender": "male",
                 "facebook": "https://facebook.com/member3",
                 "date_of_birth": "2006-01-03",
             },
@@ -170,6 +172,7 @@ class ParticipantMemberSubmissionTests(TestCase):
             "/api/my-team/members/SV002",
             data=json.dumps({
                 "full_name": "Updated Member",
+                "gender": "female",
                 "school": "UIT",
                 "faculty": "KHMT",
                 "email": "member@example.com",

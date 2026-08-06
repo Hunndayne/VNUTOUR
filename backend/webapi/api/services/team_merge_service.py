@@ -19,7 +19,7 @@ from django.db import transaction
 
 from api.models import (
     CaptainVote, EventCheckIn, Participant, ScoreEntry, StationSession,
-    StationSubmission, Team, TeamMembership,
+    StationSubmission, ProgramPhase, Team, TeamMembership,
 )
 from api.services.registration_service import get_schema
 
@@ -44,6 +44,10 @@ def can_merge(source: Team, target: Team) -> str | None:
     if source.id == target.id:
         return "merge_same_team"
 
+    for team in (source, target):
+        if team.approval_status != Team.APPROVAL_APPROVED:
+            return f"merge_team_not_approved:{team.code}"
+
     max_size = team_size_max()
     combined = (
         TeamMembership.objects.filter(team=source).count()
@@ -60,6 +64,92 @@ def can_merge(source: Team, target: Team) -> str | None:
             return f"merge_team_has_history:{team.code}"
 
     return None
+
+
+def can_merge_group(teams: list[Team]) -> str | None:
+    """Validate a multi-team merge.
+
+    A merge may still leave the resulting team under strength, but it must never
+    exceed the configured maximum roster size.
+    """
+    if len(teams) < 2:
+        return "merge_requires_multiple_teams"
+    if len({team.id for team in teams}) != len(teams):
+        return "merge_duplicate_team_codes"
+
+    for team in teams:
+        if team.approval_status != Team.APPROVAL_APPROVED:
+            return f"merge_team_not_approved:{team.code}"
+
+    max_size = team_size_max()
+    combined = TeamMembership.objects.filter(team__in=teams).count()
+    if combined > max_size:
+        return f"merge_would_exceed_max:{max_size}"
+
+    for team in teams:
+        if _has_event_history(team):
+            return f"merge_team_has_history:{team.code}"
+
+    return None
+
+
+@transaction.atomic
+def merge_team_group(team_codes: list[str]) -> tuple[Team | None, str | None, list[str]]:
+    """Merge two or more teams without exceeding the maximum roster size.
+
+    The lexicographically smallest code is retained as the internal identifier;
+    all other teams are removed. Validation and mutation share one transaction,
+    so a group cannot be left half-merged if any operation fails.
+    """
+    codes = [str(code or "").strip() for code in team_codes]
+    if len(codes) < 2 or any(not code for code in codes):
+        return None, "missing_team_codes", []
+    if len(set(codes)) != len(codes):
+        return None, "merge_duplicate_team_codes", []
+
+    # Team approval/merging belongs exclusively to registration.  Locking all
+    # phase rows matches program_service.set_current_phase(), so advancing to
+    # qualifying cannot interleave with an in-flight merge.
+    phases = list(ProgramPhase.objects.select_for_update().order_by("id"))
+    if not any(phase.key == "registration" and phase.is_current for phase in phases):
+        return None, "registration_phase_closed", []
+
+    teams = list(
+        Team.objects.select_for_update()
+        .filter(code__in=codes)
+        .order_by("code")
+    )
+    if len(teams) != len(codes):
+        return None, "not_found", []
+
+    conflict = can_merge_group(teams)
+    if conflict:
+        return None, conflict, []
+
+    target = teams[0]
+    sources = teams[1:]
+    source_codes = [team.code for team in sources]
+    before = [
+        {
+            "code": team.code,
+            "name": team.name,
+            "members": TeamMembership.objects.filter(team=team).count(),
+        }
+        for team in teams
+    ]
+
+    TeamMembership.objects.filter(team__in=teams).update(is_captain=False)
+    TeamMembership.objects.filter(team__in=sources).update(team=target)
+    CaptainVote.objects.filter(team__in=teams).delete()
+    Team.objects.filter(id__in=[team.id for team in sources]).delete()
+
+    target.name = target.code
+    target.owner_account = None
+    target.save(update_fields=["name", "owner_account", "updated_at"])
+    target.refresh_from_db()
+    target.merged_from_codes = source_codes
+    target.merge_before = before
+    return target, None, source_codes
 
 
 @transaction.atomic

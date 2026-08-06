@@ -27,7 +27,8 @@ def get_valid_team_categories_for_guild(bot, guild: discord.Guild) -> List[disco
 def pick_category_for_new_channels(categories: List[discord.CategoryChannel], needed_slots: int = 2) -> discord.CategoryChannel | None:
     """Pick the first category with capacity (<50 channels) for creating new channels.
 
-    If none have capacity, return the first available category as a fallback.
+    If none have capacity, return ``None`` so provisioning reports a clear
+    error instead of asking Discord to create a channel in a full category.
     `needed_slots` should reflect number of channels to be created (e.g., 2 for text+voice).
     """
     for cat in categories:
@@ -36,5 +37,4 @@ def pick_category_for_new_channels(categories: List[discord.CategoryChannel], ne
                 return cat
         except Exception:
             pass
-    return categories[0] if categories else None
-
+    return None

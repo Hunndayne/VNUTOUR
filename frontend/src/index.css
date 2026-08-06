@@ -10,6 +10,99 @@ body {
   @apply bg-gradient-to-br from-indigo-500 via-purple-600 to-purple-800 text-slate-900 antialiased;
 }
 
+/* Landing palette 2026. These selectors are scoped to LandingPage so the
+   administration and participant surfaces keep their existing field-map theme. */
+.landing-page,
+.landing-panel {
+  background-color: #061a2b;
+}
+
+.landing-tour-section {
+  background-color: #0c5e22;
+}
+
+.landing-faq-section,
+.landing-mobile-menu {
+  background-color: #083348;
+}
+
+.landing-mobile-menu {
+  border-color: rgb(36 180 255 / 0.25);
+}
+
+.landing-color-strip {
+  background: linear-gradient(
+    90deg,
+    #3c84f0 0 32%,
+    #24b4ff 32% 54%,
+    #f57e2f 54% 76%,
+    #168f12 76% 100%
+  );
+}
+
+.landing-hero-overlay {
+  background-color: rgb(4 18 31 / 0.65);
+}
+
+.landing-accent {
+  color: #24b4ff;
+}
+
+.landing-accent-soft {
+  color: #8cf6ff;
+}
+
+.landing-accent-neon {
+  color: #05ffee;
+}
+
+.landing-accent-grid {
+  background-color: rgb(36 180 255 / 0.25);
+}
+
+.landing-border-soft {
+  border-color: rgb(36 180 255 / 0.3);
+}
+
+.landing-border-mid {
+  border-color: rgb(36 180 255 / 0.35);
+}
+
+.landing-border-faint {
+  border-color: rgb(36 180 255 / 0.25);
+}
+
+.landing-primary-cta {
+  background-color: #f57e2f;
+  color: #061a2b;
+}
+
+.landing-primary-cta:hover {
+  background-color: #f5cc2f;
+}
+
+.landing-secondary-cta {
+  border-color: rgb(140 246 255 / 0.7);
+  color: #ffffff;
+}
+
+.landing-secondary-cta:hover,
+.landing-login-button:hover {
+  border-color: #24b4ff;
+  background-color: #24b4ff;
+  color: #061a2b;
+}
+
+.landing-login-button {
+  border-color: rgb(255 255 255 / 0.7);
+  color: #ffffff;
+}
+
+.landing-focus:focus-visible {
+  outline: 2px solid #24b4ff;
+  outline-offset: 4px;
+}
+
 /* Field-map token fallbacks for the admin surfaces.
    These mirror tailwind.config.js so an already-running Vite server still
    paints the admin correctly even before Tailwind reloads its config. */

@@ -1,10 +1,22 @@
 from django.test import TestCase
+from unittest.mock import patch
 
 from api.models import Account, Participant, Team, TeamMembership
-from api.services.team_service import get_team_members, link_account_profile
+from api.services.team_service import create_team, get_team_members, link_account_profile
 
 
 class TeamServiceTests(TestCase):
+    @patch("api.services.team_service._next_team_code", side_effect=["T9001", "T9002"])
+    def test_create_team_retries_when_generated_code_conflicts(self, next_code):
+        Team.objects.create(code="T9001", name="Existing team")
+
+        team, error = create_team("New team")
+
+        self.assertIsNone(error)
+        self.assertEqual(team.code, "T9002")
+        self.assertTrue(Team.objects.filter(code="T9002", name="New team").exists())
+        self.assertEqual(next_code.call_count, 2)
+
     def test_get_team_members_syncs_active_account_profile(self):
         account = Account.objects.create(
             username="member1",

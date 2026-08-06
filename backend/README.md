@@ -11,7 +11,7 @@ Bot Discord quản lý tour VNU với các chức năng âm nhạc và quản l�
 - Hỗ trợ tìm kiếm và URL
 
 ### 🏁 **Quản lý Tour**
-- 10 trạm tour với hệ thống check-in/check-out
+- Trạm, lượt thi và bảng điểm động theo cấu hình trên web
 - Quản lý đội tham gia
 - Bảng xếp hạng thời gian
 - Role tự động cho thành viên
@@ -74,8 +74,6 @@ python main.py
 
 ### 🏁 Lệnh tour
 - `!stations` - Hiển thị danh sách trạm
-- `!checkin <trạm_id> <tên đội>` - Check-in vào trạm
-- `!checkout <tên đội>` - Check-out khỏi trạm
 - `!mystation` - Hiển thị trạm hiện tại
 - `!leaderboard` - Bảng xếp hạng
 
@@ -116,7 +114,7 @@ VnuTourBot/
 │   │   └── ytdlp_handler.py
 │   └── utils/            # Utilities
 │       ├── __init__.py
-│       ├── mongo.py      # MongoDB management
+│       ├── provisioning.py # Discord role/channel reconciliation
 │       └── role_manager.py
 ```
 
@@ -139,9 +137,11 @@ Bot cần các quyền sau:
 
 ## 📝 Ghi chú
 
-- Bot sử dụng MongoDB làm database chính
-- Hỗ trợ tối đa 10 trạm tour
-- Mỗi trạm chỉ có thể có 1 đội tại một thời điểm
+- Web API và bot dùng chung PostgreSQL thông qua Django ORM
+- Web là nơi quản trị đăng ký, đội, trạm, QR, check-in và broadcast
+- Bot xử lý hàng đợi Discord, lưu role/channel ID và heartbeat về PostgreSQL
+- Số trạm và sức chứa được quản trị trên web, không còn hard-code theo mùa sự kiện cũ
+- Check-in/check-out được thực hiện qua web để dùng chung validation và audit log
 - Âm nhạc sử dụng yt-dlp và FFmpeg
 - Lệnh `!volume` sẽ áp dụng âm lượng ngay lập tức cho bài hiện tại
 - Lệnh `!skip` sẽ tự động chuyển sang bài tiếp theo

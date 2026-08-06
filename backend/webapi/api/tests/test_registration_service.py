@@ -1,12 +1,13 @@
 from django.test import TestCase
 
-from api.models import Participant, ProgramPhase, Team
-from api.services.registration_service import register_individual, register_team
+from api.models import Participant, ProgramPhase, SystemSetting, Team
+from api.services.registration_service import get_schema, register_individual, register_team
 
 
 def person(mssv: str) -> dict:
     return {
         "full_name": f"Captain {mssv}",
+        "gender": "male",
         "school": "UIT",
         "faculty": "KHMT",
         "mssv": mssv,
@@ -19,6 +20,27 @@ def person(mssv: str) -> dict:
 
 
 class RegistrationServiceTests(TestCase):
+    def test_legacy_schema_receives_required_gender_field(self):
+        SystemSetting.objects.update_or_create(
+            key="registration_form_schema",
+            defaults={"value": {
+                "person_fields": [
+                    {"key": "full_name", "label": "Ho ten", "required": True},
+                    {"key": "mssv", "label": "MSSV", "required": True},
+                ],
+            }},
+        )
+
+        gender = next(
+            field for field in get_schema()["person_fields"] if field["key"] == "gender"
+        )
+
+        self.assertTrue(gender["required"])
+        self.assertEqual(
+            [option["value"] for option in gender["options"]],
+            ["male", "female", "other"],
+        )
+
     def test_team_registered_after_registration_phase_is_marked_late_and_pending(self):
         ProgramPhase.objects.create(
             key="qualifying",
