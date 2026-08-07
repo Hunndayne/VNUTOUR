@@ -1,8 +1,37 @@
-plan/coop-page-plan.md
+# Secrets and local environment.
+# The *.example files are the committed templates.
+.env
+.env.*
+!.env.example
+!.env.docker.example
+.env_backup/
+credentials/
+*.pem
+*.key
+*.p12
+
+# Per-machine Claude Code settings. launch.json is shared on purpose;
+# settings.local.json is a local permission allowlist.
+.claude/settings.local.json
+
+# Leftover local database. The app requires PostgreSQL now, and a committed
+# SQLite file carries real participant records into the repository.
+*.sqlite3
+
+# Anything holding participant records
+sheet_snapshot.json
 backend/backups/
 backend/media/
+backend/webapi/media/
+
+# Build output and caches
 frontend/dist/
 frontend/node_modules/
 backend/webapi/.pytest_cache/
+.pytest_cache/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+plan/coop-page-plan.md
