@@ -52,6 +52,16 @@ spec:
         prometheus.io/path: "/metrics"
 
     spec:
+      # A local-path volume lives on one node's disk, and the claim binds to
+      # whichever node the pod first lands on. Without this the scheduler is
+      # free to put the database on the worker that gets powered off every
+      # night, and the volume goes with it. Pin it to the node that stays up.
+      #
+      # Label the node first or the pod sits Pending forever:
+      #   kubectl label node <worker> vnutour/storage=true
+      nodeSelector:
+        vnutour/storage: "true"
+
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -100,13 +110,16 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
 
+          # Sized for a 2 vCPU / 4 GB worker. The limits across every pod on that
+          # node have to stay under 4 GB or the kernel starts OOM-killing, and
+          # it tends to pick the largest consumer — postgres or the backend.
           resources:
             requests:
               cpu: "100m"
               memory: "256Mi"
             limits:
               cpu: "1000m"
-              memory: "1Gi"
+              memory: "768Mi"
 
           volumeMounts:
             - name: postgres-data

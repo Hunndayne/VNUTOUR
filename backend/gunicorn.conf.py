@@ -18,6 +18,12 @@ from prometheus_client import multiprocess
 
 _MULTIPROC_DIR = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
 
+# Gunicorn already falls back to WEB_CONCURRENCY for this, but reading it here
+# makes the worker count explicit rather than resting on that default. Two fits
+# a 2 vCPU node; each worker costs roughly 200 MB, which is the figure that
+# matters on a 4 GB machine.
+workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
+
 
 def on_starting(server):
     """Drop metric files left behind by the previous container.

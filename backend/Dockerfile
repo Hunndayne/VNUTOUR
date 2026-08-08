@@ -5,9 +5,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONIOENCODING=UTF-8 \
     LANG=C.UTF-8 \
     PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc \
-    GUNICORN_CMD_ARGS="--config=/app/gunicorn.conf.py --bind=0.0.0.0:8000 --workers=3 --threads=2 --timeout=120 --access-logfile=- --error-logfile=-"
+    WEB_CONCURRENCY=2 \
+    GUNICORN_CMD_ARGS="--config=/app/gunicorn.conf.py --bind=0.0.0.0:8000 --threads=2 --timeout=120 --access-logfile=- --error-logfile=-"
 
 WORKDIR /app
+
+# Worker count comes from WEB_CONCURRENCY rather than --workers so a deployment
+# can retune it with one environment variable instead of rewriting the whole
+# argument string. Two suits a 2 vCPU node; each worker costs roughly 200 MB.
 
 # ffmpeg/libopus are also needed when this image is reused for the Discord bot.
 RUN apt-get update \

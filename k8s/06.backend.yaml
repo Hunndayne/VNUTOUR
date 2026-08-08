@@ -53,6 +53,13 @@ spec:
     spec:
       terminationGracePeriodSeconds: 30
 
+      # Same reason as postgres: media-data and backup-data are local-path
+      # claims, so this pod has to stay on the node that is never powered off.
+      # Dropping these volumes — uploads to R2, dumps to a CronJob — is what
+      # removes this constraint and lets the backend spread across workers.
+      nodeSelector:
+        vnutour/storage: "true"
+
       containers:
         - name: backend
           image: yourdockerhub/vnutour-backend:1.0.0
@@ -106,13 +113,15 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
 
+          # Sized for a 2 vCPU / 4 GB worker. The CPU limit stays under one full
+          # core so a burst of requests cannot starve postgres on the same node.
           resources:
             requests:
               cpu: "250m"
               memory: "512Mi"
             limits:
-              cpu: "1500m"
-              memory: "2Gi"
+              cpu: "1000m"
+              memory: "1Gi"
 
           volumeMounts:
             - name: media
