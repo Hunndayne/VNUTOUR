@@ -14,7 +14,7 @@ Cluster layout
 
 | Node | vCPU | RAM | Role | Powered |
 |---|---|---|---|---|
-| `vnutour-cp` | 2 | 3 GB | k3s server, ingress-nginx, cloudflared | always |
+| `vnutour-cp` | 2 | 3 GB | k3s server, ingress-nginx, cert-manager | always |
 | `vnutour-w1` | 2 | 4 GB | postgres, backend, and their volumes | always |
 | `vnutour-w2` | 2 | 6 GB | frontend, bot, worker, spare capacity | daytime only |
 
@@ -56,21 +56,52 @@ Then install ingress-nginx:
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace --set controller.config.use-forwarded-headers=true
+helm install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
 ```
 
-`use-forwarded-headers` matters: without it the controller overwrites
-`X-Forwarded-Proto` with the scheme it received, which is HTTP behind the
-tunnel. Django would then see an insecure request and start redirecting to
-HTTPS on every call, despite `TRUST_PROXY_HEADERS`.
+Leave `use-forwarded-headers` alone. This controller is the outermost hop, so
+it should write `X-Forwarded-Proto` from the connection it actually accepted.
+Turning the option on makes it trust the header the *client* sent instead,
+which lets anyone claim their plaintext request arrived over HTTPS. It belongs
+on only when a proxy you control sits in front.
 
-**TLS.** The homelab has no inbound ports, so HTTPS arrives through a
-Cloudflare Tunnel that terminates TLS at the edge and forwards plain HTTP to
-the ingress controller. Route the public hostname to
-`http://ingress-nginx-controller.ingress-nginx.svc` in the Zero Trust
-dashboard. ACME HTTP-01 cannot complete on this network; if you want
-certificates served by the cluster itself, use cert-manager with a DNS-01
-solver and uncomment the `tls` block in `10.ingress.yaml`.
+`TRUST_PROXY_HEADERS=1` in the ConfigMap is still required, and is a separate
+thing: it tells Django to believe the header ingress-nginx writes, since every
+hop inside the cluster is plain HTTP.
+
+**Exposure.** Traffic arrives on the router's forwarded ports rather than
+through a tunnel, so the cluster is directly reachable. Forward **only 80 and
+443** to the control plane's address. Port 6443 is the Kubernetes API and 22 is
+SSH; neither belongs on the public internet.
+
+Port 80 has to stay forwarded even though the site redirects everything to
+HTTPS — that is the path ACME uses, both for the first certificate and for
+every renewal after.
+
+If the ISP hands out a dynamic address, set up dynamic DNS before going
+further. A changed IP does not just take the site offline; it silently breaks
+certificate renewal sixty days later, long after anyone connects the two.
+
+**TLS.** cert-manager issues real certificates over HTTP-01:
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+```
+
+Then apply the issuers and wait for the webhook to be ready before anything
+requests a certificate:
+
+```bash
+kubectl -n cert-manager rollout status deploy/cert-manager-webhook
+```
+
+```bash
+kubectl apply -f k8s/cert-manager-issuer.yaml
+```
+
+Point `10.ingress.yaml` at `letsencrypt-staging` for the first attempt. Let's
+Encrypt rate-limits failures on the production endpoint hard, and a wrong DNS
+record or a missing port forward burns that budget in minutes.
 
 **Storage.** k3s provides `local-path` as the default StorageClass. These
 volumes live on one node's disk, so any pod mounting one is pinned to that
@@ -130,11 +161,11 @@ Monitoring — optional, and currently deferred
 ---------------------------------------------
 
 **This does not fit the cluster above yet.** The k3s server, the OS,
-ingress-nginx and cloudflared already take roughly 1.8 GB of the control
-plane's 3 GB, and Prometheus alone requests 512Mi and grows toward 2 GB. Apply
-`00`–`10` first and run without it; add monitoring once a node has the memory,
-either by raising the control plane to 6 GB or by putting Prometheus on `w2`
-during the day.
+ingress-nginx and cert-manager's three pods already take roughly 1.9 GB of the
+control plane's 3 GB, and Prometheus alone requests 512Mi and grows toward
+2 GB. Apply `00`–`10` first and run without it; add monitoring once a node has
+the memory, either by raising the control plane to 6 GB or by putting
+Prometheus on `w2` during the day.
 
 If memory is tight but some visibility is wanted, drop `15.grafana.yaml` and
 query Prometheus directly through a port-forward, and cut retention in

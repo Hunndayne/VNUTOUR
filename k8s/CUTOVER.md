@@ -52,19 +52,28 @@ Ba VM, IP tĩnh **ngoài dải DHCP** (`.110`/`.111`/`.112`) — đừng lặp l
 | `vnutour-w2` | 2 | 6 GB | 40 GB |
 
 - [ ] Tạo `vnutour-cp` và `vnutour-w1`. **Chưa tạo/chưa bật `w2`**
-- [ ] `curl -sfL https://get.k3s.io | sh -s - server --disable=traefik --disable=servicelb --node-ip 192.168.1.110`
+- [ ] `curl -sfL https://get.k3s.io | sh -s - server --disable=traefik --node-ip 192.168.1.110`
 - [ ] Lưu `/var/lib/rancher/k3s/server/node-token` ra chỗ an toàn
 - [ ] Join `w1`, `kubectl get nodes` thấy 2 node `Ready`
 - [ ] `kubectl label node vnutour-w1 vnutour/storage=true` — thiếu label là postgres và backend nằm `Pending` mãi
-- [ ] Cài ingress-nginx kèm `--set controller.config.use-forwarded-headers=true`
+- [ ] Cài ingress-nginx (**không** bật `use-forwarded-headers` — nó là biên ngoài cùng)
 - [ ] `kubectl get ingressclass` thấy `nginx`, không thấy `traefik`
+- [ ] `kubectl -n ingress-nginx get svc` thấy `EXTERNAL-IP` là IP các node
+- [ ] Cài cert-manager, chờ `kubectl -n cert-manager rollout status deploy/cert-manager-webhook`
+- [ ] `kubectl apply -f k8s/cert-manager-issuer.yaml`
+- [ ] Để `10.ingress.yaml` trỏ `letsencrypt-staging` trước, chỉ đổi sang `-prod` sau khi staging cấp được cert
 
 > `w2` chỉ dựng **sau khi** phần B chạy xong. PVC bám vào node mà pod lần đầu được xếp lên — `w2` bật lúc apply lần đầu là database có thể bám vào đúng cái node bị tắt mỗi đêm.
 
-### A6. DNS và tunnel
+### A6. DNS và mở port
 
-- [ ] `vnutour.hunn.io.vn` và `vnutour.suctremmt.com` đều trỏ đúng
-- [ ] Tạo Cloudflare Tunnel mới cho k8s, **chưa gắn hostname** — chỉ dựng sẵn
+- [ ] Kiểm tra IP công cộng có tĩnh không. Nếu động → dựng DDNS **trước**, nếu không cert sẽ chết lặng lẽ ở lần gia hạn sau 60 ngày
+- [ ] Router forward `80` và `443` → `192.168.1.110` (controller)
+- [ ] **Không** forward `6443` (Kubernetes API) và `22` (SSH)
+- [ ] Hạ TTL bản ghi DNS xuống 60s **trước ngày cutover** — đây là thứ quyết định rollback mất 1 phút hay 1 giờ
+- [ ] Chuẩn bị sẵn bản ghi A trỏ về IP công cộng, **chưa đổi**
+
+> Cụm sẽ phơi thẳng ra internet, khác hẳn mô hình tunnel hiện tại. Django đã có sẵn rate limit đăng nhập (`AUTH_LOGIN_RATE_LIMIT`), nhưng cổng 80/443 mở là bề mặt tấn công thật — đừng mở thêm cổng nào ngoài hai cái đó.
 
 ---
 
@@ -123,8 +132,9 @@ Thứ tự trong phần này quan trọng hơn mọi phần khác.
 - [ ] `kubectl -n vnutour rollout restart deploy/backend`, chờ Ready
 - [ ] `kubectl apply -f k8s/07.bot.yaml -f k8s/08.email-worker.yaml`
 - [ ] Bot online trở lại trên Discord, thử một slash command — **chạy đúng một lần**
-- [ ] Chuyển route Cloudflare Tunnel sang `http://ingress-nginx-controller.ingress-nginx.svc`
-- [ ] Tắt tunnel cũ của Compose
+- [ ] Đổi bản ghi DNS từ tunnel sang bản ghi A trỏ IP công cộng
+- [ ] Chờ cert-manager cấp cert: `kubectl -n vnutour get certificate` phải `READY=True`
+- [ ] Tắt `cloudflared` của Compose
 
 ---
 
@@ -144,7 +154,7 @@ Thứ tự trong phần này quan trọng hơn mọi phần khác.
 
 ## Rollback
 
-- [ ] Chuyển route Cloudflare Tunnel về Compose
+- [ ] Trỏ DNS về lại tunnel của Compose (TTL 60s nên có tác dụng trong ~1 phút)
 - [ ] `kubectl -n vnutour scale deploy/bot deploy/email-worker deploy/backend --replicas=0`
 - [ ] `docker compose start backend bot email-worker`
 - [ ] Xác nhận bot online và chỉ một bản chạy
@@ -162,7 +172,7 @@ Thứ tự trong phần này quan trọng hơn mọi phần khác.
 - [ ] Chạy thử một chu kỳ tắt/bật `w2` bằng `drain` + `uncordon` vào giờ vắng, xem app có chịu được không
 - [ ] Chạy được 1 tuần ổn định mới tính tới GitOps
 
-**Monitoring (`11`–`15`) hoãn lại.** Không vừa control plane 3 GB: k3s server + OS + ingress + cloudflared đã ăn ~1.8 GB, riêng Prometheus xin 512Mi và phình tới 2 GB. Chỉ apply khi đã nâng control plane lên 6 GB, hoặc chấp nhận đặt Prometheus trên `w2` (mất dữ liệu quan trắc mỗi đêm). Khi apply thì nhớ:
+**Monitoring (`11`–`15`) hoãn lại.** Không vừa control plane 3 GB: k3s server + OS + ingress + cert-manager (3 pod) đã ăn ~1.9 GB, riêng Prometheus xin 512Mi và phình tới 2 GB. Chỉ apply khi đã nâng control plane lên 6 GB, hoặc chấp nhận đặt Prometheus trên `w2` (mất dữ liệu quan trắc mỗi đêm). Khi apply thì nhớ:
 
 - [ ] Đổi mật khẩu admin Grafana khỏi `change-me`
 - [ ] Kiểm tra Prometheus thấy đủ target

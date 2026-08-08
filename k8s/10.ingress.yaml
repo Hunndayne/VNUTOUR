@@ -18,24 +18,23 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
 
+    # cert-manager watches this and issues the certificate named in tls below.
+    # The issuer solves the ACME challenge over port 80, so the router has to
+    # keep forwarding it even though the site itself redirects to HTTPS.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
 spec:
   ingressClassName: nginx
 
-  # No tls block on purpose. The homelab has no inbound ports, so HTTPS arrives
-  # through a Cloudflare Tunnel that terminates TLS at the edge and forwards
-  # plain HTTP to this controller — the same arrangement as
-  # backend/docker-compose.prod.yml. Declaring a tls block here would point at a
-  # certificate nobody issues, and ingress-nginx would answer with its built-in
-  # self-signed one.
-  #
-  # If this cluster ever gets reachable ports 80/443 and cert-manager, add the
-  # annotation cert-manager.io/cluster-issuer: letsencrypt-prod and:
-  #
-  #   tls:
-  #     - hosts:
-  #         - vnutour.hunn.io.vn
-  #         - vnutour.suctremmt.com
-  #       secretName: vnutour-tls
+  # TLS terminates here, on the cluster edge. cert-manager fills this secret in
+  # after the first successful ACME challenge; until then ingress-nginx answers
+  # with its own self-signed certificate, so a browser warning on day one means
+  # the challenge has not completed rather than that something is broken.
+  tls:
+    - hosts:
+        - vnutour.hunn.io.vn
+        - vnutour.suctremmt.com
+      secretName: vnutour-tls
 
   # Both hostnames must also appear in DJANGO_ALLOWED_HOSTS in 01.configmap.yaml
   # or Django rejects the forwarded Host header with a 400.
