@@ -9,8 +9,10 @@ Participant columns; everything else is stored in `Participant.extra`.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Optional, Tuple
+import unicodedata
 
 from django.db import transaction
 
@@ -96,11 +98,55 @@ SCHOOL_OPTIONS = [
 # Selecting this school code auto-fills CCCD with "UIT" and hides the input.
 UIT_CODE = "UIT"
 
+GENDER_FIELD = {
+    "key": "gender",
+    "label": "Giới tính",
+    "type": "select",
+    "required": True,
+    "enabled": True,
+    "options": [
+        {"label": "Nam", "value": "male"},
+        {"label": "Nữ", "value": "female"},
+        {"label": "Khác", "value": "other"},
+    ],
+    "help": "Thông tin này được dùng để ban tổ chức ghép đội cân bằng.",
+}
+
+
+def normalize_gender(value) -> str:
+    """Map current and legacy gender values to stable reporting buckets."""
+    if value is None or not str(value).strip():
+        return "unknown"
+    raw = str(value).strip().lower()
+    plain = "".join(
+        char for char in unicodedata.normalize("NFD", raw)
+        if unicodedata.category(char) != "Mn"
+    )
+    if plain in {"male", "nam", "m"}:
+        return "male"
+    if plain in {"female", "nu", "f"}:
+        return "female"
+    return "other"
+
+
+def _with_gender_field(schema: dict) -> dict:
+    """Keep gender available even for schemas saved before this field existed."""
+    result = deepcopy(schema)
+    fields = result.setdefault("person_fields", [])
+    if not any(field.get("key") == "gender" for field in fields):
+        insert_at = next(
+            (index + 1 for index, field in enumerate(fields) if field.get("key") == "full_name"),
+            0,
+        )
+        fields.insert(insert_at, deepcopy(GENDER_FIELD))
+    return result
+
 
 def default_schema() -> dict:
     """The 2025 form rebuilt as an editable schema. Used to seed the setting."""
     person_fields = [
         {"key": "full_name", "label": "Họ và tên", "type": "text", "required": True, "enabled": True},
+        deepcopy(GENDER_FIELD),
         {"key": "school", "label": "Trường", "type": "select", "required": True, "enabled": True,
          "options": SCHOOL_OPTIONS, "allow_other": True},
         {"key": "faculty", "label": "Khoa", "type": "text", "required": True, "enabled": True},
@@ -115,7 +161,7 @@ def default_schema() -> dict:
         {"key": "facebook", "label": "Link Facebook", "type": "text", "required": True, "enabled": True},
     ]
     return {
-        "version": 1,
+        "version": 2,
         "fee_note": "Lệ phí tham gia: 25.000 VNĐ/sinh viên.",
         "modes": ["individual", "team"],
         "team_size_min": 1,
@@ -134,8 +180,8 @@ def get_schema() -> dict:
     """Return the active schema, falling back to the default."""
     s = SystemSetting.objects.filter(key=SCHEMA_KEY).first()
     if s and isinstance(s.value, dict) and s.value.get("person_fields"):
-        return s.value
-    return default_schema()
+        return _with_gender_field(s.value)
+    return _with_gender_field(default_schema())
 
 
 def _enabled_person_fields(schema: dict) -> list[dict]:

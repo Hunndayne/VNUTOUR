@@ -15,16 +15,7 @@ from api.models import (
 )
 from api.services.result_lock_service import results_are_locked
 from api.services.checkin_qr_service import get_checkin_qr_state
-
-
-def _resolve_team_from_scan(raw_code: str) -> Team | None:
-    """Resolve a team from QR token or a manual team code fallback."""
-    clean_token = str(raw_code or "").strip()
-    if not clean_token:
-        return None
-    if clean_token.startswith("t:") or clean_token.startswith("T:"):
-        clean_token = clean_token[2:]
-    return Team.objects.filter(qr_token=clean_token).first() or Team.objects.filter(code=clean_token).first()
+from api.services import scan_token_service
 
 
 # =====================================================================
@@ -118,11 +109,11 @@ def enter_station(
     note: str | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
     """Record a team entering a station."""
-    team = _resolve_team_from_scan(team_ref)
+    team, resolve_error = scan_token_service.resolve_team(team_ref)
     if team and team.approval_status != Team.APPROVAL_APPROVED:
         return None, "team_not_approved"
     if not team:
-        return None, "team_not_found"
+        return None, resolve_error
 
     station = Station.objects.select_related("sub_event__phase").filter(
         id=station_id,
@@ -181,6 +172,9 @@ def enter_station(
                 status=StationSession.STATUS_ACTIVE, entered_at=now,
                 entered_by=operator, score=score, note=note,
             )
+            # Retire the scanned QR inside the same transaction as the session,
+            # so a re-read of the same image cannot enter the team twice.
+            scan_token_service.consume(team_ref, team)
             return session, None
     except IntegrityError:
         return None, "session_already_active"
@@ -194,9 +188,9 @@ def exit_station(
     note: str | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
     """Record a team exiting a station."""
-    team = _resolve_team_from_scan(team_ref)
+    team, resolve_error = scan_token_service.resolve_team(team_ref)
     if not team:
-        return None, "team_not_found"
+        return None, resolve_error
 
     with transaction.atomic():
         session = StationSession.objects.select_for_update().select_related(
@@ -244,6 +238,10 @@ def exit_station(
             )
         else:
             score_entries.delete()
+
+        # Inside the transaction, as in enter_station: the exit and the QR going
+        # stale have to land together or neither.
+        scan_token_service.consume(team_ref, team)
 
     return session, None
 

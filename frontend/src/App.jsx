@@ -1,5 +1,4 @@
 import LandingPage from './LandingPage.jsx'
-import RegisterPage from './RegisterPage.jsx'
 import LoginPage from './LoginPage.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import ParticipantDashboard from './ParticipantDashboard.jsx'
@@ -31,10 +30,6 @@ function App() {
   const authToken = getStoredAuthToken()
   const user = getStoredUser()
   const isAuthenticated = Boolean(authToken && user)
-
-  if (path === '/register') {
-    return <RegisterPage />
-  }
 
   if (path === '/login') {
     if (isAuthenticated) {

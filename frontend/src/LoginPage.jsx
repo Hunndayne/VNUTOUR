@@ -7,7 +7,9 @@ const optValue = (o) => (typeof o === 'object' ? o.value : o)
 const optLabel = (o) => (typeof o === 'object' ? o.label : o)
 
 function LoginPage() {
-  const [mode, setMode] = useState('login') // 'login' | 'signup'
+  const [mode, setMode] = useState(() => (
+    new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'login'
+  )) // 'login' | 'signup'
   const [signupStep, setSignupStep] = useState('form') // 'form' | 'confirm' | 'manual'
   const [form, setForm] = useState({ username: '', email: '', mssv: '', password: '', confirmPassword: '' })
   const [matchInfo, setMatchInfo] = useState(null) // { full_name, school, faculty } from lookup

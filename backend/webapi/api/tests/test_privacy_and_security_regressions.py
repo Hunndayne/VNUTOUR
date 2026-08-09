@@ -184,6 +184,7 @@ class TeamPrivacyTests(TestCase):
                 "mssv": "SV002",
                 "email": "teammate@example.com",
                 "full_name": "Hijacked Name",
+                "gender": "male",
                 "school": "US",
                 "faculty": "Toan",
                 "phone": "0999999999",

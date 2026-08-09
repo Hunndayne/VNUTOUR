@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vnutour-migrate
+  namespace: vnutour
+spec:
+  backoffLimit: 10
+
+  # The wait-for-postgres loop below has no timeout of its own, and OnFailure
+  # never gives up, so without a deadline a database that never comes up leaves
+  # this Job pending forever and the deploy silently hangs instead of failing.
+  activeDeadlineSeconds: 600
+
+  # A Job's pod template is immutable, so re-applying this file with a new image
+  # tag is rejected while the old Job still exists. Letting it delete itself an
+  # hour after it finishes means routine deploys just work; a redeploy inside
+  # that hour still needs `kubectl delete job vnutour-migrate` first.
+  ttlSecondsAfterFinished: 3600
+
+  template:
+    metadata:
+      labels:
+        app: vnutour-migrate
+
+    spec:
+      restartPolicy: OnFailure
+
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+
+          env:
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_NAME
+
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_USER
+
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -p 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 3
+              done
+
+      containers:
+        - name: migrate
+          image: yourdockerhub/vnutour-backend:1.0.0
+
+          command:
+            - python
+            - webapi/manage.py
+            - migrate
+            - --noinput
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret

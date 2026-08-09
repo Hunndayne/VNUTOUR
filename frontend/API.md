@@ -67,18 +67,18 @@ Quản trị tài khoản (chỉ admin)
 - DELETE `/admin/accounts/{username}`
   - Vô hiệu hóa tài khoản (soft delete): `{ "status": "deactivated" }`
 
-Thí sinh (Mongo – chỉ đọc)
+Thí sinh (PostgreSQL qua Django ORM)
 - GET `/participants`
   - Header: `Authorization: Bearer <token>`
   - Query: `team_id`, `has_discord=1`, `page`, `limit`
-  - 200: `{ "items": [ { ...fields từ sheet... } ], "page", "limit", "total" }`
+  - 200: `{ "items": [ { ...participant fields... } ], "page", "limit", "total" }`
 
 - GET `/participants/{mssv}`
   - Header: `Authorization: Bearer <token>`
   - 200: một bản ghi tham gia viên
     - 404: `{ "error": "not_found" }`
 
-Đội (Mongo)
+Đội (PostgreSQL qua Django ORM)
 - GET `/teams`
   - Header: `Authorization: Bearer <token>` (hoặc cookie `token`)
   - Query: `q` (lọc tên/ID, không phân biệt hoa thường), `has_discord=1` (chỉ đội có thành viên đã gán Discord ID), `page`, `limit`
@@ -91,7 +91,7 @@ Thí sinh (Mongo – chỉ đọc)
     - 404: `{ "error": "not_found" }`
 
 Điểm danh QR
-- QR payload do bot tạo qua lệnh `!teamqr`: dạng `t:<base64url(ObjectId(team._id))>` (không padding). Có thể gửi thẳng 24 ký tự ObjectId hex.
+- QR payload do web và bot dùng chung có dạng `t:<Team.qr_token>`. Token thuộc đội trong PostgreSQL và được xoay theo chính sách check-in hiện hành.
 - POST `/checkin`
   - Header: `Authorization: Bearer <token>` (hoặc cookie `token`)
   - Body: `{ "code": "...", "scanner": "optional" }`
@@ -100,7 +100,7 @@ Thí sinh (Mongo – chỉ đọc)
   - 401: `{ "error": "missing_token" | "invalid_token" }`
   - 404: `{ "error": "not_found" }`
   - 409: `{ "error": "already_checked_in", "checked_in_at": "ISO8601", "checked_in_display": "HH:MM:SS dd/MM/YYYY GMT+0700" }`
-  - Server lưu lịch sử vào Mongo collection `checkins`: `{ team_oid, team_id, team_name, created_at, meta: { scanner, ip, ua, by } }`, cập nhật trường `checked_in_at` trong document đội và gửi thông báo hoàn tất check-in vào text channel của đội (nếu có cấu hình `text_channel_id`).
+  - Server lưu lịch sử check-in, trạng thái trạm và điểm vào các model Django trong PostgreSQL. Bot đọc cùng dữ liệu để thông báo cho đội khi có cấu hình `text_channel_id`.
 - DELETE `/checkin/{team_key}`
   - Header: `Authorization: Bearer <token_admin>`
   - Admin-only: xóa trạng thái check-in của đội theo `_id`, `team_id` hoặc `team_name`.
@@ -112,9 +112,9 @@ Thí sinh (Mongo – chỉ đọc)
   - Query: `q`, `page`, `limit`
   - 200: `{ "items": [ { "team", "checked_in_at", "checked_in_display", ... } ], "page": n, "limit": n, "total": n }`
 Ghi chú triển khai
-- Nickname Discord được bot thay đổi khi assign/sync Sheet; API không thao tác nickname.
+- Nickname Discord được bot thay đổi khi thành viên liên kết MSSV; web đánh dấu đội để bot đồng bộ lại.
 - Tất cả thời gian trả về theo ISO8601 UTC; UI có thể hiển thị GMT+7.
-- Người dùng (admin/collab) được lưu chính trong SQLite (Django) và được đồng bộ bản tóm tắt sang MongoDB (`accounts`) để phục vụ phân tích/quan sát.
+- Người dùng, thí sinh, đội và dữ liệu tour đều được lưu trong PostgreSQL qua Django ORM.
 
 Ví dụ cURL
 - Đăng nhập:

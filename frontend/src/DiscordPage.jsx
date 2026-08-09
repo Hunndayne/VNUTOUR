@@ -10,6 +10,7 @@ const SUB_TABS = [
 
 const BROADCAST_STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-gold/15 text-gold' },
+  sending: { label: 'Đang gửi', cls: 'bg-sky/15 text-[#3E7CA8]' },
   sent: { label: 'Sent', cls: 'bg-trail/12 text-trail' },
   failed: { label: 'Failed', cls: 'bg-clay/12 text-clay' },
 }
@@ -136,6 +137,10 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-display text-lg font-bold text-ink">VNUTour Discord</h2>
               <Badge label={`${status.provisioning.done} đã xong`} cls="bg-trail/12 text-trail" />
+              <Badge
+                label={status.bot?.online ? 'Bot online' : 'Bot offline'}
+                cls={status.bot?.online ? 'bg-trail/12 text-trail' : 'bg-clay/12 text-clay'}
+              />
             </div>
           </div>
 
@@ -154,7 +159,12 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
         <MetricCard label="Đội đã provision" value={`${status.provisioning.done}`} note={`${linkedChannelTeams.length} đội đã có channel id`} tone="trail" />
         <MetricCard label="Đội trong queue" value={`${status.provisioning.pending}`} note={pendingTeams.length > 0 ? 'Cần bot xử lý tiếp' : 'Không có đội chờ'} tone="gold" />
         <MetricCard label="Provision lỗi" value={`${status.provisioning.failed}`} note={failedTeams.length > 0 ? 'Nên retry sau khi kiểm tra bot' : 'Không có lỗi tồn'} tone="clay" />
-        <MetricCard label="Thông báo gần đây" value={`${broadcasts.length}`} note="Lấy từ lịch sử broadcast" tone="sky" />
+        <MetricCard
+          label="Thông báo gần đây"
+          value={`${broadcasts.length}`}
+          note={status.bot?.last_seen_at ? `Bot cập nhật ${formatDateTime(status.bot.last_seen_at)}` : 'Chưa nhận heartbeat từ bot'}
+          tone="sky"
+        />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.2fr_minmax(320px,0.8fr)]">
@@ -676,7 +686,7 @@ export default function DiscordPage() {
   const [loading, setLoading] = useState(true)
   const [busyKey, setBusyKey] = useState('')
   const [apiError, setApiError] = useState('')
-  const [status, setStatus] = useState({ provisioning: { pending: 0, failed: 0, done: 0 } })
+  const [status, setStatus] = useState({ bot: { online: false }, provisioning: { pending: 0, failed: 0, done: 0 } })
   const [queue, setQueue] = useState([])
   const [members, setMembers] = useState({ items: [], counts: { all: 0, linked: 0, unlinked: 0 } })
   const [teams, setTeams] = useState([])
@@ -691,7 +701,7 @@ export default function DiscordPage() {
       apiRequest('/teams?limit=200'),
     ])
 
-    setStatus(statusPayload || { provisioning: { pending: 0, failed: 0, done: 0 } })
+    setStatus(statusPayload || { bot: { online: false }, provisioning: { pending: 0, failed: 0, done: 0 } })
     setQueue(queuePayload?.queue || [])
     setMembers({
       items: (membersPayload?.items || []).map(normalizeMember),

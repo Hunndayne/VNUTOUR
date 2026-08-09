@@ -35,10 +35,15 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
+    "django_prometheus",
     "api",
 ]
 
 MIDDLEWARE = [
+    # The Prometheus pair has to bracket everything else: latency is measured
+    # between the two, so any middleware placed outside them is invisible to
+    # the histogram.
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -47,6 +52,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "serverapi.urls"
@@ -133,6 +139,13 @@ SECURE_SSL_REDIRECT = os.getenv(
     "DJANGO_SECURE_SSL_REDIRECT",
     "1" if IS_PRODUCTION else "0",
 ) == "1"
+# Prometheus and the kubelet reach these two over plain HTTP on the pod IP, and
+# neither follows a redirect anywhere useful: the scraper would chase the 301
+# into a TLS handshake against a cleartext port, and a probe would score the
+# redirect itself as success and never notice the app was broken. Nginx proxies
+# only /api/ and /media/, so neither path is reachable from the public
+# hostname and exempting them gives up nothing.
+SECURE_REDIRECT_EXEMPT = [r"^metrics$", r"^api/health$"]
 SESSION_COOKIE_SECURE = IS_PRODUCTION
 CSRF_COOKIE_SECURE = IS_PRODUCTION
 SECURE_HSTS_SECONDS = int(os.getenv(

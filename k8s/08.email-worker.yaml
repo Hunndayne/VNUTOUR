@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-worker
+  namespace: vnutour
+spec:
+  # The queue itself is safe to run twice — claims use SELECT ... FOR UPDATE
+  # SKIP LOCKED — but a second worker buys nothing and doubles the SMTP
+  # connections, so keep the rollout non-overlapping like the bot. Never put an
+  # HPA on this Deployment.
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: email-worker
+
+  template:
+    metadata:
+      labels:
+        app: email-worker
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: email-worker
+          image: yourdockerhub/vnutour-backend:1.0.0
+
+          command:
+            - python
+            - webapi/manage.py
+            - process_email_queue
+            - --watch
+            - --sleep
+            - "5"
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"

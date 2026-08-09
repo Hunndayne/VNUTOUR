@@ -1,0 +1,8 @@
+# Monitoring lives outside the vnutour namespace on purpose. Prometheus and
+# kube-state-metrics both need cluster-wide read access, and granting that to a
+# ServiceAccount that sits next to the application would mean any container
+# escape in the app namespace inherits a cluster-wide reader.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring

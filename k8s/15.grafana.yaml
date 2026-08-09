@@ -1,0 +1,308 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin
+  namespace: monitoring
+type: Opaque
+stringData:
+  # Placeholder. Replace before applying, and keep the real value out of git —
+  # see the note on backend-secret in 02.secret.yaml.
+  admin-user: "admin"
+  admin-password: "change-me"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: monitoring
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.monitoring.svc:9090
+        isDefault: true
+        # Lets Grafana pick sensible step sizes instead of guessing.
+        jsonData:
+          timeInterval: 15s
+
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: vnutour
+        folder: VNUTour
+        type: file
+        # Grafana rejects edits that it cannot write back to disk; the mount is
+        # read-only, so say so rather than letting the UI offer a broken Save.
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+data:
+  vnutour.json: |
+    {
+      "title": "VNUTour",
+      "uid": "vnutour-overview",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "API requests/sec by view",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (view) (rate(django_http_requests_total_by_view_transport_method_total[5m]))",
+              "legendFormat": "{{view}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "API latency p95 / p50",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket[5m])))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket[5m])))",
+              "legendFormat": "p50"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Responses by status",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum by (status) (rate(django_http_responses_total_by_status_total[5m]))",
+              "legendFormat": "{{status}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Replicas: desired vs available",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "kube_deployment_spec_replicas{namespace=\"vnutour\"}",
+              "legendFormat": "{{deployment}} desired"
+            },
+            {
+              "expr": "kube_deployment_status_replicas_available{namespace=\"vnutour\"}",
+              "legendFormat": "{{deployment}} available"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "CPU cores per pod",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"vnutour\",container!=\"\",container!=\"POD\"}[5m]))",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Memory working set per pod",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"vnutour\",container!=\"\",container!=\"POD\"})",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Postgres connections by state",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "targets": [
+            {
+              "expr": "sum by (state) (pg_stat_activity_count)",
+              "legendFormat": "{{state}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Nginx requests/sec (edge)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "targets": [
+            {
+              "expr": "sum(rate(nginx_http_requests_total[5m]))",
+              "legendFormat": "edge rps"
+            }
+          ]
+        }
+      ]
+    }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+
+  # Same ReadWriteOnce reasoning as Prometheus.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: grafana
+
+  template:
+    metadata:
+      labels:
+        app: grafana
+
+    spec:
+      # The Grafana image expects uid 472; local-path would otherwise hand it a
+      # root-owned directory it cannot write its SQLite database into.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-user
+
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
+
+            # No public route to this service, so anonymous read would be an
+            # open door for anything already inside the cluster network.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+
+          ports:
+            - name: http
+              containerPort: 3000
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+
+            - name: provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+
+            - name: provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+
+        # Split across two mounts because Grafana scans each provisioning
+        # directory for its own file type and chokes on the other's.
+        - name: provisioning-datasources
+          configMap:
+            name: grafana-provisioning
+            items:
+              - key: datasource.yml
+                path: datasource.yml
+
+        - name: provisioning-dashboards
+          configMap:
+            name: grafana-provisioning
+            items:
+              - key: dashboards.yml
+                path: dashboards.yml
+
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards

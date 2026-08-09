@@ -1,0 +1,50 @@
+# Homelab production overlay. Combine with the base file:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+#
+# Two things differ from a rented server: the host sits behind NAT with no
+# inbound ports, and its disk fills up for good if logs are left unbounded.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    logging: *logging
+
+  migrate:
+    logging: *logging
+
+  backend:
+    logging: *logging
+
+  frontend:
+    logging: *logging
+
+  bot:
+    logging: *logging
+
+  email-worker:
+    logging: *logging
+
+  # Outbound-only connection to Cloudflare's edge: no router port-forward, no
+  # firewall rule, and a dynamic home IP stops mattering. Route the public
+  # hostname to http://frontend:80 in the Cloudflare Zero Trust dashboard.
+  #
+  # Pin a release tag once the stack is stable; cloudflared refuses to connect
+  # when a build gets too old.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      frontend:
+        condition: service_healthy
+    logging: *logging
+    networks:
+      - app

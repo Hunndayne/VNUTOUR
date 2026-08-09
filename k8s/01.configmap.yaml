@@ -1,0 +1,34 @@
+# Non-secret runtime configuration. Key names are read verbatim by
+# webapi/serverapi/settings.py and src/bot/config.py.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: vnutour
+data:
+  DJANGO_ENV: "production"
+  # settings.py compares this against the string "1", so anything else means
+  # off — including the word "True".
+  DJANGO_DEBUG: "0"
+
+  # Must list every hostname the Ingress accepts, because Nginx forwards the
+  # original Host header to Django unchanged. A host that is routed but not
+  # listed here gets a bare 400 from Django. Keep in sync with 10.ingress.yaml.
+  # localhost and 127.0.0.1 are for the kubelet probes, which dial the pod IP.
+  DJANGO_ALLOWED_HOSTS: "vnutour.hunn.io.vn,vnutour.suctremmt.com,localhost,127.0.0.1"
+
+  # TLS terminates upstream, so every request reaches Django over plain HTTP.
+  # Without this, SECURE_SSL_REDIRECT sees an insecure request and answers with
+  # a 301 to https, which the proxy forwards back as http — a redirect loop on
+  # every API call. This is the switch that makes settings.py trust
+  # X-Forwarded-Proto.
+  TRUST_PROXY_HEADERS: "1"
+
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+
+  # src/bot/config.py reads FFMPEG_EXE, not FFMPEG_PATH.
+  FFMPEG_EXE: "ffmpeg"
+
+  # Base URL the bot puts into the links it posts in Discord.
+  WEB_BASE_URL: "https://vnutour.hunn.io.vn"

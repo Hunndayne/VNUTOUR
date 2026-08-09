@@ -10,6 +10,7 @@ from api.services.discord_service import (
     get_provisioning_queue, retry_provision,
     create_broadcast, list_broadcasts,
     list_members, sync_member,
+    get_bot_runtime_status,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -26,6 +27,7 @@ def discord_status_view(request: HttpRequest):
     done = Team.objects.filter(provision_state=Team.PROVISION_DONE).count()
 
     return JsonResponse({
+        "bot": get_bot_runtime_status(),
         "provisioning": {
             "pending": pending,
             "failed": failed,
@@ -125,10 +127,13 @@ def broadcast_create_view(request: HttpRequest):
         if not title or not message:
             return JsonResponse({"error": "missing_fields"}, status=400)
 
-        broadcast = create_broadcast(
-            title=title, message=message, target=target,
-            sent_by=acc, target_payload=data.get("target_payload"),
-        )
+        try:
+            broadcast = create_broadcast(
+                title=title, message=message, target=target,
+                sent_by=acc, target_payload=data.get("target_payload"),
+            )
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
         return JsonResponse({
             "id": broadcast.id, "title": broadcast.title,
             "status": broadcast.status,

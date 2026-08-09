@@ -7,11 +7,12 @@ import json
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
-    Account, Participant, Team, TeamMembership, PhaseRoster, ProgramPhase,
-    Station, SubEvent, StationSession, StationSubmission,
+    Account, CaptainVote, Participant, Team, TeamMembership, PhaseRoster,
+    ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
 )
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
@@ -26,8 +27,10 @@ from api.services.submission_config_service import (
     has_items as has_submission_items,
     attachment_item as submission_attachment_item,
     grade_quiz as grade_submission_quiz,
+    checkout_after_submit,
 )
 from api.services.team_form_variant_service import variant_item_ids
+from api.services import team_merge_service
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -210,6 +213,19 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
 
 def _registration_phase_open() -> bool:
     return registration_is_open()
+
+
+def _team_edits_allowed(team: Team | None) -> bool:
+    """Editing a team belongs to registration, with one deliberate exception.
+
+    Rejecting a team *is* an admin asking for changes, so that request has to
+    stay actionable after registration closes — otherwise the note ("thiếu ảnh
+    chuyển khoản") arrives with no way to act on it, and the captain has to find
+    an organiser in person. Creating a brand new team stays registration-only.
+    """
+    if _registration_phase_open():
+        return True
+    return team is not None and team.approval_status == Team.APPROVAL_REJECTED
 
 
 def _registration_closed_response():
@@ -412,13 +428,13 @@ def my_team_view(request: HttpRequest):
         }, status=201)
 
     if request.method == "PATCH":
-        if not _registration_phase_open():
-            return _registration_closed_response()
         membership = TeamMembership.objects.filter(
             participant__mssv=acc.mssv, is_captain=True,
         ).select_related("team").first()
         if not membership:
             return JsonResponse({"error": "not_team_owner"}, status=403)
+        if not _team_edits_allowed(membership.team):
+            return _registration_closed_response()
 
         team = membership.team
         if not team_is_editable(team):
@@ -465,14 +481,13 @@ def my_team_submit_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
 
     team = membership.team
     schema = get_schema()
@@ -520,14 +535,13 @@ def my_team_member_resolve_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
     if not team_is_editable(membership.team):
         return JsonResponse({"error": "team_locked"}, status=409)
 
@@ -550,14 +564,13 @@ def my_team_members_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
 
     team = membership.team
     if not team_is_editable(team):
@@ -600,14 +613,13 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if not _registration_phase_open():
-        return _registration_closed_response()
-
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
+    if not _team_edits_allowed(membership.team):
+        return _registration_closed_response()
 
     team = membership.team
     if not team_is_editable(team):
@@ -699,6 +711,116 @@ def my_team_qr_view(request: HttpRequest):
         "team_code": team.code,
         "qr_payload": f"t:{team.qr_token}",
     })
+
+
+def my_team_stations_view(request: HttpRequest):
+    """GET every active station of the running sub-event, plus this team's state at each.
+
+    This is the map the qualifying-round app draws: a team has to see a station
+    before it can walk up to it, so nothing is filtered on `checkin_policy` or on
+    whether a form is configured. `/api/me/experience` deliberately lists only the
+    free-play stations that *have* a form, which left `staff_scan` stations — the
+    ones needing a collab to scan the team's QR — invisible to participants.
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    ensure_default_phase_roster_for_team(team)
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    current_phase_key = current_phase.key if current_phase else None
+    current_event = get_current_sub_event()
+
+    payload = {
+        "current_phase": current_phase_key,
+        "current_sub_event_id": current_event.id if current_event else None,
+        "stations": [],
+    }
+    # Between events there is simply nothing to show. The app polls this endpoint,
+    # so an empty list beats an error the client would have to special-case.
+    if not current_event:
+        return JsonResponse(payload)
+
+    # Same gate as `my_team_forms_view`: a phase that has a roster admits only the
+    # teams on it; a phase without one is open to whoever is in the current phase.
+    # Every station here belongs to `current_event`, so the phase is decided once.
+    phase_key = current_event.phase.key
+    team_phase_keys = set(
+        PhaseRoster.objects.filter(team=team).values_list("phase__key", flat=True)
+    )
+    phases_with_roster = set(
+        PhaseRoster.objects.values_list("phase__key", flat=True).distinct()
+    )
+    if phase_key in phases_with_roster:
+        if phase_key not in team_phase_keys:
+            return JsonResponse(payload)
+    elif current_phase_key and phase_key != current_phase_key:
+        return JsonResponse(payload)
+
+    stations = list(
+        Station.objects.filter(sub_event=current_event, active=True).order_by("order", "id")
+    )
+    station_ids = [station.id for station in stations]
+
+    # Three grouped queries rather than three per station.
+    occupancy = {
+        row["station_id"]: row["total"]
+        for row in StationSession.objects.filter(
+            station_id__in=station_ids,
+            status=StationSession.STATUS_ACTIVE,
+        ).values("station_id").annotate(total=Count("id"))
+    }
+    my_sessions: dict[int, StationSession] = {}
+    for session in StationSession.objects.filter(
+        team=team, station_id__in=station_ids,
+    ).order_by("station_id", "-entered_at"):
+        my_sessions.setdefault(session.station_id, session)
+    my_submissions: dict[int, StationSubmission] = {}
+    for submission in StationSubmission.objects.filter(
+        team=team, station_id__in=station_ids,
+    ).order_by("station_id", "-created_at"):
+        my_submissions.setdefault(submission.station_id, submission)
+
+    for station in stations:
+        session = my_sessions.get(station.id)
+        submission = my_submissions.get(station.id)
+        payload["stations"].append({
+            "station_id": station.id,
+            "station_code": station.code,
+            "station_name": station.name,
+            "station_location": station.location,
+            # Tells the app whether to show a QR for a collab to scan, or to let
+            # the team open the station on its own.
+            "checkin_policy": station.checkin_policy,
+            "has_form": has_submission_items(station.submission_config),
+            # Only meaningful where `has_form` — whether submitting ends the visit.
+            "checkout_after_submit": checkout_after_submit(station.submission_config),
+            "capacity": {
+                # 0/None means unlimited.
+                "max_concurrent_teams": station.max_concurrent_teams,
+                "current_teams": occupancy.get(station.id, 0),
+            },
+            "my_session": {
+                "status": session.status,
+                "entered_at": session.entered_at.isoformat() if session.entered_at else None,
+                "exited_at": session.exited_at.isoformat() if session.exited_at else None,
+            } if session else None,
+            "my_submission": {
+                "status": submission.status,
+                "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+            } if submission else None,
+        })
+
+    return JsonResponse(payload)
 
 
 def my_team_forms_view(request: HttpRequest):
@@ -935,4 +1057,146 @@ def my_experience_view(request: HttpRequest):
         "team_in_current_phase": in_current_phase,
         "registration_open": registration_is_open(),
         "open_forms": open_forms,
+    })
+
+
+@csrf_exempt
+def my_team_captain_vote_view(request: HttpRequest):
+    """GET the open captain ballot, POST {candidate_mssv} to cast or change a vote.
+
+    The ballot is secret: the payload carries tallies and whether *you* have
+    voted, never who anyone voted for.
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team", "participant").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    me = membership.participant
+
+    if request.method == "POST":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        candidate_mssv = str((data.get("candidate_mssv") or "").strip())
+        candidate = Participant.objects.filter(mssv=candidate_mssv).first()
+        if not candidate:
+            return JsonResponse({"error": "candidate_not_found"}, status=404)
+
+        vote_error = team_merge_service.cast_vote(team, me, candidate)
+        if vote_error:
+            status = 409 if vote_error == "captain_already_elected" else 400
+            return JsonResponse({"error": vote_error}, status=status)
+        team_merge_service.resolve_election(team)
+    elif request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    result = team_merge_service.tally(team)
+    members = TeamMembership.objects.filter(team=team).select_related("participant")
+    captain = members.filter(is_captain=True).first()
+
+    return JsonResponse({
+        "open": captain is None and result["member_count"] > 1,
+        "captain_mssv": captain.participant.mssv if captain else None,
+        "i_have_voted": CaptainVote.objects.filter(team=team, voter=me).exists(),
+        "votes_cast": result["votes_cast"],
+        "member_count": result["member_count"],
+        "candidates": [
+            {
+                "mssv": m.participant.mssv,
+                "full_name": m.participant.full_name,
+                "votes": result["counts"].get(m.participant_id, 0),
+            }
+            for m in members
+        ],
+        "can_rename_team": team_merge_service.may_rename(team, me),
+    })
+
+
+def my_team_station_state_view(request: HttpRequest):
+    """GET the one thing the QR screen polls for: has anything changed yet?
+
+    Deliberately narrow. The station list is the expensive call and the screen
+    only needs it once; while a QR is on display the question is just whether a
+    coop has scanned it, so this answers that and nothing else.
+
+    The current QR payload rides along because a successful scan rotates it —
+    fetching state and QR separately would leave a window where the screen shows
+    a code the server has already retired.
+    """
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+
+    raw_station_id = request.GET.get("station_id")
+    station_id = None
+    if raw_station_id:
+        try:
+            station_id = int(raw_station_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "invalid_station_id"}, status=400)
+
+    sessions = StationSession.objects.filter(team=team)
+    submissions = StationSubmission.objects.filter(team=team)
+    if station_id is not None:
+        sessions = sessions.filter(station_id=station_id)
+        submissions = submissions.filter(station_id=station_id)
+    else:
+        # No station named: report wherever they currently are, so the list
+        # screen can send them straight back to the station they are inside.
+        sessions = sessions.filter(status=StationSession.STATUS_ACTIVE)
+
+    session = sessions.order_by("-entered_at").values(
+        "station_id", "status", "entered_at", "exited_at",
+    ).first()
+    submission = submissions.order_by("-created_at").values(
+        "station_id", "status", "submitted_at",
+    ).first()
+
+    def stamp(value):
+        return value.isoformat() if value else None
+
+    qr = {"enabled": False}
+    if team.approval_status == Team.APPROVAL_APPROVED and team_qr_visible(team):
+        if not team.qr_token:
+            rotate_qr_token(team)
+            team.refresh_from_db(fields=["qr_token"])
+        qr = {"enabled": True, "payload": f"t:{team.qr_token}"}
+
+    return JsonResponse({
+        "team_code": team.code,
+        "station_id": station_id,
+        "session": {
+            "station_id": session["station_id"],
+            "status": session["status"],
+            "entered_at": stamp(session["entered_at"]),
+            "exited_at": stamp(session["exited_at"]),
+        } if session else None,
+        "submission": {
+            "station_id": submission["station_id"],
+            "status": submission["status"],
+            "submitted_at": stamp(submission["submitted_at"]),
+        } if submission else None,
+        "qr": qr,
     })

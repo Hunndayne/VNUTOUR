@@ -7,16 +7,24 @@ from django.conf import settings
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 
-from api.models import Account, Team, TeamMembership
+from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team,
     get_team_members, add_member, link_account_profile,
 )
 from api.services.audit_service import record_audit
+from api.services import team_merge_service
+from api.services.registration_service import normalize_gender
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
+
+
+def _lock_registration_phase() -> bool:
+    """Serialize registration-only admin actions with phase changes."""
+    phases = list(ProgramPhase.objects.select_for_update().order_by("id"))
+    return any(phase.key == "registration" and phase.is_current for phase in phases)
 
 
 # =====================================================================
@@ -54,21 +62,43 @@ def teams_collection_view(request: HttpRequest):
             page, limit = 1, 50
         offset = (page - 1) * limit
         total = qs.count()
-        teams = qs[offset:offset + limit]
+        teams = qs.prefetch_related("memberships__participant")[offset:offset + limit]
 
         items = []
         for t in teams:
+            memberships = list(t.memberships.all())
             item = {
                     "code": t.code,
                     "name": t.name,
                     "approval_status": t.approval_status,
-                    "member_count": TeamMembership.objects.filter(team=t).count(),
+                    "member_count": len(memberships),
                     "is_late_registration": t.is_late_registration,
                     "created_at": t.created_at.isoformat(),
             }
             if is_admin(acc):
+                gender_counts = {"male": 0, "female": 0, "other": 0, "unknown": 0}
+                member_summaries = []
+                for membership in sorted(
+                    memberships,
+                    key=lambda item: (
+                        not item.is_captain,
+                        item.participant.full_name.lower(),
+                        item.participant.mssv,
+                    ),
+                ):
+                    participant = membership.participant
+                    gender = normalize_gender((participant.extra or {}).get("gender"))
+                    gender_counts[gender] += 1
+                    member_summaries.append({
+                        "mssv": participant.mssv,
+                        "full_name": participant.full_name,
+                        "gender": gender,
+                        "is_captain": membership.is_captain,
+                    })
                 item.update({
                     "owner_username": t.owner_account.username if t.owner_account else None,
+                    "gender_counts": gender_counts,
+                    "member_summaries": member_summaries,
                     "provision_state": t.provision_state,
                     "provision_last_error": t.provision_last_error,
                     "last_provisioned_at": t.last_provisioned_at.isoformat() if t.last_provisioned_at else None,
@@ -196,15 +226,26 @@ def team_item_view(request: HttpRequest, team_key: str):
         if new_approval_status:
             if new_approval_status not in dict(Team.APPROVAL_CHOICES):
                 return JsonResponse({"error": "invalid_approval_status"}, status=400)
-            # Route approve/reject through the service so reviewer, timestamps and
-            # Discord provisioning stay consistent with the dedicated endpoints.
-            if new_approval_status == Team.APPROVAL_APPROVED:
-                approve_team(team, acc)
-            elif new_approval_status == Team.APPROVAL_REJECTED:
-                reject_team(team, acc, data.get("approval_note") or data.get("note"))
-            else:
-                team.approval_status = new_approval_status
-                team.save(update_fields=["approval_status", "updated_at"])
+            with transaction.atomic():
+                if not _lock_registration_phase():
+                    return JsonResponse({"error": "registration_phase_closed"}, status=409)
+                team = Team.objects.select_for_update().get(pk=team.pk)
+                # Payment/registration review starts only after the captain has
+                # submitted the team. Drafts are not reviewable.
+                if (
+                    new_approval_status in {Team.APPROVAL_APPROVED, Team.APPROVAL_REJECTED}
+                    and team.approval_status != Team.APPROVAL_PENDING
+                ):
+                    return JsonResponse({"error": "team_not_submitted"}, status=409)
+                # Route approve/reject through the service so reviewer, timestamps and
+                # Discord provisioning stay consistent with the dedicated endpoints.
+                if new_approval_status == Team.APPROVAL_APPROVED:
+                    approve_team(team, acc)
+                elif new_approval_status == Team.APPROVAL_REJECTED:
+                    reject_team(team, acc, data.get("approval_note") or data.get("note"))
+                else:
+                    team.approval_status = new_approval_status
+                    team.save(update_fields=["approval_status", "updated_at"])
 
         return JsonResponse({
             "code": team.code, "name": team.name,
@@ -223,6 +264,7 @@ def team_item_view(request: HttpRequest, team_key: str):
 
 
 @csrf_exempt
+@transaction.atomic
 def team_approve_view(request: HttpRequest, team_key: str):
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
@@ -231,10 +273,16 @@ def team_approve_view(request: HttpRequest, team_key: str):
     if err:
         return err
 
+    if not _lock_registration_phase():
+        return JsonResponse({"error": "registration_phase_closed"}, status=409)
+
     try:
-        team = Team.objects.get(code=team_key)
+        team = Team.objects.select_for_update().get(code=team_key)
     except Team.DoesNotExist:
         return JsonResponse({"error": "not_found"}, status=404)
+
+    if team.approval_status != Team.APPROVAL_PENDING:
+        return JsonResponse({"error": "team_not_submitted"}, status=409)
 
     data = _json_body(request)
     if data is None:
@@ -261,6 +309,7 @@ def team_approve_view(request: HttpRequest, team_key: str):
 
 
 @csrf_exempt
+@transaction.atomic
 def team_reject_view(request: HttpRequest, team_key: str):
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
@@ -269,10 +318,16 @@ def team_reject_view(request: HttpRequest, team_key: str):
     if err:
         return err
 
+    if not _lock_registration_phase():
+        return JsonResponse({"error": "registration_phase_closed"}, status=409)
+
     try:
-        team = Team.objects.get(code=team_key)
+        team = Team.objects.select_for_update().get(code=team_key)
     except Team.DoesNotExist:
         return JsonResponse({"error": "not_found"}, status=404)
+
+    if team.approval_status != Team.APPROVAL_PENDING:
+        return JsonResponse({"error": "team_not_submitted"}, status=409)
 
     data = _json_body(request) or {}
     note = str((data.get("note") or data.get("reason") or "").strip()) or None
@@ -492,3 +547,59 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         return JsonResponse({"status": "deactivated"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+# =====================================================================
+# Team merge
+# =====================================================================
+
+@csrf_exempt
+def team_merge_view(request: HttpRequest):
+    """POST {team_codes: [...]}: combine teams without exceeding max roster size.
+
+    The combined team keeps the smallest internal code, loses all previous
+    captains and is renamed to that code, then opens a secret captain ballot.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    raw_codes = data.get("team_codes")
+    if not isinstance(raw_codes, list):
+        # Keep the old request shape readable during a rolling frontend deploy.
+        raw_codes = [data.get("source_code"), data.get("target_code")]
+    team_codes = [str(code or "").strip() for code in raw_codes]
+    if len(team_codes) < 2 or any(not code for code in team_codes):
+        return JsonResponse({"error": "missing_team_codes"}, status=400)
+
+    merged, merge_error, merged_from = team_merge_service.merge_team_group(team_codes)
+    if merge_error:
+        status = 404 if merge_error == "not_found" else 409
+        return JsonResponse({"error": merge_error}, status=status)
+
+    record_audit(
+        actor=acc,
+        action="team.merge",
+        summary=f"Ghép {len(team_codes)} đội thành {merged.code}",
+        target_type="Team",
+        target_id=merged.code,
+        before_data={"teams": merged.merge_before},
+        after_data={"code": merged.code, "name": merged.name,
+                    "members": TeamMembership.objects.filter(team=merged).count()},
+        reversible=False,
+    )
+
+    return JsonResponse({
+        "code": merged.code,
+        "name": merged.name,
+        "merged_from": merged_from,
+        "merged_teams": team_codes,
+        "member_count": TeamMembership.objects.filter(team=merged).count(),
+        "captain_vote_open": True,
+    })
