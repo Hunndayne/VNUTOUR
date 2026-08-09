@@ -1,0 +1,107 @@
+# Nightly logical backup. Reuses the application's own create_backup() so the
+# archive is the exact .zip the admin restore page accepts (data.json + media),
+# rather than a parallel pg_dump the app could not restore. Runs on w1 with the
+# same media/backup volume mounts as the backend, and prunes to BACKUP_RETENTION
+# newest archives.
+#
+# Each archive is also copied offsite to Cloudflare R2 by scripts/upload_backup.py
+# (R2 credentials in the optional r2-backup secret; the upload is a no-op when the
+# secret is absent). The local copy on w1 guards against logical errors and is the
+# fast restore path; the R2 copy guards against losing w1 itself.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vnutour-backup
+  namespace: vnutour
+spec:
+  # 03:00 Vietnam time, a quiet hour. timeZone needs k8s >= 1.27 (cluster is 1.36).
+  schedule: "0 3 * * *"
+  timeZone: "Asia/Ho_Chi_Minh"
+
+  # Never overlap two backups, and do not fire a stampede of missed runs if the
+  # node was asleep at 03:00.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+
+      template:
+        metadata:
+          labels:
+            app: vnutour-backup
+        spec:
+          restartPolicy: OnFailure
+
+          # backup-data and media-data are node-local (local-path) and bound to
+          # w1, so the backup pod has to run there to mount them.
+          nodeSelector:
+            vnutour/storage: "true"
+
+          containers:
+            - name: backup
+              image: ghcr.io/hunndayne/vnutour-backend:308a7a1
+
+              command:
+                - python
+                - webapi/manage.py
+                - shell
+                - -c
+                - |
+                  import os, subprocess
+                  from api.services.backup_service import create_backup, _backup_root
+                  keep = int(os.getenv("BACKUP_RETENTION", "14"))
+                  result = create_backup(prefix="cron")
+                  path = _backup_root() / result["filename"]
+                  print("created", result["filename"], result["size"], "bytes")
+                  # Offsite copy to R2. upload_backup.py exits 0 as a no-op when the
+                  # R2 env is unset, so this is safe before r2-backup exists; once it
+                  # exists a real upload failure fails the Job so it is noticed.
+                  subprocess.run(["python", "scripts/upload_backup.py", str(path)], check=True)
+                  # Prune local copies to the newest BACKUP_RETENTION archives.
+                  archives = sorted(
+                      _backup_root().glob("*.zip"),
+                      key=lambda item: item.stat().st_mtime,
+                      reverse=True,
+                  )
+                  for stale in archives[keep:]:
+                      stale.unlink()
+                      print("pruned", stale.name)
+
+              envFrom:
+                - configMapRef:
+                    name: backend-config
+                - secretRef:
+                    name: backend-secret
+                # R2 credentials for the offsite copy, deliberately separate from
+                # backend-secret so enabling offsite backups does not also switch
+                # the app's media storage to R2. optional: the Job runs without it.
+                - secretRef:
+                    name: r2-backup
+                    optional: true
+
+              volumeMounts:
+                - name: media
+                  mountPath: /app/webapi/media
+                - name: backups
+                  mountPath: /app/backups
+
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "192Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "640Mi"
+
+          volumes:
+            - name: media
+              persistentVolumeClaim:
+                claimName: media-data
+            - name: backups
+              persistentVolumeClaim:
+                claimName: backup-data
