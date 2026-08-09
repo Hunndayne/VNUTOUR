@@ -57,7 +57,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 20Gi
+      storage: 6Gi
 
 ---
 apiVersion: v1
@@ -324,6 +324,12 @@ spec:
     spec:
       serviceAccountName: prometheus
 
+      # cp got the RAM bump (3 GB); pinning Prometheus here keeps its memory
+      # growth off w1, which runs postgres and the backend. No toleration needed
+      # once the CriticalAddonsOnly taint is removed from cp.
+      nodeSelector:
+        kubernetes.io/hostname: vnutour-cp
+
       # local-path hands over a directory owned by root; without fsGroup the
       # unprivileged Prometheus user cannot create its TSDB.
       securityContext:
@@ -338,10 +344,10 @@ spec:
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time=15d
+            - --storage.tsdb.retention.time=5d
             # A second, harder stop: retention by time alone still fills the
             # disk if the series count grows, and a full disk wedges the TSDB.
-            - --storage.tsdb.retention.size=15GB
+            - --storage.tsdb.retention.size=5GB
             - --web.enable-lifecycle
 
           ports:
@@ -365,10 +371,10 @@ spec:
           resources:
             requests:
               cpu: "250m"
-              memory: "512Mi"
+              memory: "256Mi"
             limits:
               cpu: "1000m"
-              memory: "2Gi"
+              memory: "768Mi"
 
           volumeMounts:
             - name: config
