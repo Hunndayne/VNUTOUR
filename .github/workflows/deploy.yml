@@ -1,93 +1,99 @@
-name: Deploy
+name: Deploy to k3s
 
-# The homelab runner picks this job up over an outbound connection, so nothing
-# has to be exposed on the home network.
+# Runs on the homelab self-hosted runner, which sits inside the LAN and talks to
+# the k3s API directly — nothing has to be exposed on the home network, and the
+# cluster's 6443 stays closed to the internet.
 #
-# Never add a `pull_request` trigger here. Self-hosted runners execute whatever
-# the workflow says, so a fork could otherwise run arbitrary code on the
-# homelab.
+# Auto-deploy fires after the CI workflow finishes building and pushing images
+# for a push to main. workflow_dispatch is the manual path, including rollback to
+# an earlier image tag.
+#
+# Never add a `pull_request` trigger. Self-hosted runners execute whatever the
+# workflow says, so a fork could otherwise run arbitrary code on the homelab.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Existing image tag to roll back to. Leave blank to build HEAD."
+        description: "Short image SHA to deploy / roll back to. Blank = the triggering commit."
         required: false
 
-# Deploys queue instead of cancelling each other: a cancelled run could leave
-# migrations half-applied.
+# Deploys queue instead of cancelling: a cancelled run could leave migrations
+# half-applied.
 concurrency:
-  group: deploy-production
+  group: deploy-k3s
   cancel-in-progress: false
 
 jobs:
   deploy:
+    # workflow_run fires for every CI conclusion; only deploy when CI passed.
+    # workflow_dispatch is always allowed.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, vnutour]
     environment: production
-    defaults:
-      run:
-        working-directory: backend
     env:
-      # Secrets live on the homelab, never in the repo or in GitHub.
-      BACKEND_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE || '/srv/vnutour/.env.docker' }}
-      COMPOSE_FILE: docker-compose.yml:docker-compose.prod.yml
-      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+      # Runner is on the cp node; k3s wrote this kubeconfig world-readable
+      # (--write-kubeconfig-mode=644). If the runner ever moves off cp, point
+      # this at a copied kubeconfig whose server URL is the cp IP.
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      NS: vnutour
+      OWNER: hunndayne
 
     steps:
+      - name: Resolve commit and image tag
+        id: meta
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "ref=" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            ref="${{ github.event.workflow_run.head_sha }}"
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
+            echo "tag=${ref:0:7}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Only needed for the migrate-job manifest; checkout the exact commit being
+      # deployed so migrations match the image.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.ref }}
 
-      - name: Check the deploy environment file
+      # migrate + seed_phases, pinned to the image being deployed. Idempotent and
+      # gated: nothing rolls out if this fails.
+      - name: Migrate
         run: |
-          if [ ! -r "$BACKEND_ENV_FILE" ]; then
-            echo "::error::$BACKEND_ENV_FILE is missing or unreadable on the runner"
-            exit 1
-          fi
+          T="${{ steps.meta.outputs.tag }}"
+          kubectl -n "$NS" delete job vnutour-migrate --ignore-not-found
+          sed "s#\(image: ghcr.io/$OWNER/vnutour-backend:\).*#\1$T#" k8s/05.migrate-job.yaml \
+            | kubectl apply -f -
+          kubectl -n "$NS" wait --for=condition=complete job/vnutour-migrate --timeout=300s
 
-      # Build before touching the running stack. A broken Dockerfile fails here,
-      # while the current containers keep serving.
-      - name: Build images
-        if: ${{ !inputs.image_tag }}
-        run: docker compose --env-file "$BACKEND_ENV_FILE" build
-
-      # Invoked through bash because the repository is developed on Windows,
-      # where git does not record the executable bit.
-      - name: Back up the database
-        run: bash ./scripts/backup_db.sh
-
-      - name: Copy the dump to R2
+      - name: Roll out images
         run: |
-          latest="$(ls -1t backups/vnutour-*.dump 2>/dev/null | head -1 || true)"
-          if [ -z "$latest" ]; then
-            echo "no dump to upload"
-            exit 0
-          fi
-          docker run --rm \
-            --env-file "$BACKEND_ENV_FILE" \
-            --volume "$PWD/backups:/backups:ro" \
-            "vnutour-backend:$IMAGE_TAG" \
-            python scripts/upload_backup.py "/backups/$(basename "$latest")"
-
-      # `migrate` must exit 0 and `backend` must pass its healthcheck before
-      # Compose starts anything downstream, so this step fails loudly rather
-      # than leaving a half-started stack.
-      - name: Migrate and start
-        run: docker compose --env-file "$BACKEND_ENV_FILE" up -d --remove-orphans
+          T="${{ steps.meta.outputs.tag }}"
+          B="ghcr.io/$OWNER/vnutour-backend:$T"
+          F="ghcr.io/$OWNER/vnutour-frontend:$T"
+          kubectl -n "$NS" set image deploy/backend backend="$B"
+          kubectl -n "$NS" set image deploy/bot bot="$B"
+          kubectl -n "$NS" set image deploy/email-worker email-worker="$B"
+          kubectl -n "$NS" set image deploy/frontend frontend="$F"
+          # Only wait on the probe-backed, user-facing deployments. The bot has no
+          # readiness probe and CrashLoops until DISCORD_TOKEN is set, so waiting
+          # on it would fail every deploy for an unrelated reason.
+          kubectl -n "$NS" rollout status deploy/backend --timeout=180s
+          kubectl -n "$NS" rollout status deploy/frontend --timeout=180s
 
       - name: Verify
-        run: |
-          docker compose --env-file "$BACKEND_ENV_FILE" ps
-          docker compose --env-file "$BACKEND_ENV_FILE" exec -T frontend \
-            wget --quiet --output-document=- http://127.0.0.1/healthz
+        run: kubectl -n "$NS" exec deploy/frontend -c frontend -- wget -qO- http://127.0.0.1/healthz
 
       - name: Report failure
         if: failure()
         run: |
-          echo "::error::Deploy failed. Roll back with workflow_dispatch and a previous image tag."
-          docker compose --env-file "$BACKEND_ENV_FILE" ps
-          docker compose --env-file "$BACKEND_ENV_FILE" logs --tail 60 migrate backend
-
-      # Keep two weeks of images so a rollback still has something to start.
-      - name: Prune old images
-        if: always()
-        run: docker image prune --force --filter "until=336h"
+          echo "::error::k3s deploy failed. Roll back via 'Run workflow' with a previous image_tag."
+          kubectl -n "$NS" get pods -o wide
