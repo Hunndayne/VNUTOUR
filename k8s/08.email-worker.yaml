@@ -27,7 +27,7 @@ spec:
 
       containers:
         - name: email-worker
-          image: yourdockerhub/vnutour-backend:1.0.0
+          image: ghcr.io/hunndayne/vnutour-backend:308a7a1
 
           command:
             - python

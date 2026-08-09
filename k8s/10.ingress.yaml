@@ -18,18 +18,22 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
 
-    # cert-manager watches this and issues the certificate named in tls below.
-    # The issuer solves the ACME challenge over port 80, so the router has to
-    # keep forwarding it even though the site itself redirects to HTTPS.
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Cloudflare is in front (proxied DNS) with SSL/TLS mode "Full (strict)": it
+    # reaches this origin over HTTPS on 443 and validates the certificate in the
+    # vnutour-tls secret, which holds a Cloudflare Origin Certificate. ssl-redirect
+    # stays off: Cloudflare's "Always Use HTTPS" already forces https at the edge,
+    # and forcing it again at the origin would loop while any request still
+    # arrives over http. use-forwarded-headers=true on the controller keeps the
+    # X-Forwarded-Proto: https that Cloudflare sends, so Django sees the request
+    # as secure (see README).
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 
 spec:
   ingressClassName: nginx
 
-  # TLS terminates here, on the cluster edge. cert-manager fills this secret in
-  # after the first successful ACME challenge; until then ingress-nginx answers
-  # with its own self-signed certificate, so a browser warning on day one means
-  # the challenge has not completed rather than that something is broken.
+  # TLS to the origin. The secret is a Cloudflare Origin Certificate, loaded with
+  #   kubectl -n vnutour create secret tls vnutour-tls \
+  #     --cert=origin.pem --key=origin.key
   tls:
     - hosts:
         - vnutour.hunn.io.vn

@@ -38,7 +38,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: yourdockerhub/vnutour-frontend:1.0.0
+          image: ghcr.io/hunndayne/vnutour-frontend:308a7a1
 
           ports:
             - name: http

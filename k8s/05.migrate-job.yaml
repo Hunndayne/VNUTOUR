@@ -53,13 +53,20 @@ spec:
 
       containers:
         - name: migrate
-          image: yourdockerhub/vnutour-backend:1.0.0
+          image: ghcr.io/hunndayne/vnutour-backend:308a7a1
 
+          # Run migrations, then seed the four fixed program phases. seed_phases
+          # uses update_or_create so it is idempotent and safe to re-run on every
+          # deploy; without it a fresh database has no phases and the admin pages
+          # 404 on /api/program/phases/registration. set -e so the Job fails if
+          # migrate fails instead of seeding against a half-migrated schema.
           command:
-            - python
-            - webapi/manage.py
-            - migrate
-            - --noinput
+            - sh
+            - -c
+            - |
+              set -e
+              python webapi/manage.py migrate --noinput
+              python webapi/manage.py seed_phases
 
           envFrom:
             - configMapRef:
