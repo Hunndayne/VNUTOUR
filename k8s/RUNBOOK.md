@@ -226,8 +226,13 @@ nào — đó là rủi ro đã biết, không phải quy trình đã kiểm ch�
 
 ## Còn treo
 
-- [ ] **Áp `host-firewall.nft` lên cp** — đã viết nhưng chưa chạy trên máy thật;
-      tới lúc đó SSH, 6443, 10250 và toàn dải NodePort vẫn phơi ra internet
+- [ ] **Tạo ba unit systemd cho firewall** (`vnutour-firewall.service`,
+      `vnutour-cloudflare-ips.{service,timer}`) — ruleset đã chạy trên cp từ
+      10/08/2026 nhưng chưa sống qua reboot nếu thiếu chúng
+- [ ] **Chuyển zone sang Full (strict) rồi đóng 80** trong `host-firewall.nft`.
+      Hiện Cloudflare vào origin bằng HTTP, cert Origin đã nạp nhưng không được
+      dùng. Kiểm tra cert phủ cả hai hostname trước, không thì zone thiếu sẽ 526:
+      `kubectl -n vnutour get secret vnutour-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -ext subjectAltName`
 - [ ] Đổi mật khẩu admin Grafana khỏi `change-me` trong `15.grafana.yaml`
 - [ ] Nạp `DISCORD_TOKEN` cho bot và `SMTP_*` cho email-worker
 - [ ] Dựng `vnutour-w2`, chạy thử một chu kỳ `drain`/`uncordon`

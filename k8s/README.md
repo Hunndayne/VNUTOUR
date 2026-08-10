@@ -102,9 +102,10 @@ is DNAT'd in `PREROUTING` and then routed to a pod, so it passes through FORWARD
 and never reaches INPUT — an INPUT-only ruleset leaves the whole NodePort range
 open while looking like it closed it.
 
-The policy: from the internet only 443, and only from Cloudflare's published
-ranges, so the origin cannot be scanned or hit directly and no request can skip
-the edge. Everything arriving on any other interface is trusted — `enp6s19`
+The policy: from the internet only 80 and 443, and only from Cloudflare's
+published ranges, so the origin cannot be scanned or hit directly and no request
+can skip the edge. Port 80 is in there only because the zone runs Flexible and
+Cloudflare therefore reaches the origin over HTTP — see TLS above. Everything arriving on any other interface is trusted — `enp6s19`
 (10.10.10.11, the Proxmox SDN management network) and k3s' own `cni0`,
 `flannel.1` and `veth*`. Sources inside `192.168.1.0/24` stay open on eth0 too,
 because w1 reaches the apiserver, the kubelet and flannel's VXLAN across it;
@@ -117,10 +118,26 @@ sets empty. Two consequences worth remembering: turning the orange cloud **off**
 for a hostname takes it offline immediately, since traffic then comes straight
 from clients, and Grafana on `:30300` is reachable from the LAN and the SDN only.
 
-**TLS.** SSL/TLS mode is **Full (strict)**: Cloudflare connects to the origin
-over HTTPS and validates the certificate, which is a **Cloudflare Origin
-Certificate** — not Let's Encrypt. It is valid for 15 years and renews never, so
-there is no cert-manager, no ACME, and no port-80 solver path to keep open.
+**TLS.** Browsers get HTTPS from Cloudflare, but the hop from Cloudflare to this
+origin is **plain HTTP on port 80** — the zone's SSL/TLS mode is **Flexible**.
+That was measured on 10/08/2026 while debugging the firewall: every inbound
+connection from Cloudflare's ranges arrives with `DPT=80`. This file claimed Full
+(strict) for months and was wrong.
+
+A **Cloudflare Origin Certificate** is already loaded and referenced by the
+Ingress, so the origin can serve HTTPS today — the edge simply is not asking for
+it. Switching the zone to Full (strict) is what makes it real, and it is what
+lets port 80 be closed on the host firewall. Check first that the certificate
+covers both hostnames, or the zone that is missing will answer 526:
+
+```bash
+kubectl -n vnutour get secret vnutour-tls -o jsonpath='{.data.tls\.crt}' \
+  | base64 -d | openssl x509 -noout -subject -dates -ext subjectAltName
+```
+
+The certificate is valid for 15 years and renews never, so there is no
+cert-manager, no ACME, and no port-80 solver path to keep open. Port 80 is open
+purely because Flexible needs it.
 
 ```bash
 kubectl -n vnutour create secret tls vnutour-tls --cert=origin.pem --key=origin.key
