@@ -178,12 +178,18 @@ metadata:
   name: grafana
   namespace: monitoring
 spec:
+  # NodePort so Grafana is reachable at <node-ip>:30300 from the LAN and the VPN
+  # (which routes to 192.168.1.0/24), but never from the internet: the router
+  # forwards only 80/443, not the 30000-32767 NodePort range, and the nodes have
+  # no public IP of their own.
+  type: NodePort
   selector:
     app: grafana
   ports:
     - name: http
       port: 3000
       targetPort: http
+      nodePort: 30300
 
 ---
 apiVersion: apps/v1
