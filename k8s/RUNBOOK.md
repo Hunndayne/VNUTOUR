@@ -169,6 +169,12 @@ Router không forward được từng port nên cp nằm trong DMZ — mọi c�
 192.168.1.110 đến thẳng từ internet, và `host-firewall.nft` là lớp chặn duy
 nhất. Thiết kế và lý do nằm ở `README.md`, mục Exposure.
 
+Chạy từ 10/08/2026, đã xác nhận sống qua một lần reboot: `vnutour-firewall.service`
+nạp ruleset lúc boot rồi `ExecStartPost` nạp dải Cloudflare từ
+`/var/lib/vnutour-fw/cloudflare.nft`, nên set không bao giờ rỗng dù mạng chưa lên;
+`vnutour-cloudflare-ips.timer` làm mới danh sách hàng tuần. Set hiển thị ít dòng
+hơn 15 là bình thường — `auto-merge` gộp các dải liền kề.
+
 ```bash
 sudo nft list table inet vnutour_fw
 sudo nft list set inet vnutour_fw cloudflare_v4
@@ -226,9 +232,10 @@ nào — đó là rủi ro đã biết, không phải quy trình đã kiểm ch�
 
 ## Còn treo
 
-- [ ] **Tạo ba unit systemd cho firewall** (`vnutour-firewall.service`,
-      `vnutour-cloudflare-ips.{service,timer}`) — ruleset đã chạy trên cp từ
-      10/08/2026 nhưng chưa sống qua reboot nếu thiếu chúng
+- [ ] **Sửa `vnutour.suctremmt.com`** — đang trả 530 ở tầng Cloudflare (origin
+      DNS error), nhiều khả năng bản ghi trong zone đó còn trỏ CNAME tới tunnel
+      đã xoá. Đổi thành A trỏ IP public nhà, proxied, giống zone `hunn.io.vn`.
+      Không liên quan firewall; phía cụm không phải đụng gì
 - [ ] **Chuyển zone sang Full (strict) rồi đóng 80** trong `host-firewall.nft`.
       Hiện Cloudflare vào origin bằng HTTP, cert Origin đã nạp nhưng không được
       dùng. Kiểm tra cert phủ cả hai hostname trước, không thì zone thiếu sẽ 526:
