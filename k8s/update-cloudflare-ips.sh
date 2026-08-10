@@ -22,15 +22,20 @@ V6=$(curl -fsS --max-time 20 https://www.cloudflare.com/ips-v6)
 # Một trang lỗi trả về 200 vẫn là "tải được". Kiểm tra hình dạng trước khi tin:
 # mọi dòng phải là CIDR, và số dòng phải hợp lý so với thực tế (v4 khoảng 15
 # dải, v6 khoảng 7).
+# Cả hai kiểm tra phải nằm trong `if`, không phải `cmd && { exit 1; }`: dưới
+# set -e, một AND-list đứng cuối hàm mà trả về non-zero sẽ giết cả script — và
+# nó trả về non-zero đúng vào lúc dữ liệu hợp lệ, vì grep không tìm thấy dòng
+# hỏng nào. Bản đầu tiên thoát im lặng trước khi nạp set, và 443 chỉ nhận từ set
+# đó, nên site trả 522.
 check() {
-	printf '%s\n' "$2" | grep -Ev "$3" | grep -q . && {
+	if printf '%s\n' "$2" | grep -Ev "$3" | grep -q .; then
 		echo "$1: có dòng không phải CIDR, bỏ qua lần cập nhật này" >&2
 		exit 1
-	}
-	[ "$(printf '%s\n' "$2" | grep -c .)" -ge "$4" ] || {
+	fi
+	if [ "$(printf '%s\n' "$2" | grep -c .)" -lt "$4" ]; then
 		echo "$1: chỉ có $(printf '%s\n' "$2" | grep -c .) dòng, ít bất thường" >&2
 		exit 1
-	}
+	fi
 }
 
 check ips-v4 "$V4" '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$' 10
