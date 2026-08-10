@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, API_BASE_URL } from './api.js'
+import { useSearchParam } from './router.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 
@@ -1712,14 +1714,28 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
   )
 }
 
-function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false }) {
-  const [form, setForm] = useState(() => createStation(initial))
-  const [initialAssignment, setInitialAssignment] = useState({
-    collabUsername: '',
-    shiftStart: '',
-    shiftEnd: '',
-    note: '',
-  })
+function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false, draftKey }) {
+  // Soạn trạm (quiz, markdown, giới hạn nộp...) có thể mất cả chục phút — bọc cả
+  // `form` lẫn `initialAssignment` trong một bản nháp duy nhất, khoá theo trạm
+  // (hoặc theo phase/event khi đang tạo mới, do trạm mới chưa có id riêng).
+  const [draftValue, setDraftValue, draft] = useDraftState(
+    draftKey || `station:${initial?.id || 'new'}`,
+    () => ({
+      form: createStation(initial),
+      initialAssignment: { collabUsername: '', shiftStart: '', shiftEnd: '', note: '' },
+    }),
+  )
+  const { form, initialAssignment } = draftValue
+  const setForm = (next) => setDraftValue(current => ({
+    ...current,
+    form: typeof next === 'function' ? next(current.form) : next,
+  }))
+  const setInitialAssignment = (next) => setDraftValue(current => ({
+    ...current,
+    initialAssignment: typeof next === 'function' ? next(current.initialAssignment) : next,
+  }))
+  // Kéo-thả sắp xếp câu hỏi chỉ là trạng thái thao tác tạm thời trong phiên soạn
+  // hiện tại — không có ý nghĩa gì để khôi phục sau reload nên không đưa vào draft.
   const [dragIndex, setDragIndex] = useState(null)
   const [dropIndex, setDropIndex] = useState(null)
 
@@ -1804,19 +1820,29 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     }))
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim()) return
-    onSave({
+    // onSave (addStation/saveStation) trả về true khi lưu thành công — chỉ xoá
+    // nháp lúc đó, thất bại thì giữ nguyên để không mất nội dung đang soạn.
+    const result = await onSave({
       ...form,
       name: form.name.trim(),
       location: form.location.trim(),
       submission: sanitizeSubmission(form.submission),
       initialAssignment,
     })
+    if (result !== false) draft.clear()
+  }
+
+  const handleCancel = () => {
+    draft.discard()
+    onCancel()
   }
 
   return (
     <div className="space-y-5 px-4 py-4">
+      <DraftNotice draft={draft} label="nội dung trạm đang soạn" />
+
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
@@ -2098,14 +2124,14 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
       <div className="flex gap-2 pt-1">
         <button
           type="button"
-          onClick={onCancel}
+          onClick={handleCancel}
           className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
         >
           Hủy
         </button>
         <button
           type="button"
-          onClick={handleSave}
+          onClick={() => void handleSave()}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
         >
           <Icon name="checkPlain" className="h-4 w-4" />
@@ -2137,9 +2163,12 @@ function StationDrawer({
   const eventMeta = SUB_EVENT_TYPE_META[eventType] ?? SUB_EVENT_TYPE_META.custom
   const totalScore = sumStationScore(station)
 
-  const handleSave = (form) => {
-    onSave(station.id, form)
+  const handleSave = async (form) => {
+    // Trả kết quả về cho StationForm để nó biết có nên xoá bản nháp hay không;
+    // đóng chế độ sửa như cũ dù lưu thành công hay không.
+    const result = await onSave(station.id, form)
     setEditing(false)
+    return result
   }
 
   return (
@@ -2592,10 +2621,19 @@ function StationsPage({
   )
 
   const [stationsByPhaseEvent, setStationsByPhaseEvent] = useState(() => loadStationsByPhaseEvent(phaseKeys))
-  const [selectedEventId, setSelectedEventId] = useState('')
-  const [selectedId, setSelectedId] = useState(null)
-  const [submissionsStationId, setSubmissionsStationId] = useState(null)
-  const [adding, setAdding] = useState(false)
+  // Event/trạm/form đang mở sống trên query string của chính /admin/stations,
+  // để reload và nút back trả về đúng màn hình thay vì văng về danh sách trống.
+  const [selectedEventId, setSelectedEventId] = useSearchParam('event', '')
+  const [selectedId, setSelectedId] = useSearchParam('station', '')
+  const [submissionsStationId, setSubmissionsStationId] = useSearchParam('submissions', '')
+  const [addingParam, setAddingParam] = useSearchParam('new', '')
+  const adding = addingParam === '1'
+  // Bọc useCallback để các effect bên dưới khai báo được nó trong dependency
+  // array mà không bị chạy lại mỗi lần render.
+  const setAdding = useCallback(
+    (value, options) => setAddingParam(value ? '1' : '', options),
+    [setAddingParam],
+  )
   const [listLoading, setListLoading] = useState(false)
   const [busyKey, setBusyKey] = useState('')
   const [apiError, setApiError] = useState('')
@@ -2646,20 +2684,30 @@ function StationsPage({
   }, [])
 
   useEffect(() => {
+    // Trang tự chọn event mặc định — dùng replace để việc này không tự tạo
+    // thêm một nấc lịch sử mà người dùng chưa từng bấm tới.
     if (phaseStationEvents.length === 0) {
-      setSelectedEventId('')
+      setSelectedEventId('', { replace: true })
       return
     }
 
     if (!selectedEventId || !phaseStationEvents.some(eventItem => eventItem.id === selectedEventId)) {
-      setSelectedEventId(phaseStationEvents[0].id)
+      setSelectedEventId(phaseStationEvents[0].id, { replace: true })
     }
-  }, [phaseStationEvents, selectedEventId])
+  }, [phaseStationEvents, selectedEventId, setSelectedEventId])
 
+  // Đổi phase/event làm danh sách trạm bên dưới đổi hẳn, nên trạm/form đang mở
+  // theo ngữ cảnh cũ không còn hợp lệ nữa — nhưng bỏ qua lần chạy đầu tiên lúc
+  // mount, kẻo một đường link sâu kiểu ?event=3&station=12 bị xoá ngay khi vừa vào.
+  const skipSelectionResetRef = useRef(true)
   useEffect(() => {
-    setSelectedId(null)
-    setAdding(false)
-  }, [phase, selectedEventId])
+    if (skipSelectionResetRef.current) {
+      skipSelectionResetRef.current = false
+      return
+    }
+    setSelectedId('', { replace: true })
+    setAdding(false, { replace: true })
+  }, [phase, selectedEventId, setSelectedId, setAdding])
 
   const reloadSelectedEvent = useCallback(async () => {
     if (!selectedEventId) return
@@ -2697,10 +2745,12 @@ function StationsPage({
   const phaseMeta = PHASE_META[phase] ?? PHASE_META.registration
 
   useEffect(() => {
+    // Id trong URL có thể không còn thuộc event/phase đang xem (đổi phase, đổi
+    // event, hoặc trạm đã bị xoá) — đóng êm thay vì giữ một tham chiếu treo.
     if (selectedId && !stations.some(station => station.id === selectedId)) {
-      setSelectedId(null)
+      setSelectedId('', { replace: true })
     }
-  }, [selectedId, stations])
+  }, [selectedId, stations, setSelectedId])
 
   const selected = stations.find(station => station.id === selectedId) ?? null
   const active = stations.filter(station => station.active)
@@ -2743,10 +2793,10 @@ function StationsPage({
 
   const saveStation = async (id, form) => {
     const station = stations.find(item => item.id === id)
-    if (!station) return
+    if (!station) return false
     if (!canEditStations) {
       setApiError(masterAdminOnlyMessage())
-      return
+      return false
     }
 
     try {
@@ -2757,12 +2807,15 @@ function StationsPage({
         body: buildStationPayload(form, station.order, form.active),
       })
       await reloadSelectedEvent()
+      // StationForm chỉ xoá bản nháp khi biết chắc lưu thành công.
+      return true
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
-        return
+        return false
       }
       setApiError(explainApiError(error))
+      return false
     } finally {
       setBusyKey('')
     }
@@ -2791,10 +2844,10 @@ function StationsPage({
   }
 
   const addStation = async (form) => {
-    if (!selectedEventId) return
+    if (!selectedEventId) return false
     if (!canEditStations) {
       setApiError(masterAdminOnlyMessage())
-      return
+      return false
     }
     try {
       setBusyKey('create')
@@ -2821,12 +2874,14 @@ function StationsPage({
       }
       setAdding(false)
       await reloadSelectedEvent()
+      return true
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
-        return
+        return false
       }
       setApiError(explainApiError(error))
+      return false
     } finally {
       setBusyKey('')
     }
@@ -2955,6 +3010,9 @@ function StationsPage({
             onSave={addStation}
             onCancel={() => setAdding(false)}
             allowInitialAssignment
+            // Trạm mới chưa có id — khoá nháp theo phase/event đang chọn để hai
+            // event khác nhau không lỡ trộn nháp "thêm trạm" của nhau.
+            draftKey={`station:new:${phase}:${selectedEventId}`}
           />
         </div>
       )}

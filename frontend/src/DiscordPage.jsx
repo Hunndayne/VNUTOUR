@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 import { Badge, CARD, Icon, PROVISION } from './ui.jsx'
+import { useEnumSearchParam, useSearchParam } from './router.js'
+import { DraftNotice, useDraftState } from './drafts.jsx'
 
 const SUB_TABS = [
   { key: 'overview', label: 'Tổng quan', icon: 'grid' },
@@ -250,13 +252,23 @@ function OverviewTab({ status, teams, queue, broadcasts, busyKey, onRetry, onRef
 }
 
 function MembersTab({ members, busyKey, onSync }) {
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filter, setFilter] = useState('all')
-  const [selectedMember, setSelectedMember] = useState(null)
+  // The search text lives in the URL (replace: true) so it survives a reload
+  // without turning every keystroke into a history entry; the filter tab and
+  // the open member are discrete clicks, so those push like a normal navigation.
+  const [search, setSearch] = useSearchParam('q', '')
+  const [debouncedSearch, setDebouncedSearch] = useState(search)
+  const [filter, setFilter] = useEnumSearchParam('filter', ['all', 'linked', 'unlinked'], 'all')
+  const [selectedMemberId, setSelectedMemberId] = useSearchParam('member', '')
   const [items, setItems] = useState(members.items || [])
   const [counts, setCounts] = useState(members.counts || { all: 0, linked: 0, unlinked: 0 })
   const [loading, setLoading] = useState(false)
+
+  // Looked up by id rather than stored whole, so a `?member=` from a reload or
+  // a shared link resolves against whatever the list just fetched.
+  const selectedMember = useMemo(
+    () => items.find(item => item.mssv === selectedMemberId) || null,
+    [items, selectedMemberId],
+  )
 
   useEffect(() => {
     setItems(members.items || [])
@@ -317,7 +329,7 @@ function MembersTab({ members, busyKey, onSync }) {
           <input
             type="text"
             value={search}
-            onChange={event => setSearch(event.target.value)}
+            onChange={event => setSearch(event.target.value, { replace: true })}
             placeholder="Tìm theo MSSV, tên, đội..."
             className="w-full rounded-lg border border-stone bg-white py-2.5 pl-10 pr-4 text-sm text-ink placeholder:text-ink/25 transition focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
           />
@@ -343,7 +355,7 @@ function MembersTab({ members, busyKey, onSync }) {
                     <td className="px-5 py-3.5">
                       <button
                         type="button"
-                        onClick={() => setSelectedMember(selectedMember?.mssv === member.mssv ? null : member)}
+                        onClick={() => setSelectedMemberId(selectedMemberId === member.mssv ? '' : member.mssv)}
                         className="text-left"
                       >
                         <p className="text-sm font-semibold text-ink">{member.fullName}</p>
@@ -399,7 +411,7 @@ function MembersTab({ members, busyKey, onSync }) {
             </div>
             <button
               type="button"
-              onClick={() => setSelectedMember(null)}
+              onClick={() => setSelectedMemberId('')}
               className="rounded-lg p-1.5 text-ink/25 transition hover:bg-paper hover:text-ink/55"
             >
               <Icon name="close" className="h-5 w-5" />
@@ -432,8 +444,13 @@ function MembersTab({ members, busyKey, onSync }) {
 }
 
 function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast }) {
-  const [tab, setTab] = useState('channels')
-  const [composeForm, setComposeForm] = useState({
+  // A plain in-page tab bar, not a modal — same reload/back concerns as the
+  // page-level `view` above, so it gets its own URL param.
+  const [tab, setTab] = useEnumSearchParam('panel', ['channels', 'compose', 'history'], 'channels')
+  // The broadcast text takes real effort to write, so it autosaves like the
+  // other long forms in this app; `discord:broadcast` is stable because there
+  // is only ever one compose draft at a time (no per-item id to key off).
+  const [composeForm, setComposeForm, composeDraft] = useDraftState('discord:broadcast', {
     title: '',
     message: '',
     target: 'all',
@@ -458,8 +475,10 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
 
   const handleSubmit = async () => {
     await onCreateBroadcast(composeForm)
+    composeDraft.clear()
     setComposeForm({ title: '', message: '', target: 'all', teamCodes: [] })
-    setTab('history')
+    // The page redirecting itself post-submit, not a tab the user clicked.
+    setTab('history', { replace: true })
   }
 
   return (
@@ -562,6 +581,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
       {tab === 'compose' && (
         <div className={`${CARD} p-5`}>
           <div className="space-y-4">
+            <DraftNotice draft={composeDraft} label="nội dung broadcast đang soạn dở" />
             <div>
               <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tiêu đề</label>
               <input
@@ -682,7 +702,9 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
 }
 
 export default function DiscordPage() {
-  const [activeTab, setActiveTab] = useState('overview')
+  // Page-level sub-tab, so it gets a real URL: `/admin/discord?view=members`
+  // reloads onto the right tab and back walks through tabs the user actually chose.
+  const [activeTab, setActiveTab] = useEnumSearchParam('view', ['overview', 'members', 'channels'], 'overview')
   const [loading, setLoading] = useState(true)
   const [busyKey, setBusyKey] = useState('')
   const [apiError, setApiError] = useState('')

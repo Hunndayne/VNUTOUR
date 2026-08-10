@@ -17,7 +17,11 @@ from api.services.station_service import (
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from api.services.submission_config_service import normalize_config, public_config
 from api.services.audit_service import record_audit
-from .views_shared import _json_body, _auth_or_401, _require_role, _require_master_admin
+from api.services import scan_token_service
+from api.services.assignment_service import is_collab_assigned
+from api.services.checkin_service import scan_event_checkin
+from api.services.program_service import get_current_sub_event
+from .views_shared import _json_body, _auth_or_401, _require_role, _require_master_admin, is_admin
 
 
 def _stored_submission_config(config):
@@ -414,6 +418,124 @@ def station_exit_view(request: HttpRequest):
         "exited_at": session.exited_at.isoformat() if session.exited_at else None,
         "score": session.score,
     })
+
+
+@csrf_exempt
+def station_scan_view(request: HttpRequest):
+    """POST: one scan does everything.
+
+    The QR carries the team, the station and the direction, so a coop just points
+    the camera — there is no station dropdown and no enter/exit toggle to get
+    wrong. A station QR (`t:<token>|s:<id>|d:in|out`) checks the team in or out at
+    that station, and only a coop assigned there (or an admin) may do it. A bare
+    event QR (`t:<token>`) checks the team into the running sub-event at the gate.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    raw_code = str((data.get("code") or "").strip())
+    if not raw_code:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    token, station_id, direction = scan_token_service.parse_scan(raw_code)
+
+    # ── Event-gate QR: no station named in the code ──────────────────────
+    if station_id is None:
+        sub_event = get_current_sub_event()
+        if not sub_event:
+            return JsonResponse({"error": "no_current_event"}, status=409)
+        checkin, err = scan_event_checkin(
+            qr_token=token,
+            phase_key=sub_event.phase.key,
+            event_id=sub_event.id,
+            scanner=acc,
+            ip=request.META.get("REMOTE_ADDR"),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
+        )
+        if err:
+            status_map = {
+                "team_not_found": 404, "qr_already_used": 409, "team_not_approved": 403,
+                "already_checked_in": 409, "event_not_found": 404,
+                "phase_not_found": 404, "team_not_in_phase": 403,
+                "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
+            }
+            return JsonResponse({"error": err}, status=status_map.get(err, 400))
+        return JsonResponse({
+            "kind": "event",
+            "id": checkin.id,
+            "team_code": checkin.team.code,
+            "team_name": checkin.team.name,
+            "event_name": checkin.sub_event.name,
+            "checked_in_at": checkin.created_at.isoformat(),
+        }, status=201)
+
+    # ── Station QR: the code names the station and the direction ─────────
+    station = Station.objects.select_related("sub_event__phase").filter(id=station_id).first()
+    if not station:
+        return JsonResponse({"error": "station_not_found"}, status=404)
+
+    # Only a coop posted to this station may scan it; admins scan anywhere.
+    if not is_admin(acc) and not is_collab_assigned(acc.id, station.id):
+        return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    is_exit = direction == "out"
+    if is_exit:
+        session, err = exit_station(
+            team_ref=token,
+            station_id=station.id,
+            operator=acc,
+        )
+    else:
+        # A missing direction is read as check-in: the entry QR is the first a
+        # team shows, and enter_station refuses a duplicate active session anyway.
+        session, err = enter_station(
+            team_ref=token,
+            station_id=station.id,
+            phase_key=station.sub_event.phase.key,
+            event_id=station.sub_event_id,
+            operator=acc,
+        )
+    if err:
+        status_map = {
+            "team_not_found": 404, "qr_already_used": 409, "station_not_found": 404,
+            "team_not_approved": 403, "station_inactive": 400, "policy_free_play": 400,
+            "station_full": 409, "session_already_active": 409,
+            "event_not_found": 404, "station_not_in_event": 400,
+            "team_not_in_phase": 403, "results_locked": 409,
+            "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
+            "session_not_found": 404,
+        }
+        return JsonResponse({"error": err}, status=status_map.get(err, 400))
+
+    record_audit(
+        actor=acc,
+        action="station.exit" if is_exit else "station.enter",
+        summary=f"Đội {session.team.code} {'rời' if is_exit else 'vào'} trạm {session.station.code}",
+        target_type="StationSession",
+        target_id=session.id,
+        after_data={"status": session.status, "score": session.score},
+        reversible=False,
+    )
+    return JsonResponse({
+        "kind": "exit" if is_exit else "enter",
+        "id": session.id,
+        "team_code": session.team.code,
+        "team_name": session.team.name,
+        "station_code": session.station.code,
+        "station_name": session.station.name,
+        "status": session.status,
+        "entered_at": session.entered_at.isoformat() if session.entered_at else None,
+        "exited_at": session.exited_at.isoformat() if session.exited_at else None,
+        "score": session.score,
+    }, status=200 if is_exit else 201)
 
 
 def recent_sessions_view(request: HttpRequest):

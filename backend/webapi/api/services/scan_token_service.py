@@ -41,6 +41,36 @@ def strip_prefix(raw_code: str) -> str:
     return clean
 
 
+def parse_scan(raw_code: str) -> tuple[str, int | None, str | None]:
+    """Split a scanned string into its token, station and direction.
+
+    A station QR now carries where and which way it is meant to be used, so a
+    coop no longer picks the station from a dropdown or flips an enter/exit
+    switch — the code itself says both. The shape is `t:<token>|s:<id>|d:in`
+    (or `d:out`); an event-gate QR stays a bare `t:<token>` with neither segment.
+
+    The token segment is returned untouched, prefix and all, so `resolve_team`
+    and `consume` keep operating on it exactly as before.
+    """
+    clean = str(raw_code or "").strip()
+    parts = clean.split("|")
+    token = parts[0].strip()
+    station_id: int | None = None
+    direction: str | None = None
+    for segment in parts[1:]:
+        segment = segment.strip()
+        if segment.startswith("s:"):
+            try:
+                station_id = int(segment[2:])
+            except ValueError:
+                station_id = None
+        elif segment.startswith("d:"):
+            value = segment[2:].strip().lower()
+            if value in ("in", "out"):
+                direction = value
+    return token, station_id, direction
+
+
 def resolve_team(raw_code: str) -> tuple[Team | None, str | None]:
     """Find the team a scanned string refers to.
 

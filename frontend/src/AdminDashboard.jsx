@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import logoImage from './assets/vnutour-logo.png'
 import TeamsPage from './TeamsPage.jsx'
 import StationsPage from './StationsPage.jsx'
@@ -11,6 +11,7 @@ import SettingsPage from './SettingsPage.jsx'
 import OperationsPage from './OperationsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, isMasterAdmin, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
+import { navigate, useLocation, useSearchParam } from './router.js'
 
 // ─────────────────────────────────────────────────────────────────────
 // Icon set — outline SVGs, no emoji
@@ -97,6 +98,21 @@ const NAV_GROUPS = [
 const TAB_META = {
   ...Object.fromEntries(NAV_GROUPS.flatMap(g => g.items).map(item => [item.key, item])),
   settings: { key: 'settings', label: 'Cài đặt tài khoản', icon: 'gear' },
+}
+
+// The sidebar used to flip a `useState`, so every tab lived at `/` and a reload
+// dropped the admin back on the overview. Each tab is a path now; the overview
+// keeps the bare `/admin` so the common case stays a clean URL.
+const ADMIN_BASE_PATH = '/admin'
+const DEFAULT_TAB = 'dashboard'
+
+function adminTabPath(tab) {
+  return tab && tab !== DEFAULT_TAB ? `${ADMIN_BASE_PATH}/${tab}` : ADMIN_BASE_PATH
+}
+
+function adminTabFromPath(path) {
+  const [, requested] = path.split('/').filter(Boolean)
+  return requested && TAB_META[requested] ? requested : DEFAULT_TAB
 }
 
 const PHASES = FIXED_PHASES
@@ -282,6 +298,21 @@ function UserMenu({ user, activeTab, onTabChange }) {
   )
 }
 
+/**
+ * A nav row that is a real link. Now that tabs have URLs, an admin can hover to
+ * see where a row goes and ctrl/middle-click to open it in a second tab —
+ * neither of which a `<button>` can offer. Plain left-clicks stay client-side.
+ */
+function NavLink({ href, onNavigate, className, children }) {
+  const onClick = (event) => {
+    if (event.defaultPrevented || event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    onNavigate()
+  }
+  return <a href={href} onClick={onClick} className={className}>{children}</a>
+}
+
 function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
   return (
     <>
@@ -312,10 +343,10 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
                 {group.items.map(item => {
                   const active = activeTab === item.key
                   return (
-                    <button
+                    <NavLink
                       key={item.key}
-                      type="button"
-                      onClick={() => onTabChange(item.key)}
+                      href={adminTabPath(item.key)}
+                      onNavigate={() => onTabChange(item.key)}
                       className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
                         active ? 'bg-gold/10 font-semibold text-ink' : 'font-medium text-ink/55 hover:bg-paper hover:text-ink'
                       }`}
@@ -323,7 +354,7 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
                       {active && <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gold" />}
                       <Icon name={item.icon} className="h-5 w-5" />
                       <span>{item.label}</span>
-                    </button>
+                    </NavLink>
                   )
                 })}
               </div>
@@ -737,11 +768,26 @@ function PlaceholderPage({ title, icon }) {
 // Main
 // ─────────────────────────────────────────────────────────────────────
 function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('dashboard')
+  const location = useLocation()
+  const activeTab = adminTabFromPath(location.path)
+  const setActiveTab = useCallback((tab) => { navigate(adminTabPath(tab)) }, [])
+
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [user, setUser] = useState(getUser())
   const [programState, setProgramState] = useState(() => normalizeProgramForFrontend())
-  const [scorePhase, setScorePhase] = useState('')
+  // The scoreboard can be read for a phase other than the one currently
+  // running, so that choice is a view filter in the URL rather than a change
+  // to the programme itself.
+  const [scorePhase, setScorePhase] = useSearchParam('phase', '')
+
+  // `/admin/dashboard` and `/admin/nonsense` both mean the overview — rewrite
+  // them so there is exactly one URL per tab.
+  useEffect(() => {
+    const canonical = adminTabPath(activeTab)
+    if (location.path !== canonical) {
+      navigate(canonical, { replace: true })
+    }
+  }, [activeTab, location.path])
   const [overview, setOverview] = useState(null)
   const [activityItems, setActivityItems] = useState([])
   const [scoreboard, setScoreboard] = useState(null)
@@ -1045,6 +1091,10 @@ function AdminDashboard() {
               <TeamsPage />
             ) : activeTab === 'scores' ? (
               <ScoreManagementPage
+                // Its score drafts are keyed by phase, and `useDraftState`
+                // reads its baseline once — so a phase switch has to be a
+                // remount, otherwise the new phase inherits the old one's form.
+                key={scoreViewPhase}
                 phase={scoreViewPhase}
                 phaseOptions={phaseOptions}
                 phaseSchedule={programState.phaseSchedule}

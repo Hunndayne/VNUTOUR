@@ -224,6 +224,7 @@ class SubEvent(models.Model):
     TYPE_STATION_RUN = "station_run"
     TYPE_QUIZ = "quiz"
     TYPE_SUBMISSION = "submission"
+    TYPE_SURVEY = "survey"
     TYPE_CUSTOM = "custom"
     TYPE_CHOICES = [
         (TYPE_WORKFLOW, "Workflow"),
@@ -231,6 +232,7 @@ class SubEvent(models.Model):
         (TYPE_STATION_RUN, "Station Run"),
         (TYPE_QUIZ, "Quiz"),
         (TYPE_SUBMISSION, "Submission"),
+        (TYPE_SURVEY, "Survey"),
         (TYPE_CUSTOM, "Custom"),
     ]
 
@@ -713,6 +715,41 @@ class TeamFormVariant(models.Model):
 
     def __str__(self) -> str:
         return f"Variant for {self.team.code} @ {self.station.code} ({len(self.item_ids)} câu)"
+
+
+# =====================================================================
+# 14c. TeamFormDraft
+# =====================================================================
+
+class TeamFormDraft(models.Model):
+    """The in-progress answers a team is still typing, shared across its members.
+
+    Kept apart from `StationSubmission` on purpose: a draft is not a submission
+    attempt, so saving one must never touch submission status, count against
+    `limits.maxSubmissions`, or trigger grading. It also carries no attachments —
+    files live on whichever device picked them and cannot be synced through JSON.
+    """
+
+    team = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="form_drafts",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="team_form_drafts",
+    )
+    response_payload = models.JSONField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="updated_form_drafts",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "team_form_draft"
+        unique_together = [("team", "station")]
+
+    def __str__(self) -> str:
+        return f"Draft for {self.team.code} @ {self.station.code}"
 
 
 # =====================================================================

@@ -16,7 +16,10 @@ from api.services.auth_service import (
     find_by_token, register_account, register_with_google,
 )
 from api.services.registration_service import validate_account_mssv_claim
-from api.services.team_service import link_account_profile, registration_is_open
+from api.services.team_service import (
+    link_account_profile, registration_is_open,
+    auto_link_participant_by_verified_email,
+)
 from api.models import Account, Participant
 
 from .views_shared import (
@@ -467,6 +470,11 @@ def google_login_view(request: HttpRequest):
         acc = Account.objects.filter(email__iexact=email, is_active=True).first()
         if not acc:
             return JsonResponse({"error": "registration_closed"}, status=403)
+        # A pre-registered member logging in for the first time still gets
+        # adopted into their team — linking to an existing team is not a new
+        # registration, so it is allowed even while sign-ups are closed.
+        if not acc.mssv:
+            auto_link_participant_by_verified_email(acc)
         token = generate_session(acc)
         resp = JsonResponse({
             "token": token,
@@ -479,6 +487,11 @@ def google_login_view(request: HttpRequest):
     acc, is_new, err = register_with_google(email, google_sub, google_name)
     if err:
         return JsonResponse({"error": err}, status=500)
+
+    # If a captain pre-registered this member, adopt their profile by the
+    # Google-verified email so they skip the MSSV supplementary step entirely.
+    if not acc.mssv:
+        auto_link_participant_by_verified_email(acc)
 
     token = generate_session(acc)
     resp = JsonResponse({

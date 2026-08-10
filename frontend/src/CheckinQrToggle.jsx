@@ -80,7 +80,8 @@ export default function CheckinQrToggle() {
             QR điểm danh cho đội trong phase hiện tại
           </h3>
           <p className="mt-1 text-sm leading-6 text-ink/55">
-            Mỗi lần bật tạo QR mới cho toàn bộ đội trong phase hiện tại (QR cũ hết hiệu lực). Mỗi đội dùng một QR cho mọi trạm.
+            Mỗi lần bật tạo QR mới cho toàn bộ đội trong phase hiện tại (QR cũ hết hiệu lực). Khi vào một trạm,
+            màn hình của đội tự sinh mã check-in và check-out riêng cho trạm đó — CTV chỉ việc quét.
           </p>
           {enabled && state?.rotated_at && (
             <p className="mt-1 text-xs text-ink/40">

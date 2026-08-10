@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CARD, Icon } from './ui.jsx'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 
 // ─────────────────────────────────────────────────────────────────────
 // Helpers
@@ -114,32 +115,33 @@ function AvatarSection({ avatar, username, onAvatarChange }) {
 // Profile form
 // ─────────────────────────────────────────────────────────────────────
 function ProfileSection({ profile, onSave, saving }) {
-  const [form, setForm] = useState({ ...profile })
-  const [dirty, setDirty] = useState(false)
-
-  useEffect(() => {
-    setForm({ ...profile })
-    setDirty(false)
-  }, [profile])
+  // Keyed remount on successful save (see SettingsPage) gives this a fresh
+  // baseline each time, so `draft.dirty` reflects "since the last save" and
+  // not "since the page first loaded".
+  const [form, setForm, draft] = useDraftState('settings:profile', () => ({ ...profile }))
 
   const set = (key, value) => {
     setForm(f => ({ ...f, [key]: value }))
-    setDirty(true)
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const payload = {}
     for (const key of ['full_name', 'mssv', 'phone', 'school', 'faculty']) {
       if (form[key] !== profile[key]) {
         payload[key] = form[key]
       }
     }
-    onSave(payload)
-    setDirty(false)
+    const ok = await onSave(payload)
+    // A successful save is echoed back as a fresh `profile` prop, which remounts
+    // this component (new key) and resets the baseline — but that happens a
+    // render later, so the now-stale draft would otherwise get rewritten to
+    // localStorage by the debounce effect before the remount lands.
+    if (ok) draft.clear()
   }
 
   return (
     <div className="space-y-4">
+      <DraftNotice draft={draft} label="thông tin hồ sơ" />
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className={LABEL_CLASS}>Tên hiển thị</label>
@@ -205,7 +207,7 @@ function ProfileSection({ profile, onSave, saving }) {
       <button
         type="button"
         onClick={handleSave}
-        disabled={!dirty || saving}
+        disabled={!draft.dirty || saving}
         className={PRIMARY_BTN}
       >
         <Icon name="checkPlain" className="h-4 w-4" />
@@ -399,6 +401,11 @@ function SettingsPage() {
   const [busyKey, setBusyKey] = useState('')
   const [apiError, setApiError] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
+  // Bumped only after a profile-field save lands, so ProfileSection remounts
+  // and picks up the saved values as its new draft baseline. Other reloads
+  // (avatar, Google link) leave it alone — remounting on those too would flash
+  // a spurious "đã khôi phục bản nháp" notice over an unrelated, still-dirty edit.
+  const [profileVersion, setProfileVersion] = useState(0)
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || null
 
   const loadProfile = useCallback(async () => {
@@ -443,15 +450,19 @@ function SettingsPage() {
     return () => { cancelled = true }
   }, [loadProfile])
 
+  // Reports whether `task` completed so callers (ProfileSection's save) can
+  // tell a real success apart from an error that's already been shown here.
   const withBusy = async (key, task) => {
     setBusyKey(key)
     setApiError('')
     setSuccessMsg('')
     try {
       await task()
+      return true
     } catch (error) {
-      if (error?.status === 401) { logoutAndRedirect('/login'); return }
+      if (error?.status === 401) { logoutAndRedirect('/login'); return false }
       setApiError(explainApiError(error))
+      return false
     } finally {
       setBusyKey('')
     }
@@ -460,6 +471,7 @@ function SettingsPage() {
   const handleSaveProfile = (payload) => withBusy('profile', async () => {
     await apiRequest('/auth/me', { method: 'PATCH', body: payload })
     await loadProfile()
+    setProfileVersion(v => v + 1)
     setSuccessMsg('Đã cập nhật hồ sơ.')
     setTimeout(() => setSuccessMsg(''), 3000)
   })
@@ -556,6 +568,7 @@ function SettingsPage() {
             onAvatarChange={handleAvatarChange}
           />
           <ProfileSection
+            key={profileVersion}
             profile={profile}
             onSave={handleSaveProfile}
             saving={busyKey === 'profile'}

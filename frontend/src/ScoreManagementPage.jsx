@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 import { Badge, CARD, Icon } from './ui.jsx'
 import { SUB_EVENT_TYPE_META, getPhaseInfo } from './adminProgram.js'
+import { DraftNotice, useDraftState } from './drafts.jsx'
 
 const ENTRY_KIND_META = {
   station: { label: 'Điểm trạm', cls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]' },
@@ -141,7 +142,13 @@ function nextManualSelection(leaderboard, slots, previousSelection) {
   return leaderboard.slice(0, slots).map((row) => row.teamCode)
 }
 
-export default function ScoreManagementPage({
+// `phase` đổi qua prop chứ component không unmount theo nó, nên mọi state ở
+// đây (kể cả các bản nháp khoá theo phase) vẫn sống sót qua một lần đổi phase
+// nếu để nguyên. Component con này được `key={phase}` ở dưới để buộc remount
+// mỗi khi phase đổi — nhờ vậy input/nháp của phase cũ không bao giờ rò sang
+// phase mới, và mọi state coi mỗi phase là một lượt tải mới, y hệt một lần
+// vào trang.
+function ScoreManagementView({
   phase,
   phaseOptions,
   phaseSchedule,
@@ -152,19 +159,19 @@ export default function ScoreManagementPage({
   const [busyKey, setBusyKey] = useState('')
   const [apiError, setApiError] = useState('')
   const [scoreboard, setScoreboard] = useState(() => normalizeScoreboard())
-  const [entryForm, setEntryForm] = useState({
+  const [entryForm, setEntryForm, entryDraft] = useDraftState(`score-entry:${phase}`, {
     teamCode: '',
     eventId: '',
     kind: 'bonus',
     points: 3,
     note: '',
   })
-  const [ruleForm, setRuleForm] = useState({
+  const [ruleForm, setRuleForm, ruleDraft] = useDraftState(`score-rule:${phase}`, {
     nextPhaseKey: '',
     mode: 'top_n',
     slots: 0,
   })
-  const [manualSelection, setManualSelection] = useState([])
+  const [manualSelection, setManualSelection, manualDraft] = useDraftState(`score-manual:${phase}`, [])
 
   const loadScoreboard = useCallback(async () => {
     const payload = await apiRequest(`/scores/phases/${phase}`)
@@ -201,20 +208,40 @@ export default function ScoreManagementPage({
     }
   }, [phase])
 
+  // Đồng bộ ruleForm theo luật advancement server vừa trả về. Lần đồng bộ đầu
+  // tiên sau khi phase này tải xong là ngoại lệ: nếu vừa khôi phục một bản
+  // nháp luật, đừng đè nó bằng luật cũ (chưa lưu) trên server ngay lập tức —
+  // đó chính là lý do bản nháp tồn tại. Các lần đồng bộ sau (do admin tự lưu
+  // hoặc publish) vẫn phải ăn theo giá trị server như cũ. `ruleDraft.restored`
+  // cố tình không nằm trong deps: nó tắt (false) khi admin bấm "Tiếp tục" trên
+  // banner nháp, và ta không muốn thao tác đó tự kích hoạt lại effect rồi xoá
+  // mất đúng bản nháp vừa được giữ lại.
+  const ruleHydratedRef = useRef(false)
   useEffect(() => {
+    if (loading) return
+    if (!ruleHydratedRef.current) {
+      ruleHydratedRef.current = true
+      if (ruleDraft.restored) return
+    }
     setRuleForm({
       nextPhaseKey: scoreboard.advancement.nextPhaseKey || '',
       mode: scoreboard.advancement.mode || 'top_n',
       slots: scoreboard.advancement.slots || 0,
     })
-  }, [scoreboard.advancement.lastPublishedAt, scoreboard.advancement.mode, scoreboard.advancement.nextPhaseKey, scoreboard.advancement.slots])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, scoreboard.advancement.lastPublishedAt, scoreboard.advancement.mode, scoreboard.advancement.nextPhaseKey, scoreboard.advancement.slots])
 
   const scoreEvents = useMemo(
     () => (scoreboard.subEvents.length > 0 ? scoreboard.subEvents : phaseEvents),
     [phaseEvents, scoreboard.subEvents],
   )
 
+  // Chờ scoreboard tải xong rồi mới tự chọn/lọc teamCode: chạy lúc roster vẫn
+  // rỗng (trước khi fetch xong) sẽ khiến nhánh "roster rỗng" xoá teamCode vừa
+  // khôi phục từ bản nháp về '' trước khi nó kịp được đối chiếu với roster
+  // thật của phase này.
   useEffect(() => {
+    if (loading) return
     if (scoreboard.roster.length === 0) {
       setEntryForm((current) => ({ ...current, teamCode: '' }))
       return
@@ -222,9 +249,12 @@ export default function ScoreManagementPage({
     if (!entryForm.teamCode || !scoreboard.roster.some((team) => team.teamCode === entryForm.teamCode)) {
       setEntryForm((current) => ({ ...current, teamCode: scoreboard.roster[0].teamCode }))
     }
-  }, [entryForm.teamCode, scoreboard.roster])
+  }, [loading, entryForm.teamCode, scoreboard.roster, setEntryForm])
 
+  // Cùng lý do cho eventId: đợi scoreEvents thật (chứ không phải danh sách
+  // rỗng lúc mới mount) rồi mới đối chiếu.
   useEffect(() => {
+    if (loading) return
     if (scoreEvents.length === 0) {
       setEntryForm((current) => ({ ...current, eventId: '' }))
       return
@@ -232,12 +262,20 @@ export default function ScoreManagementPage({
     if (!entryForm.eventId || !scoreEvents.some((eventItem) => String(eventItem.id) === entryForm.eventId)) {
       setEntryForm((current) => ({ ...current, eventId: String(scoreEvents[0].id) }))
     }
-  }, [entryForm.eventId, scoreEvents])
+  }, [loading, entryForm.eventId, scoreEvents, setEntryForm])
 
+  // `nextManualSelection` hoà giải lựa chọn hiện tại với leaderboard: giữ các
+  // đội còn hợp lệ, cắt theo số suất, và chỉ rơi về top-N khi không còn đội
+  // nào hợp lệ. Chạy việc này trước khi scoreboard tải xong sẽ thấy leaderboard
+  // rỗng — "không đội nào hợp lệ" lúc đó chỉ vì chưa có dữ liệu, không phải vì
+  // bản nháp đã lỗi thời — và xoá nhầm lựa chọn tay vừa khôi phục thành top-N
+  // mà admin chưa từng chọn. Đợi scoreboard tải xong mới hoà giải để tránh
+  // đúng cái bẫy đó.
   useEffect(() => {
+    if (loading) return
     if (ruleForm.mode !== 'manual') return
     setManualSelection((current) => nextManualSelection(scoreboard.leaderboard, Math.max(0, ruleForm.slots), current))
-  }, [ruleForm.mode, ruleForm.slots, scoreboard.leaderboard])
+  }, [loading, ruleForm.mode, ruleForm.slots, scoreboard.leaderboard, setManualSelection])
 
   const phaseInfo = getPhaseInfo(phase)
   const schedule = phaseSchedule[phase]
@@ -330,6 +368,7 @@ export default function ScoreManagementPage({
       setApiError('')
       await saveAdvancementRule()
       await loadScoreboard()
+      ruleDraft.clear()
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
@@ -354,6 +393,10 @@ export default function ScoreManagementPage({
           : {},
       })
       await loadScoreboard()
+      // Publish chốt cả luật lẫn danh sách chọn tay đã dùng — không còn gì
+      // "đang soạn dở" để giữ nháp nữa.
+      ruleDraft.clear()
+      manualDraft.clear()
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
@@ -385,6 +428,7 @@ export default function ScoreManagementPage({
         },
       })
       setEntryForm((current) => ({ ...current, note: '' }))
+      entryDraft.clear()
       await loadScoreboard()
     } catch (error) {
       if (error?.status === 401) {
@@ -550,6 +594,8 @@ export default function ScoreManagementPage({
 
           {ruleForm.nextPhaseKey ? (
             <>
+              <DraftNotice draft={ruleDraft} label="luật đi tiếp đang chỉnh" className="mt-4" />
+
               <div className="mt-4">
                 <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
                   Phase đích
@@ -606,6 +652,9 @@ export default function ScoreManagementPage({
                   <p className="text-sm font-semibold text-ink">Preview đội được đẩy</p>
                   <span className="font-mono text-xs text-ink/40">{qualifiedTeams.length}/{ruleForm.slots}</span>
                 </div>
+                {ruleForm.mode === 'manual' && (
+                  <DraftNotice draft={manualDraft} label="danh sách chọn tay đang chỉnh" className="mt-3" />
+                )}
                 <div className="mt-3 space-y-2">
                   {qualifiedTeams.length > 0 ? qualifiedTeams.map((team) => (
                     <div key={team.teamCode} className="flex items-center justify-between gap-3 text-sm">
@@ -777,6 +826,8 @@ export default function ScoreManagementPage({
           <Badge label={`${manualEntries.length} dòng`} cls="bg-ink/[0.07] text-ink/55" />
         </div>
 
+        <DraftNotice draft={entryDraft} label="dòng điểm đang nhập" className="mt-4" />
+
         <div className="mt-4 grid gap-3 lg:grid-cols-2">
           <div>
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">Đội nhận điểm</label>
@@ -901,4 +952,10 @@ export default function ScoreManagementPage({
       </section>
     </div>
   )
+}
+
+export default function ScoreManagementPage(props) {
+  // `key={props.phase}` buộc remount toàn bộ view trên mỗi lần đổi phase —
+  // xem comment ở đầu ScoreManagementView để biết lý do bắt buộc phải vậy.
+  return <ScoreManagementView key={props.phase} {...props} />
 }

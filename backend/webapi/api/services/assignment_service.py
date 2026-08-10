@@ -33,6 +33,21 @@ def _is_current_assignment(assignment: StationAssignment, now: datetime) -> bool
     return True
 
 
+def is_collab_assigned(collab_id: int, station_id: int) -> bool:
+    """Whether a collab holds an active assignment to a station.
+
+    The gate for scanning a station's QR: only a coop posted to that station may
+    check teams in or out there, now that the station comes from the code rather
+    than a dropdown the coop could point anywhere. Admins bypass this and are
+    checked by the caller. The shift window is deliberately not enforced here —
+    "assigned" is the organiser's intent; a drifting device clock should not lock
+    a posted coop out mid-event.
+    """
+    return StationAssignment.objects.filter(
+        collab_id=collab_id, station_id=station_id, active=True,
+    ).exists()
+
+
 def list_assignments(
     *,
     phase_key: str | None = None,

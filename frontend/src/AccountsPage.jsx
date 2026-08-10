@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, ROLE_MASTER_ADMIN } from './api.js'
+import { useSearchParam } from './router.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 
 const ROLE_DEF = {
   master_admin: { label: 'Master admin', cls: 'bg-ink text-white' },
@@ -60,19 +62,38 @@ function normalizeAccount(account) {
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([])
   const [counts, setCounts] = useState(EMPTY_COUNTS)
-  const [filter, setFilter] = useState('all')
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
-  const [editing, setEditing] = useState(null)
+  const [filter, setFilter] = useSearchParam('role', 'all')
+  const [qParam, setQParam] = useSearchParam('q', '')
+  const [search, setSearch] = useState(() => qParam)
+  const [debouncedSearch, setDebouncedSearch] = useState(() => qParam)
+  const [newParam, setNewParam] = useSearchParam('new', '')
+  const showCreate = newParam === '1'
+  // useSearchParam's setter stringifies whatever it's given, so a functional
+  // updater has to be resolved against the current value here first.
+  const setShowCreate = (next) => {
+    setNewParam((typeof next === 'function' ? next(showCreate) : next) ? '1' : '')
+  }
+  const [accountParam, setAccountParam] = useSearchParam('account', '')
+  const editing = accountParam || null
+  const setEditing = (next) => setAccountParam(next || '')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [apiError, setApiError] = useState('')
-  const [createForm, setCreateForm] = useState({ username: '', email: '', password: '', role: 'collab', fullName: '', mssv: '' })
-  const [editForm, setEditForm] = useState({ email: '', mssv: '', fullName: '', role: 'participant', password: '', isActive: true })
+  // Mật khẩu tạo tài khoản không bao giờ vào bản nháp — tách riêng khỏi
+  // `createForm`, phần được persist qua useDraftState.
+  const [createPassword, setCreatePassword] = useState('')
+  const [createForm, setCreateForm, createDraft] = useDraftState('account:create', {
+    username: '', email: '', role: 'collab', fullName: '', mssv: '',
+  })
   // Only a master admin may hand out the master admin role; the backend answers
   // 403 for anyone else, so plain admins never see the option.
   const canGrantMasterAdmin = isMasterAdmin()
+
+  // Gõ tìm kiếm chỉ đẩy vào URL sau khi đã debounce (dùng lại debouncedSearch
+  // sẵn có) và luôn bằng replace, để mỗi ký tự gõ không đẻ thêm một entry lịch sử.
+  useEffect(() => {
+    setQParam(debouncedSearch, { replace: true })
+  }, [debouncedSearch, setQParam])
 
   const loadAccounts = useCallback(async () => {
     const params = new URLSearchParams({ limit: '200' })
@@ -144,30 +165,33 @@ export default function AccountsPage() {
       body: {
         username: createForm.username.trim(),
         email: createForm.email.trim(),
-        password: createForm.password,
+        password: createPassword,
         role: createForm.role,
         mssv: createForm.mssv.trim() || undefined,
         full_name: createForm.fullName.trim() || undefined,
       },
     })
     await loadAccounts()
-    setCreateForm({ username: '', email: '', password: '', role: 'collab', fullName: '', mssv: '' })
+    setCreateForm({ username: '', email: '', role: 'collab', fullName: '', mssv: '' })
+    setCreatePassword('')
+    createDraft.clear()
     setShowCreate(false)
   })
 
-  const handleEditSave = (username) => withBusy('edit', async () => {
+  const handleEditSave = (username, form, editDraft) => withBusy('edit', async () => {
     await apiRequest(`/admin/accounts/${username}`, {
       method: 'PATCH',
       body: {
-        email: editForm.email.trim(),
-        mssv: editForm.mssv.trim() || '',
-        full_name: editForm.fullName.trim() || '',
-        role: editForm.role,
-        is_active: editForm.isActive,
-        password: editForm.password || undefined,
+        email: form.email.trim(),
+        mssv: form.mssv.trim() || '',
+        full_name: form.fullName.trim() || '',
+        role: form.role,
+        is_active: form.isActive,
+        password: form.password || undefined,
       },
     })
     await loadAccounts()
+    editDraft.clear()
     setEditing(null)
   })
 
@@ -187,14 +211,6 @@ export default function AccountsPage() {
 
   const openEdit = (acct) => {
     setEditing(acct.username)
-    setEditForm({
-      email: acct.email || '',
-      mssv: acct.mssv || '',
-      fullName: acct.fullName || '',
-      role: acct.role || 'participant',
-      password: '',
-      isActive: acct.isActive,
-    })
   }
 
   return (
@@ -259,6 +275,7 @@ export default function AccountsPage() {
               <Icon name="close" className="h-5 w-5" />
             </button>
           </div>
+          <DraftNotice draft={createDraft} label="tài khoản đang tạo" className="mb-4" />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Username *</label>
@@ -270,7 +287,7 @@ export default function AccountsPage() {
             </div>
             <div>
               <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Mật khẩu *</label>
-              <input type="password" value={createForm.password} onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
+              <input type="password" value={createPassword} onChange={e => setCreatePassword(e.target.value)} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
             </div>
             <div>
               <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Vai trò</label>
@@ -291,7 +308,7 @@ export default function AccountsPage() {
             </div>
           </div>
           <div className="mt-4 flex items-center gap-3">
-            <button type="button" onClick={handleCreate} disabled={!createForm.username.trim() || !createForm.email.trim() || !createForm.password.trim() || busy === 'create'} className="rounded-lg bg-trail px-5 py-2 text-sm font-semibold text-white transition hover:bg-trail/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed">
+            <button type="button" onClick={handleCreate} disabled={!createForm.username.trim() || !createForm.email.trim() || !createPassword.trim() || busy === 'create'} className="rounded-lg bg-trail px-5 py-2 text-sm font-semibold text-white transition hover:bg-trail/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed">
               {busy === 'create' ? 'Đang tạo...' : 'Tạo tài khoản'}
             </button>
             <button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-stone bg-white px-4 py-2 text-sm text-ink/60 transition hover:bg-paper">
@@ -393,78 +410,105 @@ export default function AccountsPage() {
       {editing && (() => {
         const acct = accounts.find(a => a.username === editing)
         if (!acct) return null
+        // Keyed by username so switching to a different account remounts the
+        // drawer — that's what makes its useDraftState pick up a fresh baseline
+        // instead of carrying over the previous account's edits.
         return (
-          <div className="fixed inset-0 z-50">
-            <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={() => setEditing(null)} />
-            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col border-l border-stone bg-paper shadow-2xl animate-[fadeIn_0.15s_ease-out]">
-              <div className="flex items-center justify-between gap-3 border-b border-stone bg-white px-5 py-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded-full font-display text-xs font-bold ${avatarCls(acct.role)}`}>
-                      {acct.username.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <h3 className="font-display text-lg font-bold text-ink">{acct.username}</h3>
-                      <p className="font-mono text-xs text-ink/40">{acct.email}</p>
-                    </div>
-                  </div>
-                </div>
-                <button type="button" onClick={() => setEditing(null)} className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink">
-                  <Icon name="close" className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Email</label>
-                    <input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">MSSV</label>
-                    <input type="text" value={editForm.mssv} onChange={e => setEditForm(f => ({ ...f, mssv: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Họ tên</label>
-                    <input type="text" value={editForm.fullName} onChange={e => setEditForm(f => ({ ...f, fullName: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Đội</label>
-                    <input type="text" value={acct.team ? `${acct.teamCode ? `${acct.teamCode} · ` : ''}${acct.team}` : 'Chưa có đội'} readOnly className="w-full rounded-lg border border-stone bg-paper px-3 py-2 text-sm text-ink/55" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Vai trò</label>
-                    <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10">
-                      {(canGrantMasterAdmin || editForm.role === ROLE_MASTER_ADMIN) && <option value="master_admin">Master admin</option>}
-                      <option value="admin">Admin</option>
-                      <option value="collab">Collab</option>
-                      <option value="participant">Participant</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Mật khẩu mới</label>
-                    <input type="password" value={editForm.password} onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
-                  </div>
-                </div>
-
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input type="checkbox" checked={editForm.isActive} onChange={e => setEditForm(f => ({ ...f, isActive: e.target.checked }))} className="h-4 w-4 rounded border-stone text-trail focus:ring-trail" />
-                  <span className="text-sm text-ink/70">Tài khoản hoạt động</span>
-                </label>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 border-t border-stone bg-white px-5 py-4">
-                <button type="button" onClick={() => setEditing(null)} className="rounded-lg border border-stone bg-white px-4 py-2 text-sm font-medium text-ink/60 transition hover:bg-paper">
-                  Hủy
-                </button>
-                <button type="button" onClick={() => handleEditSave(acct.username)} className="rounded-lg bg-trail px-5 py-2 text-sm font-semibold text-white transition hover:bg-trail/90 active:scale-[0.98]">
-                  {busy === 'edit' ? 'Đang lưu...' : 'Lưu thay đổi'}
-                </button>
-              </div>
-            </aside>
-          </div>
+          <EditAccountDrawer
+            key={editing}
+            acct={acct}
+            canGrantMasterAdmin={canGrantMasterAdmin}
+            busy={busy}
+            onClose={() => setEditing(null)}
+            onSave={handleEditSave}
+          />
         )
       })()}
+    </div>
+  )
+}
+
+function EditAccountDrawer({ acct, canGrantMasterAdmin, busy, onClose, onSave }) {
+  const [editForm, setEditForm, editDraft] = useDraftState(`account:${acct.username}:edit`, () => ({
+    email: acct.email || '',
+    mssv: acct.mssv || '',
+    fullName: acct.fullName || '',
+    role: acct.role || 'participant',
+    isActive: acct.isActive,
+  }))
+  // Mật khẩu mới không bao giờ được lưu nháp — luôn trống mỗi lần mở lại đội này.
+  const [password, setPassword] = useState('')
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col border-l border-stone bg-paper shadow-2xl animate-[fadeIn_0.15s_ease-out]">
+        <div className="flex items-center justify-between gap-3 border-b border-stone bg-white px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className={`flex h-8 w-8 items-center justify-center rounded-full font-display text-xs font-bold ${avatarCls(acct.role)}`}>
+                {acct.username.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <h3 className="font-display text-lg font-bold text-ink">{acct.username}</h3>
+                <p className="font-mono text-xs text-ink/40">{acct.email}</p>
+              </div>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink">
+            <Icon name="close" className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <DraftNotice draft={editDraft} label="chỉnh sửa tài khoản" />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Email</label>
+              <input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">MSSV</label>
+              <input type="text" value={editForm.mssv} onChange={e => setEditForm(f => ({ ...f, mssv: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Họ tên</label>
+              <input type="text" value={editForm.fullName} onChange={e => setEditForm(f => ({ ...f, fullName: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Đội</label>
+              <input type="text" value={acct.team ? `${acct.teamCode ? `${acct.teamCode} · ` : ''}${acct.team}` : 'Chưa có đội'} readOnly className="w-full rounded-lg border border-stone bg-paper px-3 py-2 text-sm text-ink/55" />
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Vai trò</label>
+              <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10">
+                {(canGrantMasterAdmin || editForm.role === ROLE_MASTER_ADMIN) && <option value="master_admin">Master admin</option>}
+                <option value="admin">Admin</option>
+                <option value="collab">Collab</option>
+                <option value="participant">Participant</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Mật khẩu mới</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
+            </div>
+          </div>
+
+          <label className="flex cursor-pointer items-center gap-2">
+            <input type="checkbox" checked={editForm.isActive} onChange={e => setEditForm(f => ({ ...f, isActive: e.target.checked }))} className="h-4 w-4 rounded border-stone text-trail focus:ring-trail" />
+            <span className="text-sm text-ink/70">Tài khoản hoạt động</span>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-stone bg-white px-5 py-4">
+          <button type="button" onClick={onClose} className="rounded-lg border border-stone bg-white px-4 py-2 text-sm font-medium text-ink/60 transition hover:bg-paper">
+            Hủy
+          </button>
+          <button type="button" onClick={() => onSave(acct.username, { ...editForm, password }, editDraft)} className="rounded-lg bg-trail px-5 py-2 text-sm font-semibold text-white transition hover:bg-trail/90 active:scale-[0.98]">
+            {busy === 'edit' ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </button>
+        </div>
+      </aside>
     </div>
   )
 }

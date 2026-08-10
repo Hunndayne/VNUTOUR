@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FIXED_PHASES } from './adminProgram.js'
 import { apiDownload, apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect } from './api.js'
+import { useEnumSearchParam, useSearchParam } from './router.js'
 import { CARD, Icon } from './ui.jsx'
+
+const TABS = ['audit', 'report', 'backup']
 
 function saveDownload({ blob, filename }) {
   const url = URL.createObjectURL(blob)
@@ -45,10 +48,12 @@ function isUndoLocked(item, masterAdmin) {
 }
 
 export default function OperationsPage() {
-  const [tab, setTab] = useState('audit')
+  const [tab, setTab] = useEnumSearchParam('view', TABS, 'audit')
   const [auditLogs, setAuditLogs] = useState([])
   const [backups, setBackups] = useState([])
-  const [phase, setPhase] = useState('')
+  // Bộ lọc báo cáo theo phase — đưa vào URL để link/reload không mất, nhưng
+  // KHÔNG lưu nháp: đây là filter, không phải nội dung soạn dở.
+  const [phase, setPhase] = useSearchParam('phase', '')
   const [restoreName, setRestoreName] = useState('')
   const [restoreConfirmation, setRestoreConfirmation] = useState('')
   const [restoreFile, setRestoreFile] = useState(null)

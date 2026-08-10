@@ -10,14 +10,18 @@ import {
   normalizeProgramForFrontend,
 } from './api.js'
 import { Badge, CARD, Icon } from './ui.jsx'
+import { useSearchParam } from './router.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 
 const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.92] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
 const SECONDARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-lg border border-stone bg-white px-4 py-2.5 text-sm font-semibold text-ink/65 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-45'
 
-const MODE_META = {
+// Mã QR tự nói nó là check-in sự kiện, vào trạm hay rời trạm; đây chỉ là nhãn
+// để hiển thị lại kết quả server trả về, không còn là nút CTV bấm để chọn.
+const RESULT_META = {
   event: { label: 'Check-in sự kiện', badgeCls: 'bg-trail/12 text-trail' },
-  station_enter: { label: 'Vào trạm', badgeCls: 'bg-gold/15 text-[#9A6B12]' },
-  station_exit: { label: 'Rời trạm', badgeCls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]' },
+  enter: { label: 'Vào trạm', badgeCls: 'bg-gold/15 text-[#9A6B12]' },
+  exit: { label: 'Rời trạm', badgeCls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]' },
 }
 
 const CHECKIN_POLICY_META = {
@@ -48,41 +52,10 @@ function LogoutIcon({ className = 'h-4 w-4' }) {
   )
 }
 
-function parseQrPayload(rawValue) {
-  const trimmed = String(rawValue || '').trim()
-  if (!trimmed) {
-    return { code: '', teamId: '', teamName: '' }
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (parsed && typeof parsed === 'object') {
-      const teamId = parsed.teamId || parsed.team_id || parsed.code || parsed.id || trimmed
-      return {
-        code: parsed.code || trimmed,
-        teamId: String(teamId),
-        teamName: parsed.teamName || parsed.team_name || parsed.name || '',
-      }
-    }
-  } catch {
-    return {
-      code: trimmed,
-      teamId: trimmed,
-      teamName: '',
-    }
-  }
-
-  return {
-    code: trimmed,
-    teamId: trimmed,
-    teamName: '',
-  }
-}
-
 function explainScanError(error) {
   const code = error?.data?.error || error?.message
   const map = {
-    missing_phase_or_event: 'Cần cấu hình phase và event hiện tại trước khi scan sự kiện.',
+    no_current_event: 'BTC chưa mở event nào nên chưa thể check-in sự kiện.',
     team_not_found: 'Không tìm thấy đội với mã QR hoặc mã đội này.',
     // Mỗi QR chỉ dùng được một lần. Gặp mã này gần như luôn là máy đã quét trúng
     // đúng ảnh QR đó lần nữa — thao tác trước đó đã thành công rồi.
@@ -92,8 +65,11 @@ function explainScanError(error) {
     event_not_found: 'Không tìm thấy event đang thao tác.',
     phase_not_found: 'Không tìm thấy phase hiện tại.',
     team_not_in_phase: 'Đội này không nằm trong roster của phase hiện tại.',
-    missing_fields: 'Cần chọn trạm và nhập mã đội hợp lệ.',
-    station_not_found: 'Không tìm thấy trạm được chọn.',
+    // Trạm và chiều nằm sẵn trong QR, nên lỗi này nghĩa là bạn không được phân
+    // công trạm mà mã QR vừa quét thuộc về.
+    not_assigned_to_station: 'Bạn không được phân công trạm này nên không thể quét QR của trạm.',
+    missing_fields: 'Mã quét không hợp lệ.',
+    station_not_found: 'Không tìm thấy trạm mà mã QR trỏ tới.',
     station_not_in_event: 'Trạm này không thuộc event đang thao tác.',
     station_inactive: 'Trạm đang tạm ngưng hoạt động.',
     station_full: 'Trạm đã đầy công suất.',
@@ -144,20 +120,25 @@ function CoopDashboard() {
   const [eventStats, setEventStats] = useState(null)
   const [eventSessions, setEventSessions] = useState([])
   const [stationSessions, setStationSessions] = useState([])
-  const [scannerMode, setScannerMode] = useState('event')
-  const [selectedEventId, setSelectedEventId] = useState('')
-  const [selectedStationId, setSelectedStationId] = useState('')
+  const [selectedEventId, setSelectedEventId] = useSearchParam('event', '')
+  const [selectedStationId, setSelectedStationId] = useSearchParam('station', '')
   const [manualCode, setManualCode] = useState('')
   const [flash, setFlash] = useState(null)
   const [lastResult, setLastResult] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [processingScan, setProcessingScan] = useState(false)
-  const [scoreDrafts, setScoreDrafts] = useState({})
+  const [scoreDrafts, setScoreDrafts, scoreDraft] = useDraftState('coop:scoreDrafts', {})
   const [savingScoreId, setSavingScoreId] = useState(null)
   const videoRef = useRef(null)
   const scannerRef = useRef(null)
   const scanHandlerRef = useRef(null)
   const lastScanRef = useRef({ code: '', at: 0 })
+  // selectedStationId đến từ URL nên không dùng được updater dạng hàm; effect
+  // dưới đọc giá trị mới nhất qua ref này thay vì thêm nó vào dependency array
+  // (thêm vào sẽ làm effect chạy lại mỗi lần CTV đổi trạm, tải lại toàn bộ danh
+  // sách phân công/trạm một cách không cần thiết).
+  const selectedStationIdRef = useRef(selectedStationId)
+  selectedStationIdRef.current = selectedStationId
 
   const currentPhase = programState.currentPhase || 'qualifying'
   const phaseInfo = useMemo(
@@ -301,7 +282,7 @@ function CoopDashboard() {
 
   useEffect(() => {
     if (stationEvents.length === 0) {
-      setSelectedEventId('')
+      setSelectedEventId('', { replace: true })
       return
     }
 
@@ -309,7 +290,7 @@ function CoopDashboard() {
 
     if (assignmentEventId && stationEvents.some((eventItem) => eventItem.id === assignmentEventId)) {
       if (selectedEventId !== assignmentEventId) {
-        setSelectedEventId(assignmentEventId)
+        setSelectedEventId(assignmentEventId, { replace: true })
       }
       return
     }
@@ -322,12 +303,12 @@ function CoopDashboard() {
     }
 
     if (currentEventMatches) {
-      setSelectedEventId(currentEventId)
+      setSelectedEventId(currentEventId, { replace: true })
       return
     }
 
-    setSelectedEventId(stationEvents[0].id)
-  }, [assignmentEventIds, programState.currentSubEventId, selectedEventId, stationEvents])
+    setSelectedEventId(stationEvents[0].id, { replace: true })
+  }, [assignmentEventIds, programState.currentSubEventId, selectedEventId, setSelectedEventId, stationEvents])
 
   useEffect(() => {
     let cancelled = false
@@ -343,7 +324,7 @@ function CoopDashboard() {
         const assignmentEventId = rawAssignmentEventId != null ? String(rawAssignmentEventId) : ''
 
         if (assignmentEventId && selectedEventId !== assignmentEventId && stationEvents.some((eventItem) => eventItem.id === assignmentEventId)) {
-          setSelectedEventId(assignmentEventId)
+          setSelectedEventId(assignmentEventId, { replace: true })
         }
       } catch (error) {
         if (cancelled) return
@@ -362,7 +343,7 @@ function CoopDashboard() {
     return () => {
       cancelled = true
     }
-  }, [currentPhase, loadAssignments, selectedEventId, stationEvents])
+  }, [currentPhase, loadAssignments, selectedEventId, setSelectedEventId, stationEvents])
 
   useEffect(() => {
     let cancelled = false
@@ -378,9 +359,9 @@ function CoopDashboard() {
           .map((assignment) => String(assignment.station.id))
         const allowedIds = currentStations.length > 0 ? currentStations : nextStations.map((station) => station.id)
 
-        setSelectedStationId((current) => (
-          allowedIds.includes(current) ? current : allowedIds[0] || ''
-        ))
+        if (!allowedIds.includes(selectedStationIdRef.current)) {
+          setSelectedStationId(allowedIds[0] || '', { replace: true })
+        }
       } catch (error) {
         if (cancelled) return
         if (error?.status === 401) {
@@ -394,7 +375,7 @@ function CoopDashboard() {
     if (!selectedEventId) {
       setAssignments([])
       setStations([])
-      setSelectedStationId('')
+      setSelectedStationId('', { replace: true })
       return () => {
         cancelled = true
       }
@@ -404,18 +385,18 @@ function CoopDashboard() {
     return () => {
       cancelled = true
     }
-  }, [currentPhase, loadAssignments, loadStations, selectedEventId])
+  }, [currentPhase, loadAssignments, loadStations, selectedEventId, setSelectedStationId])
 
   useEffect(() => {
     if (!selectedStationId && stationOptions.length > 0) {
-      setSelectedStationId(stationOptions[0].id)
+      setSelectedStationId(stationOptions[0].id, { replace: true })
       return
     }
 
     if (selectedStationId && !stationOptions.some((station) => station.id === selectedStationId)) {
-      setSelectedStationId(stationOptions[0]?.id || '')
+      setSelectedStationId(stationOptions[0]?.id || '', { replace: true })
     }
-  }, [selectedStationId, stationOptions])
+  }, [selectedStationId, setSelectedStationId, stationOptions])
 
   const refreshLive = useCallback(async () => {
     try {
@@ -447,6 +428,9 @@ function CoopDashboard() {
         delete next[sessionId]
         return next
       })
+      // Điểm này đã lưu vào server rồi nên bỏ luôn bản nháp local của nó —
+      // giữ lại sẽ khiến banner "khôi phục nháp" cứ bám dai dẳng dù đã lưu xong.
+      scoreDraft.clear()
       setFlashMessage('success', `Đã lưu ${points} điểm cho đội.`)
       await refreshLive()
     } catch (error) {
@@ -462,7 +446,7 @@ function CoopDashboard() {
     } finally {
       setSavingScoreId(null)
     }
-  }, [refreshLive])
+  }, [refreshLive, scoreDraft, setScoreDrafts])
 
   useEffect(() => {
     if (!selectedEventId) return undefined
@@ -504,66 +488,9 @@ function CoopDashboard() {
     setFlash({ tone, message })
   }
 
-  const handleEventCheckin = useCallback(async (rawCode) => {
-    const payload = parseQrPayload(rawCode)
-    const response = await apiRequest('/event-checkins/scan', {
-      method: 'POST',
-      body: {
-        code: payload.code || payload.teamId || rawCode,
-        phaseKey: currentPhase,
-        eventId: selectedEventId,
-      },
-    })
-
-    setLastResult({
-      kind: 'event',
-      teamId: response.team_code,
-      teamName: response.team_name || payload.teamName || response.team_code,
-      eventName: response.event_name || selectedEvent?.name || '',
-      stationName: '',
-      timestamp: response.checked_in_at || new Date().toISOString(),
-    })
-    setFlashMessage('success', `Đã check-in sự kiện cho ${response.team_name || response.team_code}.`)
-  }, [currentPhase, selectedEvent, selectedEventId])
-
-  const handleStationOperation = useCallback(async (rawCode, action) => {
-    if (!selectedStation) {
-      throw new Error('Hãy chọn trạm trước khi quét.')
-    }
-
-    const payload = parseQrPayload(rawCode)
-    const response = await apiRequest(`/station-sessions/${action === 'enter' ? 'enter' : 'exit'}`, {
-      method: 'POST',
-      body: action === 'enter'
-        ? {
-            code: payload.code || payload.teamId || rawCode,
-            stationId: Number(selectedStation.id),
-            phaseKey: currentPhase,
-            eventId: selectedEventId,
-          }
-        : {
-            code: payload.code || payload.teamId || rawCode,
-            stationId: Number(selectedStation.id),
-          },
-    })
-
-    setLastResult({
-      kind: action,
-      teamId: response.team_code || payload.teamId || payload.code,
-      teamName: payload.teamName || response.team_code,
-      eventName: selectedEvent?.name || '',
-      stationName: selectedStation.name,
-      timestamp: response.entered_at || response.exited_at || new Date().toISOString(),
-      sessionId: action === 'exit' ? response.id : null,
-    })
-    setFlashMessage(
-      'success',
-      action === 'enter'
-        ? `Đã ghi nhận ${payload.teamName || response.team_code} vào ${selectedStation.name}.`
-        : `Đã ghi nhận ${payload.teamName || response.team_code} rời ${selectedStation.name}.`,
-    )
-  }, [currentPhase, selectedEvent, selectedEventId, selectedStation])
-
+  // Một cú quét làm hết mọi việc. Mã QR đã mang sẵn đội + trạm + chiều vào/ra,
+  // nên CTV chỉ giơ máy; server đọc từ mã và tự định tuyến (check-in sự kiện,
+  // vào trạm, hay rời trạm). Không còn dropdown chọn trạm, không còn nút mode.
   const handleScan = useCallback(async (rawCode) => {
     if (!rawCode || processingScan) return
 
@@ -575,13 +502,30 @@ function CoopDashboard() {
     setApiError('')
     setFlash(null)
     try {
-      if (scannerMode === 'event') {
-        await handleEventCheckin(rawCode)
-      } else if (scannerMode === 'station_enter') {
-        await handleStationOperation(rawCode, 'enter')
-      } else {
-        await handleStationOperation(rawCode, 'exit')
-      }
+      const response = await apiRequest('/station-scan', {
+        method: 'POST',
+        body: { code: rawCode },
+      })
+
+      const teamName = response.team_name || response.team_code
+      setLastResult({
+        kind: response.kind,
+        teamId: response.team_code,
+        teamName,
+        eventName: response.event_name || selectedEvent?.name || '',
+        stationName: response.station_name || '',
+        timestamp: response.checked_in_at || response.exited_at || response.entered_at || new Date().toISOString(),
+        // Chỉ lúc rời trạm mới mở ô chấm điểm cho người quản trạm.
+        sessionId: response.kind === 'exit' ? response.id : null,
+      })
+
+      const message = response.kind === 'event'
+        ? `Đã check-in sự kiện cho ${teamName}.`
+        : response.kind === 'enter'
+          ? `Đã ghi nhận ${teamName} vào ${response.station_name}.`
+          : `Đã ghi nhận ${teamName} rời ${response.station_name}.`
+      setFlashMessage('success', message)
+
       await refreshLive()
     } catch (error) {
       const message = error?.status ? explainScanError(error) : error.message
@@ -589,7 +533,7 @@ function CoopDashboard() {
     } finally {
       setProcessingScan(false)
     }
-  }, [handleEventCheckin, handleStationOperation, processingScan, refreshLive, scannerMode])
+  }, [processingScan, refreshLive, selectedEvent])
 
   scanHandlerRef.current = handleScan
 
@@ -709,6 +653,8 @@ function CoopDashboard() {
           </div>
         )}
 
+        <DraftNotice draft={scoreDraft} label="điểm đang chấm dở cho các đội" />
+
         {stationEvents.length === 0 ? (
           <div className={`${CARD} border-dashed px-5 py-16 text-center`}>
             <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-gold/15 text-[#9A6B12]">
@@ -759,38 +705,10 @@ function CoopDashboard() {
                     <p className="mt-2 text-sm leading-6 text-ink/55">{selectedAssignment.note}</p>
                   )}
 
-                  <div className="mt-4 space-y-3 border-t border-stone pt-4">
-                    <label className="block">
-                      <span className="text-xs font-medium text-ink/50">Event có trạm</span>
-                      <select
-                        value={selectedEventId}
-                        onChange={(event) => setSelectedEventId(event.target.value)}
-                        className="mt-1 w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-                      >
-                        {stationEvents.length > 0 ? stationEvents.map((eventItem) => (
-                          <option key={eventItem.id} value={eventItem.id}>{eventItem.name}</option>
-                        )) : (
-                          <option value="">Chưa có event nào bật cờ trạm</option>
-                        )}
-                      </select>
-                    </label>
-
-                    <label className="block">
-                      <span className="text-xs font-medium text-ink/50">Trạm thao tác</span>
-                      <select
-                        value={selectedStationId}
-                        onChange={(event) => setSelectedStationId(event.target.value)}
-                        disabled={stationOptions.length <= 1 && preferredAssignments.length > 0}
-                        className="mt-1 w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:bg-paper disabled:text-ink/45"
-                      >
-                        {stationOptions.length > 0 ? stationOptions.map((station) => (
-                          <option key={station.id} value={station.id}>{station.name}</option>
-                        )) : (
-                          <option value="">Chưa có trạm phù hợp</option>
-                        )}
-                      </select>
-                    </label>
-                  </div>
+                  <p className="mt-4 border-t border-stone pt-4 text-xs leading-5 text-ink/45">
+                    Trạm và chiều vào/ra nằm sẵn trong mã QR của đội — bạn chỉ cần giơ máy quét,
+                    không phải chọn trạm hay bật chế độ vào/ra.
+                  </p>
                 </div>
               </div>
             </section>
@@ -806,38 +724,8 @@ function CoopDashboard() {
               <div className="space-y-5">
                 <div className={`${CARD} overflow-hidden`}>
                   <div className="border-b border-stone px-5 py-4">
-                    <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Mode quét</p>
-                    <h2 className="mt-1 font-display text-lg font-bold text-ink">Chọn luồng vận hành</h2>
-                  </div>
-
-                  <div className="grid gap-2 px-4 py-4">
-                    {Object.entries(MODE_META).map(([key, meta]) => {
-                      const active = scannerMode === key
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setScannerMode(key)}
-                          className={`rounded-xl border px-4 py-3 text-left transition ${
-                            active
-                              ? 'border-gold/40 bg-gold/[0.08] shadow-[0_3px_10px_rgba(32,49,43,0.08)]'
-                              : 'border-stone bg-white hover:bg-paper'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <Badge label={meta.label} cls={meta.badgeCls} />
-                            {active && <Icon name="checkPlain" className="h-5 w-5 text-[#9A6B12]" />}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                <div className={`${CARD} overflow-hidden`}>
-                  <div className="border-b border-stone px-5 py-4">
                     <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Camera scanner</p>
-                    <h2 className="mt-1 font-display text-lg font-bold text-ink">Quét QR tại trạm</h2>
+                    <h2 className="mt-1 font-display text-lg font-bold text-ink">Quét QR của đội</h2>
                   </div>
                   <div className="space-y-4 px-5 py-4">
                     <div className="overflow-hidden rounded-xl border border-stone bg-ink">
@@ -877,7 +765,7 @@ function CoopDashboard() {
                       {lastResult ? (
                         <div className="space-y-3">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Badge label={MODE_META[lastResult.kind === 'event' ? 'event' : lastResult.kind === 'enter' ? 'station_enter' : 'station_exit'].label} cls="bg-ink text-white" />
+                            <Badge label={(RESULT_META[lastResult.kind] || RESULT_META.event).label} cls="bg-ink text-white" />
                             <Badge label={formatDateTime(lastResult.timestamp)} cls="bg-ink/[0.07] text-ink/55" />
                           </div>
                           <h3 className="text-lg font-semibold text-ink">{lastResult.teamName}</h3>

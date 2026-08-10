@@ -5,6 +5,7 @@ import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import StationRunPage from './StationRunPage.jsx'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
+import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
 
 const MAX_MEMBERS = 5
 const COLORS = {
@@ -148,6 +149,11 @@ function explainApiError(error) {
   if (code?.startsWith('team_name_requires_full_team')) {
     const size = code.split(':')[1] || MAX_MEMBERS
     return `Chỉ đội đủ ${size} thành viên mới được đặt tên. Đội chưa đủ mang tên tạm và sẽ được BTC ghép với đội khác.`
+  }
+  if (code === 'registration_mismatch') {
+    const teamCode = error?.data?.detail?.team_code
+    const where = teamCode ? `đội ${teamCode}` : 'một đội'
+    return `MSSV này đã thuộc ${where}, nhưng email đăng ký trong đội chưa khớp với tài khoản Google của bạn — có thể trưởng nhóm nhập nhầm email. Vui lòng nhờ trưởng nhóm cập nhật lại email của bạn trong thông tin đội, hoặc liên hệ Ban tổ chức để được hỗ trợ. Sau khi email được sửa đúng, đăng nhập lại là hệ thống sẽ tự đưa bạn vào đội.`
   }
   const map = {
     missing_mssv: 'Bạn cần cập nhật MSSV trước khi tiếp tục.',
@@ -474,7 +480,7 @@ function ProgressTrail({ profile, team, members, fields }) {
   )
 }
 
-function MemberModal({ form, fields, editing, saving, onChange, onClose, onSave }) {
+function MemberModal({ form, fields, editing, saving, draft, onChange, onClose, onSave }) {
   const [resolveKey, setResolveKey] = useState('')
   const [resolveError, setResolveError] = useState('')
 
@@ -562,6 +568,7 @@ function MemberModal({ form, fields, editing, saving, onChange, onClose, onSave 
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:px-6">
+          <DraftNotice draft={draft} label="thông tin thành viên đang nhập dở" />
           {resolveError && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {resolveError}
@@ -920,6 +927,7 @@ function ParticipantDashboard() {
   const [paymentProofDraft, setPaymentProofDraft] = useState('')
   const [memberDialog, setMemberDialog] = useState(null)
   const [memberForm, setMemberForm] = useState(null)
+  const [memberDraftSavedAt, setMemberDraftSavedAt] = useState(null)
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false)
   const [editable, setEditable] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -1060,16 +1068,57 @@ function ParticipantDashboard() {
   const captainIndex = members.findIndex((member) => member.is_captain)
   const displayedMemberCount = captainIndex === -1 ? members.length + 1 : members.length
 
+  // Adding a member means typing MSSV, email and whatever the schema asks for,
+  // five times over. The dialog is not a `useDraftState` because the parent
+  // owns `memberForm` and the identity being edited changes between openings,
+  // which the hook's mount-once baseline cannot express.
+  const memberDraftKey = memberDialog
+    ? `participant:member:${memberDialog.index === null ? 'new' : members[memberDialog.index]?.mssv || 'new'}`
+    : ''
+
+  const memberBaseline = () => (
+    memberDialog?.index == null ? blankMember() : { ...members[memberDialog.index] }
+  )
+
   const openMemberDialog = (index = null) => {
     const base = index === null ? blankMember() : members[index]
+    const stored = readDraft(`participant:member:${index === null ? 'new' : base.mssv || 'new'}`)
     setMemberDialog({ index })
-    setMemberForm({ ...base })
+    // The stored draft wins field by field, but anything the server has since
+    // added to the record still comes through.
+    setMemberForm(stored?.value ? { ...base, ...stored.value } : { ...base })
+    setMemberDraftSavedAt(stored?.savedAt || null)
   }
 
   const closeMemberDialog = () => {
+    // Closing is not discarding — the draft stays so reopening picks it up.
     setMemberDialog(null)
     setMemberForm(null)
+    setMemberDraftSavedAt(null)
   }
+
+  useEffect(() => {
+    if (!memberDraftKey || !memberForm) return undefined
+    const timer = window.setTimeout(() => writeDraft(memberDraftKey, memberForm), 400)
+    return () => window.clearTimeout(timer)
+  }, [memberDraftKey, memberForm])
+
+  const memberDraft = useMemo(() => ({
+    dirty: false,
+    restored: Boolean(memberDraftSavedAt),
+    savedAt: memberDraftSavedAt,
+    discard: () => {
+      clearDraft(memberDraftKey)
+      setMemberForm(memberBaseline())
+      setMemberDraftSavedAt(null)
+    },
+    clear: () => {
+      clearDraft(memberDraftKey)
+      setMemberDraftSavedAt(null)
+    },
+    dismiss: () => setMemberDraftSavedAt(null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [memberDraftKey, memberDraftSavedAt, memberDialog, members])
 
   const saveTeamNameIfNeeded = async () => {
     if (!team || !editable) return
@@ -1170,6 +1219,8 @@ function ParticipantDashboard() {
           body: memberForm,
         })
       }
+      // Saved server-side, so the local copy has nothing left to protect.
+      clearDraft(memberDraftKey)
       await loadDashboard()
       closeMemberDialog()
     })
@@ -1653,6 +1704,7 @@ function ParticipantDashboard() {
         fields={personFields}
         editing={memberDialog?.index !== null}
         saving={busyAction === 'save-member'}
+        draft={memberDraft}
         onChange={setMemberForm}
         onClose={closeMemberDialog}
         onSave={saveMember}
