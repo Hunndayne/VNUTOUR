@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import logoImage from './assets/vnutour-logo.png'
+import { roleHomePath } from './api.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://10.147.17.251:8080/api'
 
@@ -80,15 +81,13 @@ function LoginPage() {
     return Object.keys(e).length === 0
   }
 
-  const redirectToRoot = useCallback(() => {
-    window.location.replace('/')
-  }, [])
-
   const persistAndRedirect = useCallback((data) => {
     localStorage.setItem('authToken', data.token)
     localStorage.setItem('user', JSON.stringify(data.user))
-    redirectToRoot()
-  }, [redirectToRoot])
+    // Straight to the role's own screen. Going via `/` worked, but it made the
+    // first thing after signing in a visible redirect off the landing page.
+    window.location.replace(roleHomePath(data.user?.role))
+  }, [])
 
   // ── Login ───────────────────────────────────────────────────────────
   const handleLogin = async () => {

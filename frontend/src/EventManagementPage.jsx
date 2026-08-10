@@ -1,156 +1,194 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Badge, CARD, Icon } from './ui.jsx'
 import { FIXED_PHASES, SUB_EVENT_TYPE_META, createSubEvent, getPhaseInfo } from './adminProgram.js'
+import { buildUrl, navigate, useLocation, useSearchParam } from './router.js'
+import { DraftNotice, useDraftState } from './drafts.jsx'
 
-function MetricCard({ value, label, accent = 'default' }) {
-  const valueClass = accent === 'trail'
-    ? 'text-trail'
-    : accent === 'gold'
-      ? 'text-gold'
-      : accent === 'sky'
-        ? 'text-[#3E7CA8]'
-        : 'text-ink'
+const PHASE_KEYS = FIXED_PHASES.map(phase => phase.key)
 
+const FIELD_LABEL = 'mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40'
+const FIELD_INPUT = 'w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40'
+
+function formatDate(value) {
+  if (!value) return null
+  const [year, month, day] = String(value).split('-')
+  return day && month && year ? `${day}/${month}/${year}` : value
+}
+
+function formatDateRange(schedule) {
+  const start = formatDate(schedule?.startDate)
+  const end = formatDate(schedule?.endDate)
+  if (!start && !end) return 'Chưa đặt lịch'
+  return `${start || '--'} → ${end || '--'}`
+}
+
+function BackLink({ label, onClick }) {
   return (
-    <div className={`${CARD} px-4 py-3`}>
-      <p className={`font-mono text-2xl font-bold leading-none ${valueClass}`}>{value}</p>
-      <p className="mt-1.5 text-xs text-ink/40">{label}</p>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink"
+    >
+      <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
+      {label}
+    </button>
   )
 }
 
-function PhaseCard({ phase, schedule, isCurrent, isSelected, onSelect, onSetCurrent, onDateChange, canEdit = true }) {
+function LockedNote() {
+  return (
+    <p className="text-xs leading-5 text-ink/45">
+      Bạn đang ở quyền admin thường nên chỉ xem được cấu trúc chương trình. Chuyển phase, sửa lịch
+      phase và tạo/sửa/xóa event là quyền của master admin.
+    </p>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Mức 1 — danh sách phase
+// ─────────────────────────────────────────────────────────────────────
+function PhaseRow({ phase, schedule, isCurrent, events, onOpen, onSetCurrent, canEdit }) {
+  const stationEventCount = events.filter(item => item.usesStations).length
+
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onSelect}
+      onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          onSelect()
+          onOpen()
         }
       }}
-      className={`rounded-xl border px-4 py-4 text-left transition ${
-        isSelected
-          ? 'border-gold/30 bg-gold/10 shadow-[0_3px_10px_rgba(32,49,43,0.08)]'
+      className={`group flex items-center gap-4 rounded-xl border px-5 py-4 text-left transition ${
+        isCurrent
+          ? 'border-gold/30 bg-gold/[0.07] hover:bg-gold/10'
           : 'border-stone bg-white hover:bg-paper'
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge
-              label={phase.label}
-              cls={isCurrent ? 'bg-trail/12 text-trail' : 'bg-ink/[0.07] text-ink/55'}
-            />
-            {isCurrent && <Badge label="Đang hiện tại" cls="bg-gold/15 text-gold" />}
-          </div>
-          <p className="mt-3 text-sm leading-6 text-ink/55">{phase.hint}</p>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-display text-base font-semibold text-ink">{phase.label}</h3>
+          {isCurrent && <Badge label="Đang hiện tại" cls="bg-trail/12 text-trail" />}
         </div>
-
-        {!isCurrent && (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              onSetCurrent()
-            }}
-            disabled={!canEdit}
-            className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Chuyển phase
-          </button>
-        )}
+        <p className="mt-1.5 text-sm leading-6 text-ink/50">{phase.hint}</p>
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-ink/40">
+          <span>{formatDateRange(schedule)}</span>
+          <span aria-hidden="true">·</span>
+          <span>
+            {events.length} event
+            {stationEventCount > 0 && ` · ${stationEventCount} có trạm`}
+          </span>
+        </p>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Bắt đầu
-          </label>
-          <input
-            type="date"
-            value={schedule.startDate}
-            disabled={!canEdit}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => onDateChange({ startDate: event.target.value })}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
-          />
-        </div>
-        <div>
-          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Kết thúc
-          </label>
-          <input
-            type="date"
-            value={schedule.endDate}
-            disabled={!canEdit}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => onDateChange({ endDate: event.target.value })}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
-          />
-        </div>
-      </div>
+      {!isCurrent && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onSetCurrent()
+          }}
+          disabled={!canEdit}
+          className="shrink-0 rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Chuyển phase
+        </button>
+      )}
+
+      <Icon name="chevronR" className="h-4 w-4 shrink-0 text-ink/25 transition group-hover:text-ink/50" />
     </div>
   )
 }
 
-function SubEventCard({ subEvent, isSelected, onSelect, onDelete, canEdit = true }) {
+// ─────────────────────────────────────────────────────────────────────
+// Mức 2 — một phase và các event bên trong
+// ─────────────────────────────────────────────────────────────────────
+function SubEventCard({ subEvent, onOpen, onDelete, canEdit }) {
   const typeMeta = SUB_EVENT_TYPE_META[subEvent.type] ?? SUB_EVENT_TYPE_META.custom
 
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onSelect}
+      onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          onSelect()
+          onOpen()
         }
       }}
-      className={`w-full rounded-xl border px-4 py-4 text-left transition ${
-        isSelected
-          ? 'border-gold/30 bg-gold/10 shadow-[0_3px_10px_rgba(32,49,43,0.08)]'
-          : 'border-stone bg-white hover:bg-paper'
-      }`}
+      className="group flex w-full items-start gap-3 rounded-xl border border-stone bg-white px-4 py-4 text-left transition hover:bg-paper"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge label={typeMeta.label} cls={typeMeta.cls} />
-            {subEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
-            {subEvent.isCurrent && <Badge label="Đang mở" cls="bg-trail/12 text-trail" />}
-          </div>
-          <h3 className="mt-2 truncate text-base font-semibold text-ink">{subEvent.name}</h3>
-          <p className="mt-1 text-xs text-ink/45">
-            {subEvent.startDate || '--'} {'->'} {subEvent.endDate || '--'}
-          </p>
-          {subEvent.note && (
-            <p className="mt-2 line-clamp-2 text-sm leading-6 text-ink/50">{subEvent.note}</p>
-          )}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge label={typeMeta.label} cls={typeMeta.cls} />
+          {subEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+          {subEvent.isCurrent && <Badge label="Đang mở" cls="bg-trail/12 text-trail" />}
         </div>
+        <h3 className="mt-2 truncate text-base font-semibold text-ink">{subEvent.name}</h3>
+        <p className="mt-1 font-mono text-[11px] text-ink/40">
+          {formatDate(subEvent.startDate) || '--'} → {formatDate(subEvent.endDate) || '--'}
+        </p>
+        {subEvent.note && (
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-ink/50">{subEvent.note}</p>
+        )}
+      </div>
 
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            onDelete()
-          }}
-          disabled={!canEdit}
-          className="rounded-lg p-1.5 text-ink/30 transition hover:bg-paper hover:text-clay disabled:cursor-not-allowed disabled:opacity-40"
-          title={canEdit ? 'Xóa event' : 'Chỉ master admin mới xóa được event'}
-        >
-          <Icon name="trash" className="h-4 w-4" />
-        </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation()
+          onDelete()
+        }}
+        disabled={!canEdit}
+        className="shrink-0 rounded-lg p-1.5 text-ink/25 transition hover:bg-paper hover:text-clay disabled:cursor-not-allowed disabled:opacity-40"
+        title={canEdit ? 'Xóa event' : 'Chỉ master admin mới xóa được event'}
+      >
+        <Icon name="trash" className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
+function PhaseSchedule({ schedule, onDateChange, canEdit }) {
+  return (
+    <div className={`${CARD} px-5 py-4`}>
+      <p className={FIELD_LABEL}>Lịch phase</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className={FIELD_LABEL} htmlFor="phase-start">Bắt đầu</label>
+          <input
+            id="phase-start"
+            type="date"
+            value={schedule?.startDate || ''}
+            disabled={!canEdit}
+            onChange={(event) => onDateChange({ startDate: event.target.value })}
+            className={FIELD_INPUT}
+          />
+        </div>
+        <div>
+          <label className={FIELD_LABEL} htmlFor="phase-end">Kết thúc</label>
+          <input
+            id="phase-end"
+            type="date"
+            value={schedule?.endDate || ''}
+            disabled={!canEdit}
+            onChange={(event) => onDateChange({ endDate: event.target.value })}
+            className={FIELD_INPUT}
+          />
+        </div>
       </div>
     </div>
   )
 }
 
-function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCancel, canEdit = true }) {
-  const [form, setForm] = useState(() => ({ ...initialEvent }))
+// ─────────────────────────────────────────────────────────────────────
+// Mức 3 — soạn một event
+// ─────────────────────────────────────────────────────────────────────
+function SubEventEditor({ initialEvent, submitLabel, onSave, onCancel, canEdit, draftKey }) {
+  const [form, setForm, draft] = useDraftState(draftKey, () => ({ ...initialEvent }))
   const [error, setError] = useState('')
 
   const set = (key, value) => {
@@ -168,43 +206,47 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
       name: form.name.trim(),
       note: form.note.trim(),
     })
+    // Đã lưu lên server nên không còn gì để khôi phục nữa.
+    draft.clear()
+  }
+
+  const handleCancel = () => {
+    // "Hủy" là ý định rõ ràng bỏ thay đổi đang gõ dở — khác với nút quay lại,
+    // vốn vẫn nên giữ nháp để mở lại còn thấy.
+    draft.discard()
+    onCancel()
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-stone bg-paper px-4 py-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Phase đang sửa</p>
-        <p className="mt-1 text-sm font-medium text-ink">{phaseLabel}</p>
-      </div>
+      <DraftNotice draft={draft} label="event đang soạn dở" />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Tên event con
-          </label>
+          <label className={FIELD_LABEL} htmlFor="event-name">Tên event</label>
           <input
+            id="event-name"
             value={form.name}
             disabled={!canEdit}
             onChange={(event) => set('name', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
+            className={FIELD_INPUT}
             placeholder="Ví dụ: Chạy trạm bản đồ"
           />
         </div>
         {error && (
-          <p className="sm:col-span-2 rounded-lg border border-clay/25 bg-clay/[0.06] px-3 py-2 text-sm text-clay">
+          <p className="rounded-lg border border-clay/25 bg-clay/[0.06] px-3 py-2 text-sm text-clay sm:col-span-2">
             {error}
           </p>
         )}
 
         <div>
-          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Loại event
-          </label>
+          <label className={FIELD_LABEL} htmlFor="event-type">Loại event</label>
           <select
+            id="event-type"
             value={form.type}
             disabled={!canEdit}
             onChange={(event) => set('type', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
+            className={FIELD_INPUT}
           >
             {Object.entries(SUB_EVENT_TYPE_META).map(([key, meta]) => (
               <option key={key} value={key}>{meta.label}</option>
@@ -226,42 +268,39 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
         </div>
 
         <div>
-          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Bắt đầu
-          </label>
+          <label className={FIELD_LABEL} htmlFor="event-start">Bắt đầu</label>
           <input
+            id="event-start"
             type="date"
             value={form.startDate}
             disabled={!canEdit}
             onChange={(event) => set('startDate', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
+            className={FIELD_INPUT}
           />
         </div>
 
         <div>
-          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-            Kết thúc
-          </label>
+          <label className={FIELD_LABEL} htmlFor="event-end">Kết thúc</label>
           <input
+            id="event-end"
             type="date"
             value={form.endDate}
             disabled={!canEdit}
             onChange={(event) => set('endDate', event.target.value)}
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
+            className={FIELD_INPUT}
           />
         </div>
       </div>
 
       <div>
-        <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-          Ghi chú vận hành
-        </label>
+        <label className={FIELD_LABEL} htmlFor="event-note">Ghi chú vận hành</label>
         <textarea
+          id="event-note"
           rows={4}
           value={form.note}
           disabled={!canEdit}
           onChange={(event) => set('note', event.target.value)}
-          className="w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm leading-6 text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 disabled:cursor-not-allowed disabled:opacity-40"
+          className={`${FIELD_INPUT} leading-6`}
           placeholder="Mô tả event này dùng để làm gì, cách chấm điểm, và mối liên hệ với trạm nếu có."
         />
       </div>
@@ -269,7 +308,7 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
       <div className="flex gap-2">
         <button
           type="button"
-          onClick={onCancel}
+          onClick={handleCancel}
           className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
         >
           Hủy
@@ -288,9 +327,17 @@ function SubEventEditor({ initialEvent, phaseLabel, submitLabel, onSave, onCance
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Trang
+// ─────────────────────────────────────────────────────────────────────
+// Ba mức, điều khiển hoàn toàn bằng query param nên back/forward của trình
+// duyệt đi ngược đúng đường người dùng đã bấm:
+//   /admin/events                       danh sách 4 phase
+//   ?phase=<key>                        các event bên trong một phase
+//   ?phase=<key>&event=<id> | &new=1    soạn một event
+// Trước đây cả ba nằm chồng trên một màn hình và không mức nào có URL riêng.
 function EventManagementPage({
   currentPhase,
-  currentSubEventId,
   phaseSchedule,
   subEventsByPhase,
   onSetCurrentPhase,
@@ -301,239 +348,225 @@ function EventManagementPage({
   onDeleteSubEvent,
   canEditProgram = true,
 }) {
-  const [selectedPhase, setSelectedPhase] = useState(currentPhase)
-  const [selectedSubEventId, setSelectedSubEventId] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [detailSeed, setDetailSeed] = useState(0)
+  const { path } = useLocation()
+  const [phaseParam] = useSearchParam('phase', '')
+  const [selectedSubEventId] = useSearchParam('event', '')
+  const [creatingParam] = useSearchParam('new', '')
 
-  useEffect(() => {
-    if (!FIXED_PHASES.some(phase => phase.key === selectedPhase)) {
-      setSelectedPhase(currentPhase)
-    }
-  }, [currentPhase, selectedPhase])
+  // Một key lạ (gõ tay, link cũ) đọc lại thành "chưa chọn phase" — tức là về
+  // danh sách, chứ không kẹt ở một màn hình chi tiết không khớp phase nào.
+  const selectedPhase = PHASE_KEYS.includes(phaseParam) ? phaseParam : ''
+  const creating = Boolean(selectedPhase) && creatingParam === '1'
+
+  // Điều hướng giữa các mức đổi nhiều param cùng lúc, nên dựng thẳng URL thay
+  // vì gọi ba setter liên tiếp — mỗi setter là một nấc lịch sử.
+  const goToPhaseList = () => navigate(path)
+  const goToPhase = (key, options) => navigate(buildUrl(path, { phase: key }), options)
+  const goToEvent = (id) => navigate(buildUrl(path, { phase: selectedPhase, event: id }))
+  const goToCreate = () => navigate(buildUrl(path, { phase: selectedPhase, new: '1' }))
 
   const visibleSubEvents = useMemo(
     () => subEventsByPhase[selectedPhase] ?? [],
     [selectedPhase, subEventsByPhase],
   )
 
-  useEffect(() => {
-    if (visibleSubEvents.length === 0) {
-      setSelectedSubEventId('')
-      return
-    }
-
-    if (!selectedSubEventId || !visibleSubEvents.some(item => item.id === selectedSubEventId)) {
-      const currentEvent = selectedPhase === currentPhase
-        ? visibleSubEvents.find(item => item.id === String(currentSubEventId))
-        : null
-      setSelectedSubEventId(currentEvent?.id || visibleSubEvents[0].id)
-    }
-  }, [currentPhase, currentSubEventId, selectedPhase, selectedSubEventId, visibleSubEvents])
-
-  const selectedPhaseInfo = getPhaseInfo(selectedPhase)
+  // Không tự chọn event nào khi vừa vào một phase: mức 2 là danh sách, người
+  // dùng phải chủ động bấm mới xuống mức 3. Một id không giải được (event vừa
+  // bị xóa, hoặc dữ liệu chương trình chưa tải xong) cũng chỉ đơn giản là ở
+  // lại mức 2 — không xóa param, vì lúc mới mount danh sách còn rỗng và xóa
+  // ngay sẽ giết chết link sâu `?event=`.
   const selectedSubEvent = visibleSubEvents.find(item => item.id === selectedSubEventId) ?? null
-  const stationEventCount = visibleSubEvents.filter(item => item.usesStations).length
-  const allEventCount = Object.values(subEventsByPhase).reduce((sum, items) => sum + items.length, 0)
+  const [detailSeed, setDetailSeed] = useState(0)
 
-  return (
-    <div className="space-y-5">
-      <div className={`${CARD} overflow-hidden`}>
-        <div className="border-b border-stone px-5 py-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-3xl">
-              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">
-                Phase cố định · event bên trong
-              </p>
-              <h2 className="mt-2 font-display text-xl font-semibold text-ink">
-                Chỉ sửa lịch phase, còn event nhỏ sẽ nằm bên trong phase
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-ink/60">
-                Phase của mùa hiện tại là cố định: Đăng ký, Vòng loại, Vòng chung kết, Kết thúc.
-                BTC chỉ đổi ngày bắt đầu, ngày kết thúc, và chuyển phase hiện tại. Mỗi event nhỏ
-                như social, chạy trạm, quiz, nộp file sẽ được tạo trong phase đang chọn.
-              </p>
-            </div>
+  const phaseInfo = selectedPhase ? getPhaseInfo(selectedPhase) : null
+  const totalEventCount = Object.values(subEventsByPhase).reduce((sum, items) => sum + items.length, 0)
 
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              disabled={!canEditProgram}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Icon name="plus" className="h-4 w-4" />
-              Tạo event trong phase
-            </button>
-          </div>
+  // ── Mức 1 ──────────────────────────────────────────────────────────
+  if (!selectedPhase) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold text-ink">Phase của mùa này</h2>
+          <p className="font-mono text-[11px] text-ink/40">
+            {totalEventCount} event trong {FIXED_PHASES.length} phase
+          </p>
+        </div>
 
-          {!canEditProgram && (
-            <p className="mt-3 text-xs leading-5 text-ink/45">
-              Bạn đang ở quyền admin thường nên chỉ xem được cấu trúc chương trình. Chuyển phase,
-              sửa lịch phase và tạo/sửa/xóa event con là quyền của master admin.
-            </p>
-          )}
+        {!canEditProgram && <LockedNote />}
+
+        <div className="space-y-3">
+          {FIXED_PHASES.map((phase) => (
+            <PhaseRow
+              key={phase.key}
+              phase={phase}
+              schedule={phaseSchedule[phase.key]}
+              isCurrent={currentPhase === phase.key}
+              events={subEventsByPhase[phase.key] ?? []}
+              onOpen={() => goToPhase(phase.key)}
+              onSetCurrent={() => onSetCurrentPhase(phase.key)}
+              canEdit={canEditProgram}
+            />
+          ))}
         </div>
       </div>
+    )
+  }
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <MetricCard value={String(FIXED_PHASES.length)} label="Phase cố định" />
-        <MetricCard value={String(allEventCount)} label="Tổng event con" accent="sky" />
-        <MetricCard value={String(visibleSubEvents.length)} label={`Event trong ${selectedPhaseInfo.label.toLowerCase()}`} accent="trail" />
-        <MetricCard value={String(stationEventCount)} label="Event có trạm trong phase" accent="gold" />
-      </div>
+  // ── Mức 3 ──────────────────────────────────────────────────────────
+  if (creating || selectedSubEvent) {
+    const isCreate = creating
+    const typeMeta = selectedSubEvent
+      ? SUB_EVENT_TYPE_META[selectedSubEvent.type] ?? SUB_EVENT_TYPE_META.custom
+      : null
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        {FIXED_PHASES.map((phase) => (
-          <PhaseCard
-            key={phase.key}
-            phase={phase}
-            schedule={phaseSchedule[phase.key]}
-            isCurrent={currentPhase === phase.key}
-            isSelected={selectedPhase === phase.key}
-            onSelect={() => setSelectedPhase(phase.key)}
-            onSetCurrent={() => onSetCurrentPhase(phase.key)}
-            onDateChange={(patch) => onUpdatePhaseSchedule(phase.key, patch)}
-            canEdit={canEditProgram}
-          />
-        ))}
-      </section>
+    return (
+      <div className="space-y-4">
+        <BackLink label={phaseInfo.label} onClick={() => goToPhase(selectedPhase)} />
 
-      <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="space-y-3">
-          <div className={`${CARD} px-4 py-3`}>
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Phase đang xem</p>
-            <p className="mt-1 text-sm font-semibold text-ink">{selectedPhaseInfo.label}</p>
-            <p className="mt-2 text-sm leading-6 text-ink/50">{selectedPhaseInfo.hint}</p>
+        <div className={`${CARD} overflow-hidden`}>
+          <div className="border-b border-stone px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-display text-lg font-semibold text-ink">
+                {isCreate ? `Tạo event trong ${phaseInfo.label.toLowerCase()}` : selectedSubEvent.name}
+              </h2>
+              {!isCreate && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge label={typeMeta.label} cls={typeMeta.cls} />
+                  {selectedSubEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+                  {selectedSubEvent.isCurrent && <Badge label="Đang mở" cls="bg-trail/12 text-trail" />}
+                </div>
+              )}
+            </div>
           </div>
 
+          <div className="space-y-4 p-5">
+            {!canEditProgram && <LockedNote />}
+
+            {!isCreate && selectedPhase === currentPhase && (
+              <div className="flex flex-col gap-3 rounded-lg border border-stone bg-paper px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-ink/60">
+                  Chỉ event đang mở mới hiện trên dashboard của thí sinh.
+                </p>
+                {selectedSubEvent.isCurrent ? (
+                  <span className="shrink-0 rounded-full bg-trail/12 px-3 py-1.5 text-xs font-semibold text-trail">
+                    Đang là event hiện tại
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSetCurrentSubEvent(selectedSubEvent.id)}
+                    disabled={!canEditProgram}
+                    className="shrink-0 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Mở event này
+                  </button>
+                )}
+              </div>
+            )}
+
+            {isCreate ? (
+              <SubEventEditor
+                key={`create-${selectedPhase}`}
+                draftKey={`sub-event:new:${selectedPhase}`}
+                initialEvent={createSubEvent({
+                  startDate: phaseSchedule[selectedPhase]?.startDate || '',
+                  endDate: phaseSchedule[selectedPhase]?.endDate || '',
+                  type: selectedPhase === 'registration' ? 'workflow' : 'social',
+                  usesStations: false,
+                })}
+                submitLabel="Tạo event"
+                onSave={(draft) => {
+                  onCreateSubEvent(selectedPhase, draft)
+                  goToPhase(selectedPhase, { replace: true })
+                }}
+                onCancel={() => goToPhase(selectedPhase, { replace: true })}
+                canEdit={canEditProgram}
+              />
+            ) : (
+              <SubEventEditor
+                key={`${selectedSubEvent.id}-${detailSeed}`}
+                draftKey={`sub-event:${selectedSubEvent.id}`}
+                initialEvent={selectedSubEvent}
+                submitLabel="Lưu event"
+                onSave={(draft) => {
+                  onUpdateSubEvent(selectedPhase, selectedSubEvent.id, draft)
+                  goToPhase(selectedPhase, { replace: true })
+                }}
+                // Hủy chỉ dựng lại form từ dữ liệu server, giữ người dùng ở
+                // lại đây phòng khi họ muốn sửa tiếp.
+                onCancel={() => setDetailSeed(value => value + 1)}
+                canEdit={canEditProgram}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Mức 2 ──────────────────────────────────────────────────────────
+  return (
+    <div className="space-y-4">
+      <BackLink label="Tất cả phase" onClick={goToPhaseList} />
+
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-lg font-semibold text-ink">{phaseInfo.label}</h2>
+            {currentPhase === selectedPhase
+              ? <Badge label="Đang hiện tại" cls="bg-trail/12 text-trail" />
+              : (
+                <button
+                  type="button"
+                  onClick={() => onSetCurrentPhase(selectedPhase)}
+                  disabled={!canEditProgram}
+                  className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Chuyển phase
+                </button>
+              )}
+          </div>
+          <p className="mt-1.5 text-sm leading-6 text-ink/50">{phaseInfo.hint}</p>
+        </div>
+
+        <button
+          type="button"
+          onClick={goToCreate}
+          disabled={!canEditProgram}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Icon name="plus" className="h-4 w-4" />
+          Tạo event
+        </button>
+      </div>
+
+      {!canEditProgram && <LockedNote />}
+
+      <PhaseSchedule
+        schedule={phaseSchedule[selectedPhase]}
+        onDateChange={(patch) => onUpdatePhaseSchedule(selectedPhase, patch)}
+        canEdit={canEditProgram}
+      />
+
+      {visibleSubEvents.length === 0 ? (
+        <div className={`${CARD} border-dashed px-5 py-12 text-center text-sm text-ink/35`}>
+          Phase này chưa có event nào. Tạo event đầu tiên để sau đó gắn trạm và điểm.
+        </div>
+      ) : (
+        <div className="grid gap-3 xl:grid-cols-2">
           {visibleSubEvents.map((subEvent) => (
             <SubEventCard
               key={subEvent.id}
               subEvent={subEvent}
-              isSelected={selectedSubEvent?.id === subEvent.id}
-              onSelect={() => {
-                setSelectedSubEventId(subEvent.id)
-                setCreating(false)
-              }}
-              onDelete={() => {
-                onDeleteSubEvent(selectedPhase, subEvent.id)
-                setSelectedSubEventId('')
-              }}
+              onOpen={() => goToEvent(subEvent.id)}
+              onDelete={() => onDeleteSubEvent(selectedPhase, subEvent.id)}
               canEdit={canEditProgram}
             />
           ))}
-
-          {visibleSubEvents.length === 0 && (
-            <div className={`${CARD} border-dashed px-4 py-10 text-sm text-ink/35`}>
-              Phase này chưa có event nào. Hãy tạo event đầu tiên để sau đó gắn trạm và điểm.
-            </div>
-          )}
         </div>
-
-        <div className="space-y-5">
-          {creating && (
-            <div className={`${CARD} overflow-hidden`}>
-              <div className="border-b border-stone px-5 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-display text-lg font-semibold text-ink">Tạo event con</p>
-                    <p className="mt-1 text-sm text-ink/45">Event này sẽ nằm bên trong phase {selectedPhaseInfo.label.toLowerCase()}.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setCreating(false)}
-                    className="rounded-lg p-1.5 text-ink/35 transition hover:bg-paper hover:text-ink"
-                  >
-                    <Icon name="close" className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-5">
-                <SubEventEditor
-                  initialEvent={createSubEvent({
-                    startDate: phaseSchedule[selectedPhase]?.startDate || '',
-                    endDate: phaseSchedule[selectedPhase]?.endDate || '',
-                    type: selectedPhase === 'registration' ? 'workflow' : 'social',
-                    usesStations: false,
-                  })}
-                  phaseLabel={selectedPhaseInfo.label}
-                  submitLabel="Tạo event"
-                  onSave={(draft) => {
-                    onCreateSubEvent(selectedPhase, draft)
-                    setCreating(false)
-                  }}
-                  onCancel={() => setCreating(false)}
-                  canEdit={canEditProgram}
-                />
-              </div>
-            </div>
-          )}
-
-          {selectedSubEvent && (
-            <div className={`${CARD} overflow-hidden`}>
-              <div className="border-b border-stone px-5 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-display text-lg font-semibold text-ink">Chi tiết event con</p>
-                    <p className="mt-1 text-sm text-ink/45">Sửa event con trong phase mà không làm thay đổi cấu trúc phase cố định.</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <PhaseEventBadge type={selectedSubEvent.type} />
-                    {selectedSubEvent.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
-                    {selectedSubEvent.isCurrent && <Badge label="Đang mở cho thí sinh" cls="bg-trail/12 text-trail" />}
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-5">
-                {selectedPhase === currentPhase && (
-                  <div className="mb-4 rounded-lg border border-stone bg-paper px-4 py-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Event hiện tại</p>
-                        <p className="mt-1 text-sm text-ink/60">
-                          Chỉ event đang mở trong phase hiện tại mới được hiển thị trên dashboard participant.
-                        </p>
-                      </div>
-                      {!selectedSubEvent.isCurrent ? (
-                        <button
-                          type="button"
-                          onClick={() => onSetCurrentSubEvent(selectedSubEvent.id)}
-                          disabled={!canEditProgram}
-                          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Mở event này
-                        </button>
-                      ) : (
-                        <span className="rounded-full bg-trail/12 px-3 py-1.5 text-xs font-semibold text-trail">
-                          Đang là event hiện tại
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                <SubEventEditor
-                  key={`${selectedSubEvent.id}-${detailSeed}`}
-                  initialEvent={selectedSubEvent}
-                  phaseLabel={selectedPhaseInfo.label}
-                  submitLabel="Lưu event"
-                  onSave={(draft) => onUpdateSubEvent(selectedPhase, selectedSubEvent.id, draft)}
-                  onCancel={() => setDetailSeed(value => value + 1)}
-                  canEdit={canEditProgram}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   )
-}
-
-function PhaseEventBadge({ type }) {
-  const meta = SUB_EVENT_TYPE_META[type] ?? SUB_EVENT_TYPE_META.custom
-  return <Badge label={meta.label} cls={meta.cls} />
 }
 
 export default EventManagementPage

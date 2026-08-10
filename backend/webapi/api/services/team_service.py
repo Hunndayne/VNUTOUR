@@ -474,6 +474,46 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
     return participant, ("overwritten" if email_differs else "linked")
 
 
+def auto_link_participant_by_verified_email(account: Account) -> Optional[Participant]:
+    """Adopt a captain-created Participant whose email matches a Google-verified
+    account email, so a pre-registered member lands in their team without ever
+    typing an MSSV.
+
+    Only the Google sign-in path should call this: it trusts `account.email`
+    because Google has verified ownership of it. Acts only when the account has
+    no MSSV yet and exactly one *unclaimed* Participant matches the email — zero
+    matches means a brand-new person and more than one is ambiguous, both of
+    which fall back to the manual MSSV supplementary form. Returns the linked
+    Participant, or None when nothing was linked.
+    """
+    if not account or account.mssv or not account.email:
+        return None
+
+    matches = list(
+        Participant.objects.filter(
+            email__iexact=account.email.strip(),
+            account__isnull=True,
+        )[:2]
+    )
+    if len(matches) != 1:
+        return None
+
+    participant = matches[0]
+    try:
+        with transaction.atomic():
+            account.mssv = participant.mssv
+            account.save(update_fields=["mssv"])
+            participant.account = account
+            update_fields = ["account", "updated_at"]
+            update_fields.extend(_sync_participant_from_account(participant, account))
+            participant.save(update_fields=update_fields)
+    except IntegrityError:
+        # account.mssv (unique) collided with an existing row — a data
+        # inconsistency we do not paper over here; leave it to the manual path.
+        return None
+    return participant
+
+
 def get_team_for_participant(mssv: str) -> Optional[Team]:
     """Find which team a participant belongs to."""
     membership = TeamMembership.objects.filter(

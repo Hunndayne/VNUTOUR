@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
+import { useSearchParam } from './router.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 
 function renderInlineMarkdown(text, keyPrefix = 'md') {
   const pattern = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g
@@ -262,81 +264,31 @@ function AttachmentBox({ attachment, files, onChange }) {
   )
 }
 
-export default function FormResponses() {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [forms, setForms] = useState([])
-  const [selectedId, setSelectedId] = useState('')
-  const [answers, setAnswers] = useState({})
-  const [attachments, setAttachments] = useState([])
-  const [submitState, setSubmitState] = useState('idle')
-  const [submitMessage, setSubmitMessage] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    async function loadForms() {
-      try {
-        setLoading(true)
-        setError('')
-        const payload = await apiRequest('/my-team/forms')
-        if (cancelled) return
-        const accessibleForms = payload?.accessible_forms || []
-        setForms(accessibleForms)
-        const params = new URLSearchParams(window.location.search)
-        const preferredId = params.get('stationId')
-        const initialId = accessibleForms.some((item) => String(item.station_id) === preferredId)
-          ? preferredId
-          : accessibleForms[0]?.station_id
-            ? String(accessibleForms[0].station_id)
-            : ''
-        setSelectedId(initialId)
-      } catch (err) {
-        if (cancelled) return
-        if (err?.status === 401) {
-          logoutAndRedirect('/')
-          return
-        }
-        if (err?.status === 403) {
-          setError('Ban khong co quyen truy cap bieu mau nay.')
-          return
-        }
-        if (err?.status === 404) {
-          setError('Ban chua co doi hoac chua co bieu mau phu hop voi phase hien tai.')
-          return
-        }
-        setError('Khong tai duoc danh sach bieu mau.')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void loadForms()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const selectedForm = useMemo(
-    () => forms.find((item) => String(item.station_id) === String(selectedId)) || null,
-    [forms, selectedId],
-  )
-
-  const submissionConfig = selectedForm?.submission_config || {}
+// Everything that depends on the answers the user is typing, split out so the
+// parent can remount it with `key={selectedId}` on every form switch. That
+// remount is what makes useDraftState safe here — the hook only ever reads
+// its baseline once per mount, and re-mounting is simpler than teaching it to
+// change key mid-life without mixing one form's answers into another's.
+function FormSubmissionPanel({ form, onSubmitted }) {
+  const submissionConfig = form?.submission_config || {}
   // The backend always sends the canonical ordered item list, converting older
   // three-section configs on the way out — so display order is admin-controlled.
   const submissionItems = Array.isArray(submissionConfig.items) ? submissionConfig.items : []
   const activeFormFields = submissionItems.filter((item) => item.type === 'text')
   const activeQuizItems = submissionItems.filter((item) => item.type === 'quiz')
   const attachmentConfig = submissionItems.find((item) => item.type === 'attachment') || null
-  const closure = selectedForm?.closure || null
+  const closure = form?.closure || null
   const formClosed = Boolean(closure?.closed)
-  const mySubmission = selectedForm?.my_submission || null
+  const mySubmission = form?.my_submission || null
 
-  useEffect(() => {
-    setAnswers({})
-    setAttachments([])
-    setSubmitState('idle')
-    setSubmitMessage('')
-  }, [selectedId])
+  const [answers, setAnswers, answersDraft] = useDraftState(
+    form?.station_id ? `form-answers:${form.station_id}` : '',
+    {},
+  )
+  // Attachments are live File objects — never persisted, never restorable.
+  const [attachments, setAttachments] = useState([])
+  const [submitState, setSubmitState] = useState('idle')
+  const [submitMessage, setSubmitMessage] = useState('')
 
   const setAnswer = (key, value) => {
     setAnswers((current) => ({ ...current, [key]: value }))
@@ -415,23 +367,17 @@ export default function FormResponses() {
         }
       }
 
-      await apiRequest(`/my-team/forms/${selectedId}/submit`, {
+      await apiRequest(`/my-team/forms/${form.station_id}/submit`, {
         method: 'POST',
         body,
       })
       setSubmitState('success')
       setSubmitMessage('Đã gửi bài nộp thành công.')
-      setForms((current) => current.map((item) => {
-        if (String(item.station_id) !== String(selectedId)) return item
-        const wasSubmitted = Boolean(item.my_submission)
-        return {
-          ...item,
-          my_submission: { status: 'submitted', submitted_at: new Date().toISOString() },
-          closure: item.closure
-            ? { ...item.closure, submitted_count: (item.closure.submitted_count || 0) + (wasSubmitted ? 0 : 1) }
-            : item.closure,
-        }
-      }))
+      // The draft's job is done — keep the answers on screen, just stop
+      // treating them as an in-progress edit. A failed submit below skips
+      // this so the draft (and the answers) survive for a retry.
+      answersDraft.clear()
+      onSubmitted(form.station_id)
     } catch (submitError) {
       if (submitError?.status === 401) {
         logoutAndRedirect('/')
@@ -458,6 +404,188 @@ export default function FormResponses() {
       setSubmitMessage(messageMap[code] || 'Không gửi được bài nộp. Vui lòng thử lại.')
     }
   }
+
+  return (
+    <>
+      {formClosed || mySubmission ? (
+        <Card radius={32} className={`border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
+            {formClosed ? (
+              <span className="font-semibold text-clay">
+                {closure?.reason === 'limit_reached'
+                  ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
+                  : closure?.reason === 'correct_answer'
+                    ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
+                    : 'Biểu mẫu đã được ban tổ chức đóng.'}
+              </span>
+            ) : null}
+            {mySubmission?.submitted_at ? (
+              <span>Đội của bạn đã nộp lúc {formatDateTime(mySubmission.submitted_at)}.</span>
+            ) : null}
+            {closure?.max_submissions ? (
+              <span className="font-mono text-xs text-ink/50">
+                {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} đội đã nộp
+              </span>
+            ) : null}
+          </div>
+        </Card>
+      ) : null}
+
+      {submissionConfig.brief ? (
+        <Card radius={32} className="border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 18px 54px rgba(84,72,49,0.08)' }}>
+          <MarkdownBlock content={submissionConfig.brief} />
+        </Card>
+      ) : null}
+
+      <DraftNotice draft={answersDraft} label="câu trả lời đang làm dở" />
+      {answersDraft.restored && attachmentConfig ? (
+        <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
+      ) : null}
+
+      {submissionItems.map((item, index) => {
+        if (item.type === 'quiz') {
+          return (
+            <FormFieldCard
+              key={item.id}
+              index={index + 1}
+              label={item.question || `Cau hoi ${index + 1}`}
+              helper="Chon mot dap an"
+            >
+              <div className="grid gap-3">
+                {(item.options || []).map((option, optionIndex) => (
+                  <QuizChoice
+                    key={`${item.id}-${optionIndex}`}
+                    label={option || `Lua chon ${optionIndex + 1}`}
+                    active={answers[`quiz:${item.id}`] === optionIndex}
+                    onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
+                  />
+                ))}
+              </div>
+            </FormFieldCard>
+          )
+        }
+
+        if (item.type === 'attachment') {
+          return (
+            <FormFieldCard
+              key={item.id}
+              index={index + 1}
+              label="Tep minh chung"
+              helper="Tai len theo cau hinh cua tram"
+            >
+              <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} />
+            </FormFieldCard>
+          )
+        }
+
+        return (
+          <FormFieldCard
+            key={item.id}
+            index={index + 1}
+            label={item.label || `Truong ${index + 1}`}
+            required={item.required}
+            helper={item.placeholder}
+          >
+            <FieldInput
+              field={item}
+              value={answers[`form:${item.id}`] || ''}
+              onChange={(value) => setAnswer(`form:${item.id}`, value)}
+            />
+          </FormFieldCard>
+        )
+      })}
+
+      <Card radius={32} className="border border-ink bg-ink px-5 py-5 text-white sm:px-6" style={{ boxShadow: '0 18px 50px rgba(32,49,43,0.3)' }}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-display text-2xl font-semibold">Da noi voi cau hinh admin</p>
+            <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
+              Trang nay dang doc cau hinh bai nop tu quan ly tram va tu dong an cac form khong thuoc phase cua doi.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitState === 'submitting' || formClosed}
+            className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {formClosed ? 'Da dong' : submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
+          </button>
+        </div>
+        {submitMessage ? (
+          <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
+            submitState === 'success'
+              ? 'bg-trail/15 text-white'
+              : 'bg-clay/20 text-white'
+          }`}>
+            {submitMessage}
+          </p>
+        ) : null}
+      </Card>
+    </>
+  )
+}
+
+export default function FormResponses() {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [forms, setForms] = useState([])
+  // A form is one-to-one with its station, and StationRunPage/ParticipantDashboard
+  // already link here as `/form?stationId=...` — so the open form rides in that
+  // same param rather than a second `form` param that would just duplicate it.
+  const [selectedId, setSelectedId] = useSearchParam('stationId', '')
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadForms() {
+      try {
+        setLoading(true)
+        setError('')
+        const payload = await apiRequest('/my-team/forms')
+        if (cancelled) return
+        const accessibleForms = payload?.accessible_forms || []
+        setForms(accessibleForms)
+        // `selectedId` here is only ever the URL's value at mount time (see the
+        // eslint-disable below) — an id that is missing or no longer valid
+        // falls back to the first accessible form instead of a blank page.
+        const validId = accessibleForms.some((item) => String(item.station_id) === selectedId)
+          ? selectedId
+          : accessibleForms[0]?.station_id
+            ? String(accessibleForms[0].station_id)
+            : ''
+        if (validId !== selectedId) setSelectedId(validId, { replace: true })
+      } catch (err) {
+        if (cancelled) return
+        if (err?.status === 401) {
+          logoutAndRedirect('/')
+          return
+        }
+        if (err?.status === 403) {
+          setError('Ban khong co quyen truy cap bieu mau nay.')
+          return
+        }
+        if (err?.status === 404) {
+          setError('Ban chua co doi hoac chua co bieu mau phu hop voi phase hien tai.')
+          return
+        }
+        setError('Khong tai duoc danh sach bieu mau.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void loadForms()
+    return () => {
+      cancelled = true
+    }
+    // Mount-only: reads selectedId's value at load time without refetching
+    // the form list every time the user switches forms afterwards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const selectedForm = useMemo(
+    () => forms.find((item) => String(item.station_id) === String(selectedId)) || null,
+    [forms, selectedId],
+  )
 
   if (loading) {
     return <div className="min-h-screen bg-paper px-6 py-16 text-center text-sm text-ink/45">Dang tai bieu mau...</div>
@@ -511,116 +639,25 @@ export default function FormResponses() {
               </div>
             </Card>
 
-            {formClosed || mySubmission ? (
-              <Card radius={32} className={`border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
-                  {formClosed ? (
-                    <span className="font-semibold text-clay">
-                      {closure?.reason === 'limit_reached'
-                        ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
-                        : closure?.reason === 'correct_answer'
-                          ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
-                          : 'Biểu mẫu đã được ban tổ chức đóng.'}
-                    </span>
-                  ) : null}
-                  {mySubmission?.submitted_at ? (
-                    <span>Đội của bạn đã nộp lúc {formatDateTime(mySubmission.submitted_at)}.</span>
-                  ) : null}
-                  {closure?.max_submissions ? (
-                    <span className="font-mono text-xs text-ink/50">
-                      {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} đội đã nộp
-                    </span>
-                  ) : null}
-                </div>
-              </Card>
-            ) : null}
-
-            {submissionConfig.brief ? (
-              <Card radius={32} className="border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 18px 54px rgba(84,72,49,0.08)' }}>
-                <MarkdownBlock content={submissionConfig.brief} />
-              </Card>
-            ) : null}
-
-            {submissionItems.map((item, index) => {
-              if (item.type === 'quiz') {
-                return (
-                  <FormFieldCard
-                    key={item.id}
-                    index={index + 1}
-                    label={item.question || `Cau hoi ${index + 1}`}
-                    helper="Chon mot dap an"
-                  >
-                    <div className="grid gap-3">
-                      {(item.options || []).map((option, optionIndex) => (
-                        <QuizChoice
-                          key={`${item.id}-${optionIndex}`}
-                          label={option || `Lua chon ${optionIndex + 1}`}
-                          active={answers[`quiz:${item.id}`] === optionIndex}
-                          onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
-                        />
-                      ))}
-                    </div>
-                  </FormFieldCard>
-                )
-              }
-
-              if (item.type === 'attachment') {
-                return (
-                  <FormFieldCard
-                    key={item.id}
-                    index={index + 1}
-                    label="Tep minh chung"
-                    helper="Tai len theo cau hinh cua tram"
-                  >
-                    <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} />
-                  </FormFieldCard>
-                )
-              }
-
-              return (
-                <FormFieldCard
-                  key={item.id}
-                  index={index + 1}
-                  label={item.label || `Truong ${index + 1}`}
-                  required={item.required}
-                  helper={item.placeholder}
-                >
-                  <FieldInput
-                    field={item}
-                    value={answers[`form:${item.id}`] || ''}
-                    onChange={(value) => setAnswer(`form:${item.id}`, value)}
-                  />
-                </FormFieldCard>
-              )
-            })}
-
-            <Card radius={32} className="border border-ink bg-ink px-5 py-5 text-white sm:px-6" style={{ boxShadow: '0 18px 50px rgba(32,49,43,0.3)' }}>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-display text-2xl font-semibold">Da noi voi cau hinh admin</p>
-                  <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-                    Trang nay dang doc cau hinh bai nop tu quan ly tram va tu dong an cac form khong thuoc phase cua doi.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={submitState === 'submitting' || formClosed}
-                  className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
-                >
-                  {formClosed ? 'Da dong' : submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
-                </button>
-              </div>
-              {submitMessage ? (
-                <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
-                  submitState === 'success'
-                    ? 'bg-trail/15 text-white'
-                    : 'bg-clay/20 text-white'
-                }`}>
-                  {submitMessage}
-                </p>
-              ) : null}
-            </Card>
+            {/* Keyed by the open form's id so a switch fully remounts the panel
+                below instead of leaking one form's draft state into another. */}
+            <FormSubmissionPanel
+              key={selectedId}
+              form={selectedForm}
+              onSubmitted={(stationId) => {
+                setForms((current) => current.map((item) => {
+                  if (String(item.station_id) !== String(stationId)) return item
+                  const wasSubmitted = Boolean(item.my_submission)
+                  return {
+                    ...item,
+                    my_submission: { status: 'submitted', submitted_at: new Date().toISOString() },
+                    closure: item.closure
+                      ? { ...item.closure, submitted_count: (item.closure.submitted_count || 0) + (wasSubmitted ? 0 : 1) }
+                      : item.closure,
+                  }
+                }))
+              }}
+            />
           </main>
 
           <aside className="space-y-5 lg:sticky lg:top-6">

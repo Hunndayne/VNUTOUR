@@ -1,4 +1,5 @@
 import { FIXED_PHASES } from './adminProgram.js'
+import { clearAllDrafts } from './drafts.jsx'
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -62,14 +63,35 @@ export function isMasterAdmin(user = getStoredUser()) {
   return user?.role === ROLE_MASTER_ADMIN
 }
 
+/**
+ * Where each role lands after signing in. Every screen has its own URL now, so
+ * "home" is a real path per role rather than `/` deciding what to render.
+ */
+export const ROLE_HOME_PATHS = {
+  [ROLE_MASTER_ADMIN]: '/admin',
+  [ROLE_ADMIN]: '/admin',
+  collab: '/coop',
+  participant: '/participant',
+}
+
+export function roleHomePath(role) {
+  return ROLE_HOME_PATHS[role] || '/'
+}
+
 export function redirectToRoot() {
   window.location.replace('/')
 }
 
-export const redirectByRole = redirectToRoot
+export function redirectByRole(role) {
+  window.location.replace(roleHomePath(role))
+}
 
 export function logoutAndRedirect(path = '/') {
   clearStoredSession()
+  // Locally autosaved edits belong to the account that typed them — leaving
+  // them behind would hand the next person to sign in on this machine a
+  // half-written email or a stranger's profile.
+  clearAllDrafts()
   window.location.replace(path)
 }
 

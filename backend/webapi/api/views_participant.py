@@ -13,6 +13,7 @@ from django.utils import timezone
 from api.models import (
     Account, CaptainVote, Participant, Team, TeamMembership, PhaseRoster,
     ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
+    MssvLinkAudit,
 )
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
@@ -38,6 +39,42 @@ from api.services.team_service import (
     profile_is_account_owned_by_other,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
+
+
+def _registration_mismatch_response(account: Account, mssv: str) -> JsonResponse:
+    """A (Google-verified) account tried to claim an MSSV whose team-form email
+    differs from the account email.
+
+    We deliberately do not let it take over the captain-entered row — that would
+    reopen MSSV impersonation. Instead we tell the member which team holds the
+    MSSV and how to get it corrected, and record a MssvLinkAudit BLOCKED row so
+    the organisers have a worklist. Once the captain/BTC fixes the team-form
+    email to match, the next Google sign-in auto-links with no manual step.
+    """
+    participant = Participant.objects.filter(mssv=mssv).first()
+    team = get_team_for_participant(mssv)
+    already = MssvLinkAudit.objects.filter(
+        mssv=mssv, account=account, action=MssvLinkAudit.ACTION_BLOCKED,
+    ).exists()
+    if not already:
+        MssvLinkAudit.objects.create(
+            mssv=mssv,
+            participant=participant,
+            account=account,
+            action=MssvLinkAudit.ACTION_BLOCKED,
+            old_email=participant.email if participant else None,
+            new_email=account.email,
+        )
+    return JsonResponse(
+        {
+            "error": "registration_mismatch",
+            "detail": {
+                "mssv": mssv,
+                "team_code": team.code if team else None,
+            },
+        },
+        status=409,
+    )
 
 
 def _prepare_member_submission(data: dict, who: str):
@@ -273,6 +310,8 @@ def me_profile_view(request: HttpRequest):
             return JsonResponse({"error": "missing_mssv"}, status=400)
 
         claim_error = validate_account_mssv_claim(acc, mssv)
+        if claim_error == "registration_mismatch":
+            return _registration_mismatch_response(acc, mssv)
         if claim_error:
             return JsonResponse({"error": claim_error}, status=409)
 
@@ -1177,12 +1216,24 @@ def my_team_station_state_view(request: HttpRequest):
     def stamp(value):
         return value.isoformat() if value else None
 
+    # The QR a team shows at a station now carries that station and which way
+    # it is meant to be scanned, so the coop scanning it does not choose either.
+    # Which way is decided here from the team's own state: standing outside the
+    # station it is a check-in code, already inside it is a check-out code — so
+    # the check-in and check-out QR for a station are genuinely different codes,
+    # not one string the coop reinterprets.
     qr = {"enabled": False}
     if team.approval_status == Team.APPROVAL_APPROVED and team_qr_visible(team):
         if not team.qr_token:
             rotate_qr_token(team)
             team.refresh_from_db(fields=["qr_token"])
-        qr = {"enabled": True, "payload": f"t:{team.qr_token}"}
+        payload = f"t:{team.qr_token}"
+        direction = None
+        if station_id is not None:
+            inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
+            direction = "out" if inside else "in"
+            payload = f"{payload}|s:{station_id}|d:{direction}"
+        qr = {"enabled": True, "payload": payload, "direction": direction}
 
     return JsonResponse({
         "team_code": team.code,

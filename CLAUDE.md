@@ -116,21 +116,48 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
 
 ### Frontend: Route-Driven SPA
 
-- **App.jsx**: Main router — dispatches to pages by pathname
-  - `/`: `LandingPage` — public landing
+- **App.jsx**: Main router — dispatches to pages by pathname, and redirects a
+  signed-in visitor away from `/` and `/login` to their role's home. Access is
+  gated per route; a wrong-role visit lands on that role's home instead.
+  - `/`: `LandingPage` — public landing (guests only)
   - `/login`: `LoginPage` — Google OAuth + fallback email login
-  - `/register`: `RegisterPage` — schema-driven registration (personal or team)
-  - `/admin`: `AdminDashboard` — team approval, scoring, settings
+  - `/admin`, `/admin/<tab>`: `AdminDashboard` — tab ∈ `events`, `stations`, `teams`,
+    `scores`, `accounts`, `discord`, `email`, `operations`, `settings`; bare `/admin`
+    is the overview, and unknown tabs are rewritten to it
+  - `/coop`: `CoopDashboard` — station duty, QR scanning
   - `/participant`: `ParticipantDashboard` — score view, personal info
-  - `/checkin`: `CheckinPage` — QR scanner (collab/admin only)
-  - `/form`: `FormResponses` — form submission viewer
+  - `/form`: `FormResponses` — form submission (participants)
+  - Legacy aliases kept alive for old links: `/checkin` → `/coop`,
+    `/paticipant` → `/participant`, `/landing` → `/`
+  - `RegisterPage.jsx` exists but is not routed; sign-up goes through `/login?mode=signup`
+
+- **router.js**: the whole routing mechanism — there is no react-router.
+  `navigate(to, { replace })`, `useLocation()`, `useRouteSegments()`,
+  `useSearchParam(key, fallback)`, `useEnumSearchParam(key, allowed, fallback)`,
+  `buildUrl(path, params)`. Screen-local state (sub-tab, open drawer, selected
+  row, filters) belongs in that path's query string so a reload and the back
+  button both behave: e.g. `/admin/stations?event=3&station=12`,
+  `/admin/discord?view=members`, `/admin/events?phase=qualifying&event=5`.
+  Use `{ replace: true }` when the page is syncing itself, a push when the user clicked.
+
+- **drafts.jsx**: local autosave for long forms — `useDraftState(key, baseline)`
+  returns `[value, setValue, draft]` and mirrors the value into localStorage
+  (7-day TTL) under a stable key; `<DraftNotice draft={draft} />` renders the
+  restore banner. Call `draft.clear()` after a successful save. Never persist
+  passwords, `File`/`Blob` objects, or destructive-confirmation text.
+  The hook reads its baseline once on mount, so remount with `key={...}` when
+  the record being edited changes. Logging out wipes every stored draft.
 
 - **api.js**: HTTP client with auth header injection, error handling, data normalization
   - `apiRequest(path, options)`: Fetch wrapper with Bearer token
   - `getStoredAuthToken()` / `getStoredUser()`: Session from localStorage
-  - `redirectByRole(role)`: Role-based navigation (admin → /admin, collab → /checkin, etc.)
+  - `roleHomePath(role)` / `redirectByRole(role)`: admin → `/admin`, collab → `/coop`,
+    participant → `/participant`
 
 - **Shared UI**: `ui.jsx` and `adminProgram.js` for reusable components and constants
+
+Deep links depend on an SPA fallback. `frontend/nginx.conf` already serves
+`try_files $uri $uri/ /index.html`; Vite's dev server does the same by default.
 
 ## Key Data Flows
 

@@ -77,13 +77,32 @@ class StationStateTestBase(TestCase):
 
 
 class StationStatePayloadTests(StationStateTestBase):
-    def test_before_any_scan_there_is_no_session(self):
+    def test_before_any_scan_the_qr_is_a_check_in_code_for_this_station(self):
         payload = self._get(self.station)
 
         self.assertIsNone(payload["session"])
         self.assertIsNone(payload["submission"])
         self.assertTrue(payload["qr"]["enabled"])
+        # Standing outside the station, so it is the check-in code — and it
+        # names the station, so the coop scanning it chooses neither.
+        self.assertEqual(payload["qr"]["payload"], f"t:tok-1|s:{self.station.id}|d:in")
+        self.assertEqual(payload["qr"]["direction"], "in")
+
+    def test_once_inside_the_qr_becomes_a_check_out_code(self):
+        """Same team, same station, but now active — a different code, not a relabel."""
+        self._enter(self.station)
+
+        payload = self._get(self.station)
+
+        self.assertEqual(payload["qr"]["payload"], f"t:tok-1|s:{self.station.id}|d:out")
+        self.assertEqual(payload["qr"]["direction"], "out")
+
+    def test_the_stationless_poll_keeps_a_bare_event_token(self):
+        """The list/gate screen names no station, so its QR carries no station either."""
+        payload = self._get()
+
         self.assertEqual(payload["qr"]["payload"], "t:tok-1")
+        self.assertIsNone(payload["qr"]["direction"])
 
     def test_a_scan_shows_up_as_an_active_session(self):
         """This transition is exactly what the screen is polling for."""
@@ -142,7 +161,9 @@ class StationStatePayloadTests(StationStateTestBase):
         self.team.qr_token = "tok-2"
         self.team.save(update_fields=["qr_token"])
 
-        self.assertEqual(self._get(self.station)["qr"]["payload"], "t:tok-2")
+        self.assertEqual(
+            self._get(self.station)["qr"]["payload"], f"t:tok-2|s:{self.station.id}|d:in",
+        )
 
     def test_the_qr_is_hidden_when_the_organisers_switch_check_in_off(self):
         SystemSetting.objects.filter(key="checkin_qr").update(

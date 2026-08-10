@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD, APPROVAL, PROVISION, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import { useSearchParam } from './router.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 
 const FILTERS = [
   { key: 'all', label: 'Tất cả' },
@@ -332,7 +334,7 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
   )
 }
 
-function CreateTeamDrawer({ open, form, busy, onClose, onChange, onCreate }) {
+function CreateTeamDrawer({ open, form, draft, busy, onClose, onChange, onCreate }) {
   if (!open) return null
 
   return (
@@ -349,6 +351,7 @@ function CreateTeamDrawer({ open, form, busy, onClose, onChange, onCreate }) {
           </button>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <DraftNotice draft={draft} label="đội mới đang tạo" />
           <div>
             <label className="mb-1 block font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/45">Tên đội *</label>
             <input type="text" value={form.name} onChange={e => onChange(f => ({ ...f, name: e.target.value }))} className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10" />
@@ -682,16 +685,17 @@ function MergeTeamsModal({
 
 function TeamsPage() {
   const [teams, setTeams] = useState([])
-  const [filter, setFilter] = useState('all')
-  const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState(null)
+  const [filter, setFilter] = useSearchParam('status', 'all')
+  const [query, setQuery] = useSearchParam('q', '')
+  const [selectedId, setSelectedId] = useSearchParam('team', '')
   const [selectedTeam, setSelectedTeam] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [listLoading, setListLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [apiError, setApiError] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
-  const [createForm, setCreateForm] = useState({ name: '', owner: '' })
+  const [newParam, setNewParam] = useSearchParam('new', '')
+  const showCreate = newParam === '1'
+  const [createForm, setCreateForm, createDraft] = useDraftState('team:create', { name: '', owner: '' })
   const [showMerge, setShowMerge] = useState(false)
   const [mergeCandidates, setMergeCandidates] = useState([])
   const [mergeLoading, setMergeLoading] = useState(false)
@@ -907,7 +911,7 @@ function TeamsPage() {
         : selectedTeams.filter(team => team.id !== keptCode).map(team => team.id)
       setShowMerge(false)
       setMergeSelectedIds([])
-      if (mergeSelectedIds.includes(selectedId)) setSelectedId(null)
+      if (mergeSelectedIds.includes(selectedId)) setSelectedId('', { replace: true })
       setMergeNotice(
         `Đã ghép ${selectedTeams.length} đội vào ${keptCode}. `
         + `${removedCodes.join(', ')} đã bị xoá, ${memberCount} thành viên nay thuộc đội ${keptCode}`
@@ -946,7 +950,8 @@ function TeamsPage() {
     })
     await loadTeams()
     setCreateForm({ name: '', owner: '' })
-    setShowCreate(false)
+    createDraft.clear()
+    setNewParam('', { replace: true })
   })
 
   return (
@@ -998,7 +1003,7 @@ function TeamsPage() {
           </span>
           <input
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={e => setQuery(e.target.value, { replace: true })}
             placeholder="Tìm theo tên đội, mã đội, đội trưởng..."
             className="w-full rounded-lg border border-stone bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 lg:w-72"
           />
@@ -1016,7 +1021,7 @@ function TeamsPage() {
 
           <button
             type="button"
-            onClick={() => setShowCreate(true)}
+            onClick={() => setNewParam('1')}
             className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 active:scale-[0.98]"
           >
             <Icon name="plus" className="h-4 w-4" />
@@ -1093,8 +1098,9 @@ function TeamsPage() {
       <CreateTeamDrawer
         open={showCreate}
         form={createForm}
+        draft={createDraft}
         busy={busy === 'create'}
-        onClose={() => setShowCreate(false)}
+        onClose={() => setNewParam('')}
         onChange={setCreateForm}
         onCreate={handleCreateTeam}
       />

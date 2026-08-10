@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD } from './ui.jsx'
 import { apiRequest, getStoredUser, logoutAndRedirect } from './api.js'
+import { useDraftState, DraftNotice } from './drafts.jsx'
 
 const RECIPIENT_OPTIONS = [
   { value: 'all', label: 'Tất cả tài khoản', desc: 'Gửi đến mọi tài khoản đang hoạt động' },
@@ -11,6 +12,20 @@ const RECIPIENT_OPTIONS = [
 ]
 
 const PLACEHOLDER_KEYS = ['{{ten}}', '{{name}}', '{{full_name}}', '{{ho_ten}}', '{{email}}', '{{username}}', '{{role}}']
+
+// Everything the admin is composing lives in one draft object so a single
+// `useDraftState` call autosaves the whole email — subject, body, recipients,
+// mode — instead of juggling seven independent localStorage writes.
+const EMPTY_COMPOSE = {
+  recipientType: 'all',
+  selectedUsernames: [],
+  externalEmails: '',
+  ccEmails: '',
+  bccEmails: '',
+  subject: '',
+  htmlBody: '',
+  isHtmlMode: true,
+}
 
 function explainApiError(error) {
   if (error?.data?.error === 'smtp_not_configured') return 'Máy chủ chưa được cấu hình SMTP.'
@@ -61,32 +76,29 @@ export default function EmailPage() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState(null)
-  const [recipientType, setRecipientType] = useState('all')
+  const [compose, setCompose, draft] = useDraftState('email:compose', EMPTY_COMPOSE)
+  const patchCompose = useCallback(
+    (patch) => setCompose((current) => ({ ...current, ...patch })),
+    [setCompose],
+  )
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
-  const [selectedUsernames, setSelectedUsernames] = useState([])
-  const [externalEmails, setExternalEmails] = useState('')
-  const [ccEmails, setCcEmails] = useState('')
-  const [bccEmails, setBccEmails] = useState('')
-  const [subject, setSubject] = useState('')
-  const [htmlBody, setHtmlBody] = useState('')
-  const [isHtmlMode, setIsHtmlMode] = useState(true)
   const [busy, setBusy] = useState(null)
   const [result, setResult] = useState(null)
   const [recipientCounts, setRecipientCounts] = useState({ all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
 
   const loadAccounts = useCallback(async () => {
-    const params = new URLSearchParams({ limit: recipientType === 'specific' ? '100' : '1', active: '1' })
-    if (recipientType !== 'all' && recipientType !== 'specific') {
-      params.set('role', recipientType)
+    const params = new URLSearchParams({ limit: compose.recipientType === 'specific' ? '100' : '1', active: '1' })
+    if (compose.recipientType !== 'all' && compose.recipientType !== 'specific') {
+      params.set('role', compose.recipientType)
     }
-    if (recipientType === 'specific' && debouncedSearchQuery.trim()) {
+    if (compose.recipientType === 'specific' && debouncedSearchQuery.trim()) {
       params.set('q', debouncedSearchQuery.trim())
     }
     const payload = await apiRequest(`/admin/accounts?${params.toString()}`)
     setAccounts((payload.items || []).filter((item) => item.is_active !== false))
     setRecipientCounts(payload.counts || { all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
-  }, [debouncedSearchQuery, recipientType])
+  }, [compose.recipientType, debouncedSearchQuery])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 250)
@@ -119,26 +131,26 @@ export default function EmailPage() {
 
   const estimatedRecipientCount = useMemo(() => {
     let count = 0
-    if (recipientType === 'specific') {
-      count = selectedUsernames.length
-    } else if (recipientType === 'all') {
+    if (compose.recipientType === 'specific') {
+      count = compose.selectedUsernames.length
+    } else if (compose.recipientType === 'all') {
       count = recipientCounts.all || 0
     } else {
-      count = recipientCounts[recipientType] || 0
+      count = recipientCounts[compose.recipientType] || 0
     }
-    count += [externalEmails, ccEmails, bccEmails]
+    count += [compose.externalEmails, compose.ccEmails, compose.bccEmails]
       .flatMap((value) => value.split(/[\n,;]/))
       .map((email) => email.trim())
       .filter(Boolean)
       .length
     return count
-  }, [bccEmails, ccEmails, externalEmails, recipientCounts, recipientType, selectedUsernames])
+  }, [compose, recipientCounts])
 
   const personalizationPreview = useMemo(() => {
     const actorAccount = accounts.find((item) => item.username === currentUser?.username)
-    const selectedAccount = recipientType === 'specific'
-      ? accounts.find((item) => selectedUsernames.includes(item.username))
-      : accounts.find((item) => (recipientType === 'all' ? true : item.role === recipientType))
+    const selectedAccount = compose.recipientType === 'specific'
+      ? accounts.find((item) => compose.selectedUsernames.includes(item.username))
+      : accounts.find((item) => (compose.recipientType === 'all' ? true : item.role === compose.recipientType))
     const account = selectedAccount || actorAccount
 
     return {
@@ -147,7 +159,7 @@ export default function EmailPage() {
       username: account?.username || currentUser?.username || 'admin',
       role: account?.role || currentUser?.role || 'admin',
     }
-  }, [accounts, currentUser, recipientType, selectedUsernames])
+  }, [accounts, currentUser, compose.recipientType, compose.selectedUsernames])
 
   // Rendered inside a sandboxed iframe rather than into this document. Escaping
   // the placeholder values already stops the injection, but the sandbox is what
@@ -156,9 +168,9 @@ export default function EmailPage() {
   // client runs scripts either, so blocking them makes the preview truer, not
   // weaker.
   const previewDocument = useMemo(() => {
-    const body = isHtmlMode
-      ? applyPreviewTemplate(htmlBody, personalizationPreview, { forHtml: true })
-      : `<pre>${escapeHtml(applyPreviewTemplate(htmlBody, personalizationPreview))}</pre>`
+    const body = compose.isHtmlMode
+      ? applyPreviewTemplate(compose.htmlBody, personalizationPreview, { forHtml: true })
+      : `<pre>${escapeHtml(applyPreviewTemplate(compose.htmlBody, personalizationPreview))}</pre>`
     return `<!doctype html><html><head><meta charset="utf-8"><style>
       body { margin: 0; padding: 12px; font: 14px/1.5 Inter, system-ui, sans-serif; color: #20312B; }
       pre { margin: 0; white-space: pre-wrap; font: inherit; }
@@ -166,18 +178,18 @@ export default function EmailPage() {
       a { color: #B8860B; }
       img { max-width: 100%; }
     </style></head><body>${body}</body></html>`
-  }, [htmlBody, isHtmlMode, personalizationPreview])
+  }, [compose.htmlBody, compose.isHtmlMode, personalizationPreview])
 
   const handleSend = useCallback(async () => {
     const parseEmails = (value) => value.split(/[\n,;]/).map((email) => email.trim()).filter(Boolean)
-    const extEmails = parseEmails(externalEmails)
-    const ccList = parseEmails(ccEmails)
-    const bccList = parseEmails(bccEmails)
-    if (!subject.trim()) {
+    const extEmails = parseEmails(compose.externalEmails)
+    const ccList = parseEmails(compose.ccEmails)
+    const bccList = parseEmails(compose.bccEmails)
+    if (!compose.subject.trim()) {
       setApiError('Vui lòng nhập tiêu đề email.')
       return
     }
-    if (!htmlBody.trim()) {
+    if (!compose.htmlBody.trim()) {
       setApiError('Vui lòng nhập nội dung email.')
       return
     }
@@ -195,19 +207,22 @@ export default function EmailPage() {
       const response = await apiRequest('/admin/send-email', {
         method: 'POST',
         body: {
-          recipient_type: recipientType,
-          usernames: recipientType === 'specific' ? selectedUsernames : [],
+          recipient_type: compose.recipientType,
+          usernames: compose.recipientType === 'specific' ? compose.selectedUsernames : [],
           to_emails: extEmails,
           cc_emails: ccList,
           bcc_emails: bccList,
-          subject: subject.trim(),
+          subject: compose.subject.trim(),
           // "Văn bản thường" has to mean it: escape before wrapping, or a typed
           // `<b>` (or a pasted tag) silently becomes live markup in the email.
           // The {{...}} placeholders survive escaping and are filled server-side.
-          html_body: isHtmlMode ? htmlBody.trim() : `<pre>${escapeHtml(htmlBody.trim())}</pre>`,
+          html_body: compose.isHtmlMode ? compose.htmlBody.trim() : `<pre>${escapeHtml(compose.htmlBody.trim())}</pre>`,
         },
       })
       setResult(response)
+      // Only a successful queue drops the draft — a failed send must leave the
+      // typed email exactly as it was so the admin can fix and retry.
+      draft.clear()
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
@@ -217,14 +232,14 @@ export default function EmailPage() {
     } finally {
       setBusy(null)
     }
-  }, [bccEmails, ccEmails, estimatedRecipientCount, externalEmails, htmlBody, isHtmlMode, recipientType, selectedUsernames, subject])
+  }, [compose, draft, estimatedRecipientCount])
 
   const toggleUsername = (username) => {
-    setSelectedUsernames((current) => (
-      current.includes(username)
-        ? current.filter((item) => item !== username)
-        : [...current, username]
-    ))
+    patchCompose({
+      selectedUsernames: compose.selectedUsernames.includes(username)
+        ? compose.selectedUsernames.filter((item) => item !== username)
+        : [...compose.selectedUsernames, username],
+    })
   }
 
   if (loading) {
@@ -264,7 +279,7 @@ export default function EmailPage() {
               <label
                 key={option.value}
                 className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition ${
-                  recipientType === option.value
+                  compose.recipientType === option.value
                     ? 'border-gold bg-gold/5'
                     : 'border-stone bg-white hover:border-ink/20'
                 }`}
@@ -273,8 +288,8 @@ export default function EmailPage() {
                   type="radio"
                   name="recipientType"
                   value={option.value}
-                  checked={recipientType === option.value}
-                  onChange={() => setRecipientType(option.value)}
+                  checked={compose.recipientType === option.value}
+                  onChange={() => patchCompose({ recipientType: option.value })}
                   className="mt-0.5 accent-gold"
                 />
                 <div>
@@ -285,7 +300,7 @@ export default function EmailPage() {
             ))}
           </div>
 
-          {recipientType === 'specific' && (
+          {compose.recipientType === 'specific' && (
             <div className="space-y-3 rounded-lg border border-stone p-4">
               <div className="flex items-center gap-3">
                 <div className="relative flex-1">
@@ -300,14 +315,14 @@ export default function EmailPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedUsernames(filteredAccounts.map((account) => account.username))}
+                  onClick={() => patchCompose({ selectedUsernames: filteredAccounts.map((account) => account.username) })}
                   className="rounded-lg border border-stone px-3 py-2 text-xs text-ink/60 hover:bg-stone/30"
                 >
                   Chọn tất cả
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedUsernames([])}
+                  onClick={() => patchCompose({ selectedUsernames: [] })}
                   className="rounded-lg border border-stone px-3 py-2 text-xs text-ink/60 hover:bg-stone/30"
                 >
                   Bỏ chọn
@@ -319,14 +334,14 @@ export default function EmailPage() {
                   <label
                     key={account.username}
                     className={`flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
-                      selectedUsernames.includes(account.username)
+                      compose.selectedUsernames.includes(account.username)
                         ? 'bg-gold/10 text-ink'
                         : 'text-ink/70 hover:bg-stone/30'
                     }`}
                   >
                     <input
                       type="checkbox"
-                      checked={selectedUsernames.includes(account.username)}
+                      checked={compose.selectedUsernames.includes(account.username)}
                       onChange={() => toggleUsername(account.username)}
                       className="accent-gold"
                     />
@@ -339,7 +354,7 @@ export default function EmailPage() {
                   <p className="py-4 text-center text-sm text-ink/40">Không tìm thấy tài khoản nào.</p>
                 )}
               </div>
-              <div className="text-xs text-ink/40">Đã chọn {selectedUsernames.length} tài khoản.</div>
+              <div className="text-xs text-ink/40">Đã chọn {compose.selectedUsernames.length} tài khoản.</div>
             </div>
           )}
 
@@ -350,8 +365,8 @@ export default function EmailPage() {
             </label>
             <textarea
                 placeholder="to@example.com"
-              value={externalEmails}
-              onChange={(event) => setExternalEmails(event.target.value)}
+              value={compose.externalEmails}
+              onChange={(event) => patchCompose({ externalEmails: event.target.value })}
               rows={3}
               className="w-full resize-none rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
             />
@@ -360,8 +375,8 @@ export default function EmailPage() {
               <label className="text-sm font-medium text-ink">CC</label>
               <textarea
                 placeholder="cc@example.com"
-                value={ccEmails}
-                onChange={(event) => setCcEmails(event.target.value)}
+                value={compose.ccEmails}
+                onChange={(event) => patchCompose({ ccEmails: event.target.value })}
                 rows={3}
                 className="w-full resize-none rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
               />
@@ -370,8 +385,8 @@ export default function EmailPage() {
               <label className="text-sm font-medium text-ink">BCC</label>
               <textarea
                 placeholder="bcc@example.com"
-                value={bccEmails}
-                onChange={(event) => setBccEmails(event.target.value)}
+                value={compose.bccEmails}
+                onChange={(event) => patchCompose({ bccEmails: event.target.value })}
                 rows={3}
                 className="w-full resize-none rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
               />
@@ -392,13 +407,15 @@ export default function EmailPage() {
           </h2>
         </div>
         <div className="space-y-4 px-5 py-4">
+          <DraftNotice draft={draft} label="email đang soạn" />
+
           <div>
             <label className="text-sm font-medium text-ink">Tiêu đề</label>
             <input
               type="text"
               placeholder="Nhập tiêu đề email..."
-              value={subject}
-              onChange={(event) => setSubject(event.target.value)}
+              value={compose.subject}
+              onChange={(event) => patchCompose({ subject: event.target.value })}
               className="mt-1 w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
             />
           </div>
@@ -407,23 +424,23 @@ export default function EmailPage() {
             <span className="text-sm text-ink/60">Chế độ soạn thảo:</span>
             <button
               type="button"
-              onClick={() => setIsHtmlMode(true)}
+              onClick={() => patchCompose({ isHtmlMode: true })}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                isHtmlMode ? 'bg-gold text-white' : 'border border-stone text-ink/55 hover:bg-stone/30'
+                compose.isHtmlMode ? 'bg-gold text-white' : 'border border-stone text-ink/55 hover:bg-stone/30'
               }`}
             >
               HTML
             </button>
             <button
               type="button"
-              onClick={() => setIsHtmlMode(false)}
+              onClick={() => patchCompose({ isHtmlMode: false })}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                !isHtmlMode ? 'bg-gold text-white' : 'border border-stone text-ink/55 hover:bg-stone/30'
+                !compose.isHtmlMode ? 'bg-gold text-white' : 'border border-stone text-ink/55 hover:bg-stone/30'
               }`}
             >
               Văn bản thường
             </button>
-            {isHtmlMode && (
+            {compose.isHtmlMode && (
               <span className="text-xs text-ink/40">
                 Có thể dùng thẻ HTML và placeholder cá nhân hóa.
               </span>
@@ -444,17 +461,17 @@ export default function EmailPage() {
 
           <div>
             <label className="text-sm font-medium text-ink">
-              Nội dung {isHtmlMode ? '(HTML)' : '(văn bản thường)'}
+              Nội dung {compose.isHtmlMode ? '(HTML)' : '(văn bản thường)'}
             </label>
             <textarea
-              placeholder={isHtmlMode
+              placeholder={compose.isHtmlMode
                 ? '<h1>Chúc mừng {{ten}}</h1><p>Nội dung email...</p>'
                 : 'Nhập nội dung email...'}
-              value={htmlBody}
-              onChange={(event) => setHtmlBody(event.target.value)}
+              value={compose.htmlBody}
+              onChange={(event) => patchCompose({ htmlBody: event.target.value })}
               rows={14}
               className="mt-1 w-full resize-y rounded-lg border border-stone bg-white px-3 py-2 font-mono text-sm text-ink outline-none placeholder:text-ink/30 focus:border-gold"
-              style={isHtmlMode ? undefined : { fontFamily: 'inherit' }}
+              style={compose.isHtmlMode ? undefined : { fontFamily: 'inherit' }}
             />
           </div>
 
@@ -470,13 +487,15 @@ export default function EmailPage() {
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Subject</p>
                 <p className="mt-2 text-sm text-ink/70">
-                  {subject.trim() ? applyPreviewTemplate(subject, personalizationPreview) : 'Chưa có tiêu đề để xem trước.'}
+                  {compose.subject.trim()
+                    ? applyPreviewTemplate(compose.subject, personalizationPreview)
+                    : 'Chưa có tiêu đề để xem trước.'}
                 </p>
               </div>
 
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/35">Nội dung</p>
-                {htmlBody.trim() ? (
+                {compose.htmlBody.trim() ? (
                   <iframe
                     title="Xem thử nội dung email"
                     sandbox=""
