@@ -1,0 +1,6 @@
+# Shell scripts and nftables rulesets run on Linux hosts. Checked out on Windows
+# with autocrlf on they get CRLF line endings, and a `#!/bin/sh` with a trailing
+# carriage return fails as "bad interpreter" the moment the file is copied to a
+# server.
+*.sh text eol=lf
+*.nft text eol=lf

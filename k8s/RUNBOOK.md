@@ -135,6 +135,8 @@ kubectl -n vnutour cp vnutour/<pod-backend>:/app/backups/<tên>.zip ./<tên>.zip
 | Bot `CrashLoopBackOff` | thiếu `DISCORD_TOKEN` trong `backend-secret` | nạp token rồi restart; deploy không chờ bot nên việc này không chặn CD |
 | k3s server trên cp lịm đi | Prometheus phình vượt RAM cp | kiểm tra `kubectl -n monitoring top pod`; giữ nguyên retention/limit trong `14.prometheus.yaml` trừ khi đã nâng RAM VM |
 | Không đăng nhập được admin | mật khẩu `hunn` bị migration 0024 vô hiệu hoá | đặt lại qua `manage.py shell`, đăng nhập bằng **username** chứ không phải email |
+| Ngoài internet vào không được nhưng pod vẫn khoẻ | tắt orange cloud cho hostname, hoặc set `cloudflare_v4` lỗi thời/rỗng | bật lại proxy Cloudflare; `sudo /usr/local/sbin/update-cloudflare-ips.sh` |
+| Mất SSH vào 192.168.1.110 sau khi sửa firewall | rule chặn nhầm | vào bằng `10.10.10.11`, hoặc console Proxmox, rồi `sudo nft delete table inet vnutour_fw` |
 
 Xem log nhanh:
 
@@ -161,6 +163,47 @@ Prometheus.
 
 ---
 
+## Firewall trên cp
+
+Router không forward được từng port nên cp nằm trong DMZ — mọi cổng của
+192.168.1.110 đến thẳng từ internet, và `host-firewall.nft` là lớp chặn duy
+nhất. Thiết kế và lý do nằm ở `README.md`, mục Exposure.
+
+```bash
+sudo nft list table inet vnutour_fw
+sudo nft list set inet vnutour_fw cloudflare_v4
+systemctl status vnutour-firewall.service
+systemctl list-timers vnutour-cloudflare-ips.timer
+```
+
+Cập nhật dải IP Cloudflare ngay, không chờ timer hàng tuần:
+
+```bash
+sudo /usr/local/sbin/update-cloudflare-ips.sh
+```
+
+Sửa rule thì luôn theo trình tự này, kể cả khi thấy chắc chắn:
+
+```bash
+# 1. mở sẵn một phiên SSH qua 10.10.10.11 và giữ nguyên
+# 2. hẹn giờ tự gỡ, phòng khi tự khoá mình ra ngoài
+sudo systemd-run --on-active=300 --unit=fw-rollback nft delete table inet vnutour_fw
+# 3. áp, rồi nạp lại danh sách Cloudflare vì delete table xoá luôn set
+sudo nft -f /etc/nftables.d/vnutour.nft && sudo /usr/local/sbin/update-cloudflare-ips.sh
+# 4. kiểm tra xong mới huỷ hẹn giờ
+sudo systemctl stop fw-rollback.timer
+```
+
+Gỡ hẳn khi cần gỡ rối: `sudo nft delete table inet vnutour_fw`. Cụm chạy lại
+như chưa có firewall, và cũng phơi ra internet như chưa có firewall — đừng để
+qua đêm.
+
+> Tắt proxy Cloudflare (grey cloud) cho một hostname là hostname đó chết ngay:
+> traffic khi ấy đến thẳng từ client, không khớp allowlist. Thêm hostname mới
+> cũng phải đi qua Cloudflare, không có ngoại lệ nào cho "tạm test".
+
+---
+
 ## Khôi phục khi mất cụm
 
 Thứ tự, giả định `w1` mất trắng và chỉ còn bản backup trên R2:
@@ -183,10 +226,10 @@ nào — đó là rủi ro đã biết, không phải quy trình đã kiểm ch�
 
 ## Còn treo
 
+- [ ] **Áp `host-firewall.nft` lên cp** — đã viết nhưng chưa chạy trên máy thật;
+      tới lúc đó SSH, 6443, 10250 và toàn dải NodePort vẫn phơi ra internet
 - [ ] Đổi mật khẩu admin Grafana khỏi `change-me` trong `15.grafana.yaml`
 - [ ] Nạp `DISCORD_TOKEN` cho bot và `SMTP_*` cho email-worker
-- [ ] Hạn chế 443 chỉ nhận từ dải IP Cloudflare (hoặc bật Authenticated Origin
-      Pulls) — đang là mặt hở của `use-forwarded-headers`
 - [ ] Dựng `vnutour-w2`, chạy thử một chu kỳ `drain`/`uncordon`
 - [ ] Diễn tập restore từ R2 trên database rác
 - [ ] Bump tag ảnh trong `16.backup-cronjob.yaml` khi `backup_service` đổi — CD

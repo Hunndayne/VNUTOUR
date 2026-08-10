@@ -76,23 +76,46 @@ request was plaintext, and `SECURE_SSL_REDIRECT` answers every `/api` call with 
 
 The cost is that ingress-nginx now believes whatever `X-Forwarded-Proto` reaches
 it, so anything that can talk to the origin's 443 directly can claim its
-plaintext request arrived over HTTPS. Cloudflare is the only intended path in;
-restricting 443 to Cloudflare's IP ranges at the router — or turning on
-Authenticated Origin Pulls — is what actually closes that, and is still open.
+plaintext request arrived over HTTPS. What closes that is the Cloudflare
+allowlist in `host-firewall.nft` below: if the only source that can reach 443 is
+Cloudflare, the header can only come from Cloudflare. Authenticated Origin Pulls
+would add a second check at the TLS layer and is not set up.
 
 `TRUST_PROXY_HEADERS=1` in the ConfigMap is a separate switch: it tells Django to
 believe the header ingress-nginx passes on, since every hop inside the cluster is
 plain HTTP.
 
-**Exposure.** Cloudflare proxies both hostnames (orange cloud), so the router
-only needs to forward **443** to 192.168.1.110. Port 80 can stay closed — nothing
-needs ACME any more, and Cloudflare's "Always Use HTTPS" does the http→https
-redirect at the edge. Port 6443 is the Kubernetes API and 22 is SSH; neither
-belongs on the public internet, and keeping 6443 closed is precisely why
-deployment runs on a self-hosted runner inside the LAN.
+**Exposure.** The router cannot forward an individual port, so the control plane
+sits in its DMZ instead: every port on 192.168.1.110 arrives from the internet —
+SSH, the Kubernetes API on 6443, the kubelet on 10250, the whole NodePort range.
+Nothing upstream filters any of it. That makes `host-firewall.nft` the only thing
+between the cluster and the internet rather than a second layer, which is why it
+is in this repository instead of living only on the host.
 
-The NodePort range (30000–32767) is not forwarded either, which is what keeps
-Grafana on `:30300` reachable from the LAN and the VPN but not from outside.
+It is an nftables table of its own (`inet vnutour_fw`) at priority -10, not ufw:
+k3s writes its rules through iptables-nft, ufw's `DEFAULT_FORWARD_POLICY=DROP`
+breaks pod networking, and a ufw reload walks over kube-proxy's chains. A
+separate table runs ahead of k3s' own and survives a k3s restart untouched.
+
+It filters **both** `input` and `forward`. Traffic to 443 and to every NodePort
+is DNAT'd in `PREROUTING` and then routed to a pod, so it passes through FORWARD
+and never reaches INPUT — an INPUT-only ruleset leaves the whole NodePort range
+open while looking like it closed it.
+
+The policy: from the internet only 443, and only from Cloudflare's published
+ranges, so the origin cannot be scanned or hit directly and no request can skip
+the edge. Everything arriving on any other interface is trusted — `enp6s19`
+(10.10.10.11, the Proxmox SDN management network) and k3s' own `cni0`,
+`flannel.1` and `veth*`. Sources inside `192.168.1.0/24` stay open on eth0 too,
+because w1 reaches the apiserver, the kubelet and flannel's VXLAN across it;
+closing that dropped w1 out of the cluster.
+
+`update-cloudflare-ips.sh` fills the `cloudflare_v4`/`cloudflare_v6` sets from
+cloudflare.com and runs weekly from a timer, keeping the last good copy in
+`/var/lib/vnutour-fw/cloudflare.nft` so a boot with no network does not leave the
+sets empty. Two consequences worth remembering: turning the orange cloud **off**
+for a hostname takes it offline immediately, since traffic then comes straight
+from clients, and Grafana on `:30300` is reachable from the LAN and the SDN only.
 
 **TLS.** SSL/TLS mode is **Full (strict)**: Cloudflare connects to the origin
 over HTTPS and validates the certificate, which is a **Cloudflare Origin
