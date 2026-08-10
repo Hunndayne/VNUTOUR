@@ -70,13 +70,16 @@ table inet vnutour_fw {
 		# Chỉ cần nếu eth0 lấy IP bằng DHCP; vô hại khi IP tĩnh.
 		udp sport 67 udp dport 68 accept
 
-		# Từ internet: đúng một cổng, và chỉ từ Cloudflare. Gõ thẳng IP public
-		# không vào được nữa, nên không ai bỏ qua được WAF và rate limit ở edge —
-		# đó cũng là thứ bịt lỗ tự khai X-Forwarded-Proto mà use-forwarded-headers
-		# mở ra. Không mở 80: Cloudflare "Always Use HTTPS" redirect ở edge và
-		# không còn ACME nào cần đường đó.
-		tcp dport 443 ip saddr @cloudflare_v4 accept
-		tcp dport 443 ip6 saddr @cloudflare_v6 accept
+		# Từ internet: chỉ web, và chỉ từ Cloudflare. Gõ thẳng IP public không vào
+		# được nữa, nên không ai bỏ qua được WAF và rate limit ở edge — đó cũng là
+		# thứ bịt lỗ tự khai X-Forwarded-Proto mà use-forwarded-headers mở ra.
+		#
+		# 80 phải mở vì SSL/TLS mode của zone đang là Flexible: Cloudflare gõ vào
+		# origin bằng HTTP, đo được ngày 10/08/2026 (SRC=172.68.164.114 DPT=80).
+		# Đóng 80 khi nào chuyển zone sang Full (strict) — cert Origin đã nằm sẵn
+		# trong secret vnutour-tls, chỉ chưa được dùng tới.
+		tcp dport { 80, 443 } ip saddr @cloudflare_v4 accept
+		tcp dport { 80, 443 } ip6 saddr @cloudflare_v6 accept
 	}
 
 	chain forward {
@@ -91,8 +94,10 @@ table inet vnutour_fw {
 		ip saddr 192.168.1.0/24 accept
 		ip6 saddr fde8:65d4:6f51::/48 accept
 
-		# Internet -> ingress: klipper-lb DNAT sang pod nhưng giữ nguyên cổng.
-		tcp dport 443 ip saddr @cloudflare_v4 accept
-		tcp dport 443 ip6 saddr @cloudflare_v6 accept
+		# Internet -> ingress: klipper-lb DNAT sang pod nhưng giữ nguyên cổng, và
+		# pod ingress nằm trên w1 nên gói đi tiếp ra flannel.1 — chặng này là
+		# FORWARD, không phải INPUT. Đây chính là nơi bắt được DPT=80.
+		tcp dport { 80, 443 } ip saddr @cloudflare_v4 accept
+		tcp dport { 80, 443 } ip6 saddr @cloudflare_v6 accept
 	}
 }
