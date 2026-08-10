@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+
+// Cheap deep-equality stand-in for the plain string/number/index answer maps
+// this panel deals with. Good enough to tell "did the team draft actually
+// change" without pulling in a real deep-equal helper, and safe here because
+// `answers` never holds File objects (those live in `attachments`, which is
+// never sent to the draft endpoint).
+function stableAnswersKey(value) {
+  try {
+    return JSON.stringify(value || {})
+  } catch {
+    return ''
+  }
+}
 
 function renderInlineMarkdown(text, keyPrefix = 'md') {
   const pattern = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g
@@ -181,7 +195,10 @@ function FormFieldCard({ index, label, required, helper, children }) {
 
 function FieldInput({ field, value, onChange }) {
   const kind = inferFieldKind(field)
-  const baseClass = 'w-full rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10'
+  // `select-text` overrides the form-wide `select-none` guard (see
+  // FormSubmissionPanel) so the participant can still select and edit their
+  // own typed answer — only the question content itself is locked down.
+  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10'
   if (kind === 'textarea') {
     return (
       <textarea
@@ -221,13 +238,14 @@ function QuizChoice({ active, label, onClick }) {
   )
 }
 
-function AttachmentBox({ attachment, files, onChange }) {
+function AttachmentBox({ attachment, files, onChange, onPickerOpen }) {
   return (
     <label className="block cursor-pointer border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition hover:bg-gold/15" style={{ borderRadius: 26 }}>
       <input
         type="file"
         className="hidden"
         multiple={Number(attachment.maxFiles) > 1}
+        onClick={onPickerOpen}
         onChange={(event) => {
           onChange(Array.from(event.target.files || []))
           event.target.value = ''
@@ -281,14 +299,171 @@ function FormSubmissionPanel({ form, onSubmitted }) {
   const formClosed = Boolean(closure?.closed)
   const mySubmission = form?.my_submission || null
 
+  // Survey forms stay individual — one person, one device, plain localStorage,
+  // exactly as before. Every other form's answers belong to the whole team,
+  // so they additionally mirror to the backend draft endpoint.
+  const isSurvey = Boolean(form?.is_survey)
+  const stationId = form?.station_id ? String(form.station_id) : ''
+  const teamSyncEnabled = !isSurvey && Boolean(stationId)
+
   const [answers, setAnswers, answersDraft] = useDraftState(
-    form?.station_id ? `form-answers:${form.station_id}` : '',
+    stationId ? `form-answers:${stationId}` : '',
     {},
   )
   // Attachments are live File objects — never persisted, never restorable.
   const [attachments, setAttachments] = useState([])
   const [submitState, setSubmitState] = useState('idle')
   const [submitMessage, setSubmitMessage] = useState('')
+
+  // Once this team has actually submitted — this session or a previous one —
+  // the draft is done. No more polling, no more pushing edits.
+  const locked = Boolean(mySubmission) || submitState === 'success'
+
+  // Last known `{updated_at, updated_by}` from the server draft. Drives the
+  // "teammate just edited" banner independently of whether that update was
+  // actually adopted into `answers` (see the poll effect below).
+  const [teamSync, setTeamSync] = useState({ updatedAt: null, updatedBy: '' })
+  // Flips true once the initial GET has settled, one way or another. The PUT
+  // effect waits for it so it can never race the seed fetch — without this a
+  // fast typist could push a stale localStorage draft over a newer server one
+  // before that server draft has even been read.
+  const [readyToPut, setReadyToPut] = useState(!teamSyncEnabled || locked)
+  // The last `answers` value we believe the server already holds. Comparing
+  // the live value against this — rather than tracking which input has focus
+  // — is the simple way to tell "nothing typed since we last synced" (safe to
+  // adopt an incoming server update) apart from "there's an unsent edit right
+  // now" (must not clobber it).
+  const syncedAnswersRef = useRef(null)
+  const answersRef = useRef(answers)
+  useEffect(() => {
+    answersRef.current = answers
+  }, [answers])
+
+  // Seed `answers` from the team's server draft once per mount. A network
+  // failure here is silent on purpose: useDraftState above already restored
+  // whatever was last written to localStorage, which is exactly the offline
+  // fallback the sync is supposed to have.
+  useEffect(() => {
+    if (!teamSyncEnabled || locked) return undefined
+    let cancelled = false
+    apiRequest(`/my-team/stations/${stationId}/draft`)
+      .then((payload) => {
+        if (cancelled || payload?.is_survey) return
+        const serverResponse = payload?.response || null
+        syncedAnswersRef.current = serverResponse || {}
+        if (serverResponse) setAnswers(serverResponse)
+        if (payload?.updated_at) {
+          setTeamSync({ updatedAt: payload.updated_at, updatedBy: payload.updated_by || '' })
+        }
+      })
+      .catch(() => {
+        // Offline / server error — keep whatever useDraftState restored.
+      })
+      .finally(() => {
+        if (!cancelled) setReadyToPut(true)
+      })
+    return () => {
+      cancelled = true
+    }
+    // Mount-only: this panel remounts (key={selectedId}) on every form
+    // switch, so there is no later station_id change to react to here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Poll for a teammate's progress. The content is only pulled into `answers`
+  // when nothing has been typed locally since the last known-synced value;
+  // otherwise a background refresh could overwrite an in-progress keystroke.
+  // Whole-response last-write-wins otherwise — acceptable for how small these
+  // forms are.
+  useEffect(() => {
+    if (!teamSyncEnabled || locked) return undefined
+    const interval = setInterval(() => {
+      apiRequest(`/my-team/stations/${stationId}/draft`)
+        .then((payload) => {
+          if (payload?.is_survey) return
+          const serverResponse = payload?.response || null
+          if (payload?.updated_at) {
+            setTeamSync((current) => (
+              current.updatedAt === payload.updated_at
+                ? current
+                : { updatedAt: payload.updated_at, updatedBy: payload.updated_by || '' }
+            ))
+          }
+          const wasInSync = stableAnswersKey(answersRef.current) === stableAnswersKey(syncedAnswersRef.current)
+          const serverHasNewContent = stableAnswersKey(serverResponse || {}) !== stableAnswersKey(syncedAnswersRef.current)
+          if (wasInSync && serverHasNewContent) {
+            syncedAnswersRef.current = serverResponse || {}
+            setAnswers(serverResponse || {})
+          }
+        })
+        .catch(() => {
+          // Transient network error — the next tick tries again.
+        })
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [teamSyncEnabled, locked, stationId, setAnswers])
+
+  // Push local edits up, debounced so every keystroke doesn't hit the network.
+  useEffect(() => {
+    if (!teamSyncEnabled || locked || !readyToPut) return undefined
+    if (stableAnswersKey(answers) === stableAnswersKey(syncedAnswersRef.current)) return undefined
+    const timer = setTimeout(() => {
+      apiRequest(`/my-team/stations/${stationId}/draft`, {
+        method: 'PUT',
+        body: { response: answers },
+      })
+        .then((payload) => {
+          syncedAnswersRef.current = answers
+          setTeamSync({ updatedAt: payload?.updated_at || new Date().toISOString(), updatedBy: payload?.updated_by || '' })
+        })
+        .catch(() => {
+          // Offline — localStorage (via useDraftState) already has this
+          // value, and the next debounce firing (or the poll's own resync
+          // once back online) will catch the server up.
+        })
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [answers, teamSyncEnabled, locked, readyToPut, stationId])
+
+  // Deterrence, not prevention — the web cannot stop a screenshot. Hiding the
+  // content while the tab is backgrounded or the window loses focus at least
+  // keeps it out of the frame when someone alt-tabs to a capture tool.
+  const [contentHidden, setContentHidden] = useState(false)
+  // Opening the attachment file dialog blurs the window too — that is the
+  // participant uploading, not tabbing away to a capture tool — so a click on
+  // the file input arms this one-shot to let the screen-guard skip that blur.
+  const pickingFileRef = useRef(false)
+  const armFilePicker = () => {
+    pickingFileRef.current = true
+    // Safety disarm: some browsers dismiss the dialog with no blur/focus cycle,
+    // and a stuck flag would swallow the next genuine tab-away.
+    window.setTimeout(() => { pickingFileRef.current = false }, 1500)
+  }
+  useEffect(() => {
+    const handleVisibilityChange = () => setContentHidden(document.hidden)
+    const handleBlur = () => {
+      if (pickingFileRef.current) {
+        pickingFileRef.current = false
+        return
+      }
+      setContentHidden(true)
+    }
+    const handleFocus = () => {
+      if (!document.hidden) setContentHidden(false)
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', handleBlur)
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('blur', handleBlur)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [])
+
+  const blockClipboardEvent = (event) => {
+    event.preventDefault()
+  }
 
   const setAnswer = (key, value) => {
     setAnswers((current) => ({ ...current, [key]: value }))
@@ -407,121 +582,160 @@ function FormSubmissionPanel({ form, onSubmitted }) {
 
   return (
     <>
-      {formClosed || mySubmission ? (
-        <Card radius={32} className={`border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
-            {formClosed ? (
-              <span className="font-semibold text-clay">
-                {closure?.reason === 'limit_reached'
-                  ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
-                  : closure?.reason === 'correct_answer'
-                    ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
-                    : 'Biểu mẫu đã được ban tổ chức đóng.'}
-              </span>
-            ) : null}
-            {mySubmission?.submitted_at ? (
-              <span>Đội của bạn đã nộp lúc {formatDateTime(mySubmission.submitted_at)}.</span>
-            ) : null}
-            {closure?.max_submissions ? (
-              <span className="font-mono text-xs text-ink/50">
-                {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} đội đã nộp
-              </span>
-            ) : null}
-          </div>
-        </Card>
-      ) : null}
-
-      {submissionConfig.brief ? (
-        <Card radius={32} className="border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 18px 54px rgba(84,72,49,0.08)' }}>
-          <MarkdownBlock content={submissionConfig.brief} />
-        </Card>
-      ) : null}
-
-      <DraftNotice draft={answersDraft} label="câu trả lời đang làm dở" />
-      {answersDraft.restored && attachmentConfig ? (
-        <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
-      ) : null}
-
-      {submissionItems.map((item, index) => {
-        if (item.type === 'quiz') {
-          return (
-            <FormFieldCard
-              key={item.id}
-              index={index + 1}
-              label={item.question || `Cau hoi ${index + 1}`}
-              helper="Chon mot dap an"
-            >
-              <div className="grid gap-3">
-                {(item.options || []).map((option, optionIndex) => (
-                  <QuizChoice
-                    key={`${item.id}-${optionIndex}`}
-                    label={option || `Lua chon ${optionIndex + 1}`}
-                    active={answers[`quiz:${item.id}`] === optionIndex}
-                    onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
-                  />
-                ))}
+      {contentHidden && typeof document !== 'undefined'
+        ? createPortal(
+            // Portalled to <body> rather than nested in the guard div below —
+            // that div gets `blur-md` while hidden, and a CSS filter creates a
+            // new containing block for `position: fixed` descendants, which
+            // would otherwise pin this overlay to the blurred div instead of
+            // the viewport.
+            <div className="fixed inset-0 z-[999] grid place-items-center bg-ink/85 px-6 text-center backdrop-blur-sm">
+              <div>
+                <p className="font-display text-lg font-semibold leading-7 text-white">Nội dung tạm ẩn khi rời màn hình</p>
+                <p className="mt-2 max-w-sm text-sm leading-6 text-white/70">Quay lại tab này để tiếp tục làm bài.</p>
               </div>
-            </FormFieldCard>
+            </div>,
+            document.body,
           )
-        }
+        : null}
+      <div
+        className={`space-y-5 transition-[filter] duration-200 select-none ${contentHidden ? 'blur-md' : ''}`}
+        onCopy={blockClipboardEvent}
+        onCut={blockClipboardEvent}
+        onContextMenu={blockClipboardEvent}
+        onDragStart={blockClipboardEvent}
+      >
+        {formClosed || mySubmission ? (
+          <Card radius={32} className={`border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
+              {formClosed ? (
+                <span className="font-semibold text-clay">
+                  {closure?.reason === 'limit_reached'
+                    ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
+                    : closure?.reason === 'correct_answer'
+                      ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
+                      : 'Biểu mẫu đã được ban tổ chức đóng.'}
+                </span>
+              ) : null}
+              {mySubmission?.submitted_at ? (
+                <span>Đội của bạn đã nộp lúc {formatDateTime(mySubmission.submitted_at)}.</span>
+              ) : null}
+              {closure?.max_submissions ? (
+                <span className="font-mono text-xs text-ink/50">
+                  {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} đội đã nộp
+                </span>
+              ) : null}
+            </div>
+          </Card>
+        ) : null}
 
-        if (item.type === 'attachment') {
+        {submissionConfig.brief ? (
+          <Card radius={32} className="border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 18px 54px rgba(84,72,49,0.08)' }}>
+            <MarkdownBlock content={submissionConfig.brief} />
+          </Card>
+        ) : null}
+
+        <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
+        {answersDraft.restored && attachmentConfig ? (
+          <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
+          {isSurvey ? (
+            <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
+          ) : teamSync.updatedAt ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
+              Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
+            </span>
+          ) : (
+            <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
+          )}
+          <span aria-hidden="true">·</span>
+          <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình.</span>
+        </div>
+
+        {submissionItems.map((item, index) => {
+          if (item.type === 'quiz') {
+            return (
+              <FormFieldCard
+                key={item.id}
+                index={index + 1}
+                label={item.question || `Cau hoi ${index + 1}`}
+                helper="Chon mot dap an"
+              >
+                <div className="grid gap-3">
+                  {(item.options || []).map((option, optionIndex) => (
+                    <QuizChoice
+                      key={`${item.id}-${optionIndex}`}
+                      label={option || `Lua chon ${optionIndex + 1}`}
+                      active={answers[`quiz:${item.id}`] === optionIndex}
+                      onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
+                    />
+                  ))}
+                </div>
+              </FormFieldCard>
+            )
+          }
+
+          if (item.type === 'attachment') {
+            return (
+              <FormFieldCard
+                key={item.id}
+                index={index + 1}
+                label="Tep minh chung"
+                helper="Tai len theo cau hinh cua tram"
+              >
+                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} />
+              </FormFieldCard>
+            )
+          }
+
           return (
             <FormFieldCard
               key={item.id}
               index={index + 1}
-              label="Tep minh chung"
-              helper="Tai len theo cau hinh cua tram"
+              label={item.label || `Truong ${index + 1}`}
+              required={item.required}
+              helper={item.placeholder}
             >
-              <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} />
+              <FieldInput
+                field={item}
+                value={answers[`form:${item.id}`] || ''}
+                onChange={(value) => setAnswer(`form:${item.id}`, value)}
+              />
             </FormFieldCard>
           )
-        }
+        })}
 
-        return (
-          <FormFieldCard
-            key={item.id}
-            index={index + 1}
-            label={item.label || `Truong ${index + 1}`}
-            required={item.required}
-            helper={item.placeholder}
-          >
-            <FieldInput
-              field={item}
-              value={answers[`form:${item.id}`] || ''}
-              onChange={(value) => setAnswer(`form:${item.id}`, value)}
-            />
-          </FormFieldCard>
-        )
-      })}
-
-      <Card radius={32} className="border border-ink bg-ink px-5 py-5 text-white sm:px-6" style={{ boxShadow: '0 18px 50px rgba(32,49,43,0.3)' }}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-display text-2xl font-semibold">Da noi voi cau hinh admin</p>
-            <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-              Trang nay dang doc cau hinh bai nop tu quan ly tram va tu dong an cac form khong thuoc phase cua doi.
-            </p>
+        <Card radius={32} className="border border-ink bg-ink px-5 py-5 text-white sm:px-6" style={{ boxShadow: '0 18px 50px rgba(32,49,43,0.3)' }}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-display text-2xl font-semibold">Da noi voi cau hinh admin</p>
+              <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
+                Trang nay dang doc cau hinh bai nop tu quan ly tram va tu dong an cac form khong thuoc phase cua doi.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitState === 'submitting' || formClosed}
+              className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {formClosed ? 'Da dong' : submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitState === 'submitting' || formClosed}
-            className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
-          >
-            {formClosed ? 'Da dong' : submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
-          </button>
-        </div>
-        {submitMessage ? (
-          <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
-            submitState === 'success'
-              ? 'bg-trail/15 text-white'
-              : 'bg-clay/20 text-white'
-          }`}>
-            {submitMessage}
-          </p>
-        ) : null}
-      </Card>
+          {submitMessage ? (
+            <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
+              submitState === 'success'
+                ? 'bg-trail/15 text-white'
+                : 'bg-clay/20 text-white'
+            }`}>
+              {submitMessage}
+            </p>
+          ) : null}
+        </Card>
+      </div>
     </>
   )
 }

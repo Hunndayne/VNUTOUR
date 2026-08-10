@@ -14,6 +14,9 @@ export const SUB_EVENT_TYPE_META = {
   station_run: { label: 'Chạy trạm', icon: 'flag', cls: 'bg-[#3E7CA8]/12 text-[#3E7CA8]' },
   quiz: { label: 'Quiz', icon: 'listBullet', cls: 'bg-trail/12 text-trail' },
   submission: { label: 'Nộp file', icon: 'paperclip', cls: 'bg-[#B07D4A]/15 text-[#B07D4A]' },
+  // Form của event khảo sát là per-person: mỗi thí sinh tự trả lời, nháp KHÔNG
+  // đồng bộ theo đội (khác với form trạm vốn là một bài chung của cả đội).
+  survey: { label: 'Khảo sát', icon: 'listBullet', cls: 'bg-trail/12 text-trail' },
   custom: { label: 'Khác', icon: 'ticket', cls: 'bg-ink/[0.07] text-ink/55' },
 }
 

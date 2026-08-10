@@ -11,8 +11,8 @@ from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
-    Account, CaptainVote, Participant, Team, TeamMembership, PhaseRoster,
-    ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
+    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamMembership,
+    PhaseRoster, ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
     MssvLinkAudit,
 )
 from api.services.registration_service import (
@@ -219,6 +219,11 @@ def _form_closure_state(station: Station) -> dict:
     }
 
 
+def _is_survey_station(station: Station) -> bool:
+    """A survey is answered per person, never synced — everything else is per team."""
+    return station.sub_event.type == SubEvent.TYPE_SURVEY
+
+
 def _station_form_payload(station: Station, team: Team | None = None) -> dict:
     phase = station.sub_event.phase
     event = station.sub_event
@@ -236,6 +241,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "phase_label": phase.label,
         "submission_config": public_submission_config(station.submission_config, drawn_items),
         "closure": _form_closure_state(station),
+        "is_survey": _is_survey_station(station),
     }
     if team is not None:
         mine = StationSubmission.objects.filter(
@@ -246,6 +252,47 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
             "submitted_at": mine.submitted_at.isoformat() if mine.submitted_at else None,
         } if mine else None
     return payload
+
+
+def _team_form_station_or_none(team: Team, station_id: int) -> Station | None:
+    """A station is a valid draft target only where `/my-team/forms` would list it.
+
+    Reuses the same has-a-form / phase-roster / current-event gate as that
+    endpoint, collapsed to a single station and a single bool so the draft
+    routes can 404 uniformly instead of re-deriving the access rules.
+    """
+    station = Station.objects.select_related("sub_event__phase").filter(
+        id=station_id, active=True,
+    ).first()
+    if not station or not has_submission_items(station.submission_config):
+        return None
+
+    current_phase = ProgramPhase.objects.filter(is_current=True).first()
+    current_phase_key = current_phase.key if current_phase else None
+    current_event = get_current_sub_event()
+    phase_key = station.sub_event.phase.key
+
+    team_phase_keys = set(
+        PhaseRoster.objects.filter(team=team).values_list("phase__key", flat=True)
+    )
+    phases_with_roster = set(
+        PhaseRoster.objects.values_list("phase__key", flat=True).distinct()
+    )
+    if phase_key in phases_with_roster:
+        if phase_key not in team_phase_keys:
+            return None
+    elif current_phase_key and phase_key != current_phase_key:
+        return None
+    if current_event and station.sub_event_id != current_event.id:
+        return None
+
+    return station
+
+
+def _draft_editor_name(account: Account | None) -> str | None:
+    if not account:
+        return None
+    return account.full_name or account.username
 
 
 def _registration_phase_open() -> bool:
@@ -1043,6 +1090,76 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         "status": submission.status,
         "submitted_at": submission.submitted_at.isoformat(),
     }, status=201)
+
+
+@csrf_exempt
+def my_team_form_draft_view(request: HttpRequest, station_id: int):
+    """GET/PUT the team's shared in-progress draft for one station form.
+
+    Only non-survey forms share a draft — a survey (`SubEvent.TYPE_SURVEY`) is
+    answered per person, so there is nothing team-wide to read or write, and PUT
+    refuses rather than silently syncing something that must stay private to
+    whoever is filling it in. No audit trail is kept here on purpose: a draft
+    is expected to change on every keystroke, unlike an actual submission.
+    """
+    if request.method not in ("GET", "PUT"):
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        return JsonResponse({"error": "team_not_approved"}, status=403)
+
+    station = _team_form_station_or_none(team, station_id)
+    if not station:
+        return JsonResponse({"error": "form_not_found"}, status=404)
+
+    is_survey = _is_survey_station(station)
+
+    if request.method == "GET":
+        if is_survey:
+            return JsonResponse({"is_survey": True})
+
+        draft = TeamFormDraft.objects.select_related("updated_by").filter(
+            team=team, station=station,
+        ).first()
+        return JsonResponse({
+            "is_survey": False,
+            "response": draft.response_payload if draft else None,
+            "updated_at": draft.updated_at.isoformat() if draft else None,
+            "updated_by": _draft_editor_name(draft.updated_by) if draft else None,
+        })
+
+    # PUT
+    if is_survey:
+        return JsonResponse({"error": "survey_not_synced"}, status=409)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    response = data.get("response")
+    if not isinstance(response, dict):
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    draft, _ = TeamFormDraft.objects.update_or_create(
+        team=team, station=station,
+        defaults={"response_payload": response, "updated_by": acc},
+    )
+    return JsonResponse({
+        "updated_at": draft.updated_at.isoformat(),
+        "updated_by": _draft_editor_name(acc),
+    })
 
 
 def my_experience_view(request: HttpRequest):
