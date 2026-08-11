@@ -1442,10 +1442,10 @@ function ParticipantDashboard() {
           </>
         )}
 
-        {/* Linking Discord is independent of the team flow — a participant can
-            do it as soon as they have a profile — so it sits on its own between
-            the status hero and the team editor, visible in every phase. */}
-        <DiscordConnectCard />
+        {/* The Discord role and private channel only exist once the team is
+            approved (provisioning is queued on approval), so the connect card is
+            only useful — and only shown — after the team is approved. */}
+        {team?.approval_status === 'approved' && <DiscordConnectCard />}
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
