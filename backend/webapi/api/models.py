@@ -70,6 +70,10 @@ class Participant(models.Model):
     # Admin-defined fields that are not first-class columns live here.
     extra = models.JSONField(null=True, blank=True)
     discord_id = models.BigIntegerField(null=True, blank=True, unique=True)
+    # The Discord handle captured when the account links, so the web can show
+    # "connected as @X" for the participant to eyeball the right account. Purely
+    # a display aid — discord_id stays the identity of record.
+    discord_username = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

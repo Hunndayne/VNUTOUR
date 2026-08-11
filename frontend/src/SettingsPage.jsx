@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { CARD, Icon } from './ui.jsx'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+import { useDiscordConnect } from './discordConnect.js'
+import { DiscordMark } from './DiscordConnectCard.jsx'
 
 // ─────────────────────────────────────────────────────────────────────
 // Helpers
@@ -354,6 +356,104 @@ function GoogleSection({ googleLinked, googleEmail, onUnlink, unlinking, onLinkC
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Discord link section (participants only). Self-contained: manages its own
+// OAuth state through the shared hook. Connecting a new account here first
+// cancels any existing link (reconnect = unlink then authorize).
+// ─────────────────────────────────────────────────────────────────────
+const DISCORD_BTN = 'inline-flex items-center justify-center gap-2 rounded-lg bg-[#5865F2] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40'
+const DISCORD_UNLINK_BTN = 'rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/55 transition hover:border-clay/30 hover:text-clay disabled:opacity-40'
+
+function DiscordSection() {
+  const { status, loading, busy, error, notice, connect, unlink, reconnect } = useDiscordConnect()
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-stone bg-paper px-4 py-4 text-sm text-ink/45">
+        Đang tải trạng thái Discord...
+      </div>
+    )
+  }
+
+  const linked = Boolean(status?.linked)
+  const inServer = status?.in_server
+  const configured = Boolean(status?.oauth?.configured)
+  const handle = status?.discord_username
+  const serverNote = inServer === true
+    ? 'Đã vào máy chủ Discord.'
+    : inServer === false
+      ? 'Chưa thấy bạn trong máy chủ — hãy vào server bằng đúng tài khoản này.'
+      : 'Chưa xác nhận được tình trạng trong máy chủ.'
+
+  return (
+    <div className="space-y-3">
+      {notice && (
+        <div className="rounded-lg border border-trail/20 bg-trail/10 px-3 py-2 text-sm text-trail">{notice}</div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-clay/20 bg-clay/10 px-3 py-2 text-sm text-clay">{error}</div>
+      )}
+      {!configured && (
+        <div className="rounded-lg border border-stone bg-paper px-4 py-3 text-sm text-ink/55">
+          BTC chưa bật kết nối Discord qua web. Bạn có thể dùng lệnh
+          <span className="mx-1 rounded bg-white px-1.5 py-0.5 font-mono text-xs">/assign &lt;mssv&gt;</span>
+          trong Discord.
+        </div>
+      )}
+
+      {linked ? (
+        <div className="rounded-lg border border-stone bg-paper px-4 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#5865F2]/12 text-[#5865F2]">
+                <DiscordMark className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-ink">Đã liên kết Discord</p>
+                <p className="font-mono text-xs text-ink/45">{handle ? `@${handle}` : 'Đã liên kết'}</p>
+              </div>
+            </div>
+            <button type="button" onClick={unlink} disabled={Boolean(busy)} className={DISCORD_UNLINK_BTN}>
+              {busy === 'unlink' ? 'Đang huỷ...' : 'Huỷ liên kết'}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-ink/45">{serverNote}</p>
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => reconnect('settings')}
+              disabled={!configured || Boolean(busy)}
+              className={DISCORD_BTN}
+            >
+              <DiscordMark className="h-4 w-4" />
+              {busy === 'reconnect' ? 'Đang mở...' : 'Đổi sang tài khoản khác'}
+            </button>
+            <p className="mt-1.5 text-xs text-ink/40">
+              Kết nối tài khoản mới sẽ tự huỷ liên kết của tài khoản đang gắn.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-stone bg-paper px-4 py-4">
+          <p className="mb-3 text-sm text-ink/60">
+            Liên kết tài khoản Discord để nhận role và kênh riêng của đội mà không cần gõ lệnh.
+            Hãy vào máy chủ Discord trước bằng đúng tài khoản này.
+          </p>
+          <button
+            type="button"
+            onClick={() => connect('settings')}
+            disabled={!configured || Boolean(busy)}
+            className={DISCORD_BTN}
+          >
+            <DiscordMark className="h-4 w-4" />
+            Liên kết Discord
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Session section
 // ─────────────────────────────────────────────────────────────────────
 function SessionSection({ session, onLogoutAll }) {
@@ -599,6 +699,13 @@ function SettingsPage() {
               onLinkClick={handleLinkGoogle}
             />
           </div>
+
+          {profile.role === 'participant' && (
+            <div className="border-t border-stone pt-5">
+              <p className="mb-3 text-sm font-semibold text-ink">Liên kết Discord</p>
+              <DiscordSection />
+            </div>
+          )}
 
           <div className="border-t border-stone pt-5">
             <p className="mb-3 text-sm font-semibold text-ink">Phiên đăng nhập</p>

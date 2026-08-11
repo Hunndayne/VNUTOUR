@@ -4,6 +4,8 @@ import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import StationRunPage from './StationRunPage.jsx'
+import DiscordConnectCard from './DiscordConnectCard.jsx'
+import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
 
@@ -164,6 +166,7 @@ function explainApiError(error) {
     team_full: 'Đội đã đủ số lượng thành viên.',
     mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
+    already_in_team: 'MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
     not_a_team_member: 'Bạn không thuộc đội này nên không bỏ phiếu được.',
     candidate_not_in_team: 'Người bạn chọn không thuộc đội của bạn.',
@@ -933,7 +936,23 @@ function ParticipantDashboard() {
   const [loading, setLoading] = useState(true)
   const [busyAction, setBusyAction] = useState('')
   const [apiError, setApiError] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
+  // Reopen Settings when we return from a Discord OAuth round-trip that was
+  // started there, so the participant lands back where they left off (the
+  // DiscordConnectCard on the main view handles the other case). Only honour
+  // the flag on an actual callback; otherwise just clear a stale one.
+  const [showSettings, setShowSettings] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      const returnTo = window.sessionStorage.getItem(DISCORD_RETURN_KEY)
+      const hasCallback = /[?&](code|error)=/.test(window.location.search)
+      if (returnTo === 'settings' && hasCallback) {
+        window.sessionStorage.removeItem(DISCORD_RETURN_KEY)
+        return true
+      }
+      if (returnTo) window.sessionStorage.removeItem(DISCORD_RETURN_KEY)
+    } catch { /* sessionStorage unavailable — fall through */ }
+    return false
+  })
   const [registrationSchema, setRegistrationSchema] = useState(null)
   const [experience, setExperience] = useState(null)
   const [qrInfo, setQrInfo] = useState(null)
@@ -1207,6 +1226,23 @@ function ParticipantDashboard() {
     event?.preventDefault?.()
     if (!memberForm?.mssv || !memberForm?.email) return
 
+    // A student is identified by MSSV, so refuse a second row with an MSSV that
+    // already belongs to the team — the captain (shown separately) or any listed
+    // member — before it even reaches the server. Only guards new additions;
+    // editing keeps its own MSSV.
+    if (memberDialog?.index === null) {
+      const mssv = String(memberForm.mssv).trim()
+      const taken = new Set(
+        [profile.mssv, ...members.map((m) => m.mssv)]
+          .filter(Boolean)
+          .map((value) => String(value).trim()),
+      )
+      if (taken.has(mssv)) {
+        setApiError('MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.')
+        return
+      }
+    }
+
     await withBusy('save-member', async () => {
       if (memberDialog?.index === null) {
         await apiRequest('/my-team/members', {
@@ -1405,6 +1441,11 @@ function ParticipantDashboard() {
             {team ? <StationRunPage embedded /> : null}
           </>
         )}
+
+        {/* Linking Discord is independent of the team flow — a participant can
+            do it as soon as they have a profile — so it sits on its own between
+            the status hero and the team editor, visible in every phase. */}
+        <DiscordConnectCard />
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">

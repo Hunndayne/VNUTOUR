@@ -199,6 +199,20 @@ def add_member(
     if existing_member and existing_member.team_id != team.id:
         return None, "mssv_in_other_team"
 
+    # An MSSV identifies the student, so the same MSSV already on this team is the
+    # same person entered twice — reject it instead of the old update_or_create
+    # no-op that let a duplicate slip into the roster. This also covers the team
+    # owner/captain, who is shown separately in the roster and may not yet hold a
+    # membership row. `is_captain` adds are the owner's own creation step, so they
+    # are exempt.
+    if not is_captain:
+        owner_mssv = ""
+        if team.owner_account_id:
+            owner_mssv = (team.owner_account.mssv or "").strip()
+        already_on_team = bool(existing_member and existing_member.team_id == team.id)
+        if already_on_team or (owner_mssv and owner_mssv == mssv):
+            return None, "already_in_team"
+
     # A profile claimed by another account is self-managed: create the membership
     # but never overwrite its registration fields with caller-supplied values.
     existing_participant = Participant.objects.filter(mssv=mssv).first()
