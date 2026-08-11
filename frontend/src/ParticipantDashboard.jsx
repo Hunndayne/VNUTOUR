@@ -166,6 +166,7 @@ function explainApiError(error) {
     team_full: 'Đội đã đủ số lượng thành viên.',
     mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
+    already_in_team: 'MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
     not_a_team_member: 'Bạn không thuộc đội này nên không bỏ phiếu được.',
     candidate_not_in_team: 'Người bạn chọn không thuộc đội của bạn.',
@@ -1224,6 +1225,23 @@ function ParticipantDashboard() {
   const saveMember = async (event) => {
     event?.preventDefault?.()
     if (!memberForm?.mssv || !memberForm?.email) return
+
+    // A student is identified by MSSV, so refuse a second row with an MSSV that
+    // already belongs to the team — the captain (shown separately) or any listed
+    // member — before it even reaches the server. Only guards new additions;
+    // editing keeps its own MSSV.
+    if (memberDialog?.index === null) {
+      const mssv = String(memberForm.mssv).trim()
+      const taken = new Set(
+        [profile.mssv, ...members.map((m) => m.mssv)]
+          .filter(Boolean)
+          .map((value) => String(value).trim()),
+      )
+      if (taken.has(mssv)) {
+        setApiError('MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.')
+        return
+      }
+    }
 
     await withBusy('save-member', async () => {
       if (memberDialog?.index === null) {

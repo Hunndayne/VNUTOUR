@@ -2,7 +2,12 @@ from django.test import TestCase
 from unittest.mock import patch
 
 from api.models import Account, Participant, Team, TeamMembership
-from api.services.team_service import create_team, get_team_members, link_account_profile
+from api.services.team_service import (
+    add_member,
+    create_team,
+    get_team_members,
+    link_account_profile,
+)
 
 
 class TeamServiceTests(TestCase):
@@ -105,3 +110,82 @@ class TeamServiceTests(TestCase):
         self.assertEqual(participant.phone, "0900000000")
         self.assertEqual(participant.school, "UIT")
         self.assertEqual(participant.faculty, "Mang")
+
+
+class AddMemberDuplicateTests(TestCase):
+    def _captain_team(self):
+        captain = Account.objects.create(
+            username="cap",
+            email="23521234@gm.uit.edu.vn",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="23521234",
+            full_name="Nguyen Van A",
+        )
+        team, _ = create_team("PH-TEAM", owner_account=captain)
+        add_member(
+            team, "23521234", full_name="Nguyen Van A",
+            email="23521234@gm.uit.edu.vn", is_captain=True, actor=captain,
+        )
+        return captain, team
+
+    def test_adding_captain_mssv_as_member_is_rejected(self):
+        captain, team = self._captain_team()
+
+        participant, error = add_member(
+            team, "23521234", full_name="Nguyen Van A",
+            email="23521234@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertEqual(error, "already_in_team")
+        self.assertIsNone(participant)
+        # No duplicate row slipped into the roster.
+        self.assertEqual(TeamMembership.objects.filter(team=team).count(), 1)
+
+    def test_adding_existing_member_mssv_again_is_rejected(self):
+        captain, team = self._captain_team()
+        add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        _, error = add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertEqual(error, "already_in_team")
+        self.assertEqual(TeamMembership.objects.filter(team=team).count(), 2)
+
+    def test_adding_owner_mssv_without_captain_membership_is_rejected(self):
+        # The owner is shown separately in the roster and may not yet hold a
+        # membership row; adding their MSSV as a member must still be blocked.
+        captain = Account.objects.create(
+            username="cap2",
+            email="23529999@gm.uit.edu.vn",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="23529999",
+            full_name="Owner No Membership",
+        )
+        team, _ = create_team("PH-TEAM-2", owner_account=captain)
+
+        _, error = add_member(
+            team, "23529999", full_name="Owner No Membership",
+            email="23529999@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertEqual(error, "already_in_team")
+        self.assertFalse(TeamMembership.objects.filter(team=team).exists())
+
+    def test_adding_distinct_member_still_works(self):
+        captain, team = self._captain_team()
+
+        participant, error = add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(participant.mssv, "23520000")
+        self.assertEqual(TeamMembership.objects.filter(team=team).count(), 2)
