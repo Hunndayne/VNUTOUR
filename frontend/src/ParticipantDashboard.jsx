@@ -123,6 +123,19 @@ function blankMember() {
   }
 }
 
+const FIELD_LABELS = {
+  mssv: 'MSSV',
+  email: 'Email',
+  full_name: 'Họ và tên',
+  gender: 'Giới tính',
+  school: 'Trường',
+  faculty: 'Khoa',
+  phone: 'Số điện thoại',
+  cccd: 'CCCD',
+  date_of_birth: 'Ngày sinh',
+  facebook: 'Link Facebook',
+}
+
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   if (code?.startsWith('missing:')) {
@@ -134,7 +147,7 @@ function explainApiError(error) {
         : who?.startsWith('member_')
           ? `thành viên ${who.split('_')[1]}`
           : 'hồ sơ'
-    return `Vui lòng điền đủ trường ${field} cho ${whoLabel}.`
+    return `Vui lòng điền đủ trường "${FIELD_LABELS[field] || field}" cho ${whoLabel}.`
   }
   if (code?.startsWith('invalid_date:')) {
     const [, who] = code.split(':')
@@ -354,7 +367,7 @@ function PersonSchemaFields({ fields, data, onPatch, disabled = false, lockMssv 
   )
 }
 
-function CaptainProfileEditor({ profile, fields, open, saved, saving, onPatch, onSave }) {
+function CaptainProfileEditor({ profile, fields, open, saved, saving, error, onPatch, onSave }) {
   if (!open) return null
 
   return (
@@ -366,6 +379,11 @@ function CaptainProfileEditor({ profile, fields, open, saved, saving, onPatch, o
         {saved && <Badge label="Đã lưu" cls="bg-[#1F7A6B]/12 text-[#1F7A6B]" />}
       </div>
       <PersonSchemaFields fields={fields} data={profile} onPatch={onPatch} />
+      {error && (
+        <p className="mt-4 rounded-lg border border-[#D6492B]/30 bg-[#D6492B]/[0.06] px-3 py-2 text-sm font-medium text-[#B93A23]">
+          {error}
+        </p>
+      )}
       <div className="mt-4 flex justify-end">
         <button type="submit" disabled={saving} className={PRIMARY_BUTTON}>
           <Icon name="checkPlain" className="h-4 w-4" />
@@ -924,6 +942,9 @@ function ParticipantDashboard() {
   })
   const [profile, setProfile] = useState(EMPTY_PROFILE)
   const [profileSaved, setProfileSaved] = useState(false)
+  // Profile-save feedback lives next to the captain form, not in the page-level
+  // apiError, so a "missing Trường/CCCD" reason is visible right at the button.
+  const [profileError, setProfileError] = useState('')
   const [team, setTeam] = useState(null)
   const [members, setMembers] = useState([])
   const [teamNameDraft, setTeamNameDraft] = useState('')
@@ -1122,6 +1143,11 @@ function ParticipantDashboard() {
     return () => window.clearTimeout(timer)
   }, [memberDraftKey, memberForm])
 
+  // A closed form should not keep showing a stale save error next time it opens.
+  useEffect(() => {
+    if (!profileDetailsOpen) setProfileError('')
+  }, [profileDetailsOpen])
+
   const memberDraft = useMemo(() => ({
     dirty: false,
     restored: Boolean(memberDraftSavedAt),
@@ -1209,7 +1235,17 @@ function ParticipantDashboard() {
 
   const saveProfile = async (event) => {
     event.preventDefault()
-    await withBusy('save-profile', async () => {
+    // Catch empty required fields (e.g. Trường not picked, CCCD blank) before
+    // the request so the reason lands at the button instead of a rejected save
+    // that reads as "nothing happened".
+    const missing = getMissingProfileFields(profile, personFields)
+    if (missing.length > 0) {
+      setProfileError(`Vui lòng hoàn thiện: ${missing.map((field) => field.label).join(', ')}.`)
+      return
+    }
+    setProfileError('')
+    setBusyAction('save-profile')
+    try {
       const nextProfile = await apiRequest('/me/profile', {
         method: 'PATCH',
         body: profile,
@@ -1219,7 +1255,15 @@ function ParticipantDashboard() {
       if (isProfileComplete(updatedProfile, personFields)) setProfileDetailsOpen(false)
       setProfileSaved(true)
       window.setTimeout(() => setProfileSaved(false), 1400)
-    })
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setProfileError(explainApiError(error))
+    } finally {
+      setBusyAction('')
+    }
   }
 
   const saveMember = async (event) => {
@@ -1442,10 +1486,10 @@ function ParticipantDashboard() {
           </>
         )}
 
-        {/* Linking Discord is independent of the team flow — a participant can
-            do it as soon as they have a profile — so it sits on its own between
-            the status hero and the team editor, visible in every phase. */}
-        <DiscordConnectCard />
+        {/* The Discord role and private channel only exist once the team is
+            approved (provisioning is queued on approval), so the connect card is
+            only useful — and only shown — after the team is approved. */}
+        {team?.approval_status === 'approved' && <DiscordConnectCard />}
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
@@ -1610,6 +1654,7 @@ function ParticipantDashboard() {
                       open={profilePanelOpen}
                       saved={profileSaved}
                       saving={busyAction === 'save-profile'}
+                      error={profileError}
                       onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
                       onSave={saveProfile}
                     />
@@ -1685,6 +1730,7 @@ function ParticipantDashboard() {
                           open={profilePanelOpen}
                           saved={profileSaved}
                           saving={busyAction === 'save-profile'}
+                          error={profileError}
                           onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
                           onSave={saveProfile}
                         />
