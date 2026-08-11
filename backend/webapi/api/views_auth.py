@@ -272,6 +272,144 @@ def google_link_view(request: HttpRequest):
     return JsonResponse({"status": "google_linked"})
 
 
+# ---------------------------------------------------------------------------
+# Discord OAuth linking (§ web "Connect Discord" button)
+# ---------------------------------------------------------------------------
+
+# claim_discord_identity statuses that mean the link now points at this account.
+_DISCORD_LINK_OK = {"linked", "already_linked"}
+# ...and the ones the participant can act on, mapped to an HTTP status.
+_DISCORD_LINK_ERRORS = {
+    "discord_already_linked": ("discord_already_linked_other", 409),
+    "mssv_already_linked": ("discord_already_linked_self", 409),
+    "member_not_found": ("participant_not_found", 404),
+    "invalid_discord_id": ("invalid_discord_id", 400),
+}
+
+
+def _participant_for(acc):
+    """The Participant a logged-in account maps to, resolved by MSSV like me_view."""
+    if not acc.mssv:
+        return None
+    return Participant.objects.filter(mssv=acc.mssv).first()
+
+
+@csrf_exempt
+def discord_link_view(request: HttpRequest):
+    """POST /auth/me/discord — link via OAuth code; DELETE — unlink.
+
+    The account is already authenticated (we know its MSSV), so the code only
+    proves which Discord account authorized. We never steal a Discord account
+    already tied to another participant — reconnecting with a different account
+    means unlink (DELETE) then link again.
+    """
+    from api.services.discord_service import (
+        claim_discord_identity, release_discord_identity,
+    )
+    from api.services.discord_oauth_service import (
+        DiscordOAuthError, exchange_code, fetch_discord_user,
+    )
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+
+    participant = _participant_for(acc)
+    if participant is None:
+        return JsonResponse({"error": "participant_not_found"}, status=404)
+
+    if request.method == "DELETE":
+        result = release_discord_identity(participant.mssv)
+        if result.get("status") == "member_not_found":
+            return JsonResponse({"error": "participant_not_found"}, status=404)
+        return JsonResponse({"status": "discord_unlinked"})
+
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    code = str((data.get("code") or "").strip())
+    redirect_uri = str((data.get("redirect_uri") or "").strip())
+    if not code or not redirect_uri:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    try:
+        access_token = exchange_code(code, redirect_uri)
+        discord_user = fetch_discord_user(access_token)
+    except DiscordOAuthError as e:
+        status = 400 if e.code in {"invalid_code", "redirect_uri_not_allowed"} else 502
+        if e.code == "discord_oauth_not_configured":
+            status = 500
+        return JsonResponse({"error": e.code}, status=status)
+
+    result = claim_discord_identity(
+        participant.mssv,
+        discord_user["id"],
+        discord_username=discord_user.get("display"),
+    )
+    status = result.get("status")
+    if status in _DISCORD_LINK_ERRORS:
+        code_out, http_status = _DISCORD_LINK_ERRORS[status]
+        return JsonResponse({"error": code_out}, status=http_status)
+    if status not in _DISCORD_LINK_OK:
+        return JsonResponse({"error": "discord_link_failed"}, status=400)
+
+    return JsonResponse({
+        "status": "discord_linked",
+        "discord_id": str(discord_user["id"]),
+        "discord_username": discord_user.get("display"),
+    })
+
+
+@csrf_exempt
+def discord_status_view(request: HttpRequest):
+    """GET /auth/me/discord/status — onboarding state for the Connect card.
+
+    Snowflake ids exceed JS's safe integer range, so ``discord_id`` goes out as
+    a string. ``in_server`` is null when membership can't be checked.
+    """
+    from api.services.discord_oauth_service import lookup_guild_member, oauth_config
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+
+    config = oauth_config()
+    body = {
+        "oauth": {
+            "configured": config["configured"],
+            "client_id": config["client_id"],
+            "scope": config["scope"],
+        },
+        "invite_url": config["invite_url"],
+        "linked": False,
+        "discord_id": None,
+        "discord_username": None,
+        "in_server": None,
+        "provisioned": False,
+    }
+
+    participant = _participant_for(acc)
+    if participant is None or participant.discord_id is None:
+        return JsonResponse(body)
+
+    membership = participant.memberships.select_related("team").first()
+    team = membership.team if membership else None
+    member = lookup_guild_member(participant.discord_id)
+
+    body.update({
+        "linked": True,
+        "discord_id": str(participant.discord_id),
+        "discord_username": member.get("display") or participant.discord_username,
+        "in_server": member.get("in_guild"),
+        "provisioned": bool(team and team.provision_state == "done"),
+    })
+    return JsonResponse(body)
+
+
 @csrf_exempt
 def logout_view(request: HttpRequest):
     token = _extract_token(request)

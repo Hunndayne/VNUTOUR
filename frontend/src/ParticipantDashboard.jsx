@@ -4,6 +4,8 @@ import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import StationRunPage from './StationRunPage.jsx'
+import DiscordConnectCard from './DiscordConnectCard.jsx'
+import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
 
@@ -933,7 +935,23 @@ function ParticipantDashboard() {
   const [loading, setLoading] = useState(true)
   const [busyAction, setBusyAction] = useState('')
   const [apiError, setApiError] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
+  // Reopen Settings when we return from a Discord OAuth round-trip that was
+  // started there, so the participant lands back where they left off (the
+  // DiscordConnectCard on the main view handles the other case). Only honour
+  // the flag on an actual callback; otherwise just clear a stale one.
+  const [showSettings, setShowSettings] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      const returnTo = window.sessionStorage.getItem(DISCORD_RETURN_KEY)
+      const hasCallback = /[?&](code|error)=/.test(window.location.search)
+      if (returnTo === 'settings' && hasCallback) {
+        window.sessionStorage.removeItem(DISCORD_RETURN_KEY)
+        return true
+      }
+      if (returnTo) window.sessionStorage.removeItem(DISCORD_RETURN_KEY)
+    } catch { /* sessionStorage unavailable — fall through */ }
+    return false
+  })
   const [registrationSchema, setRegistrationSchema] = useState(null)
   const [experience, setExperience] = useState(null)
   const [qrInfo, setQrInfo] = useState(null)
@@ -1405,6 +1423,11 @@ function ParticipantDashboard() {
             {team ? <StationRunPage embedded /> : null}
           </>
         )}
+
+        {/* Linking Discord is independent of the team flow — a participant can
+            do it as soon as they have a profile — so it sits on its own between
+            the status hero and the team editor, visible in every phase. */}
+        <DiscordConnectCard />
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">

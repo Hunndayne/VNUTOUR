@@ -40,20 +40,32 @@ def _participant_payload(participant: Participant) -> dict:
         "faculty": participant.faculty,
         "facebook": participant.facebook,
         "discord_id": participant.discord_id,
+        "discord_username": participant.discord_username,
         "team_code": team.code if team else None,
         "team_name": team.name if team else None,
         "team_role_id": team.discord_role_id if team else None,
     }
 
 
-def claim_discord_identity(mssv: str, discord_id: int, *, force: bool = False) -> dict:
+def claim_discord_identity(
+    mssv: str,
+    discord_id: int,
+    *,
+    force: bool = False,
+    discord_username: str | None = None,
+) -> dict:
     """Link a Discord account to a participant in PostgreSQL.
 
     Public self-linking never steals either side of an existing link. Admin
     commands may pass ``force=True`` to move the Discord account deliberately.
     Any affected team is queued for role/channel reconciliation by the bot.
+
+    ``discord_username`` is an optional display handle (from the web OAuth flow)
+    stored so the participant can eyeball which account they linked; the bot
+    commands omit it, leaving the column untouched.
     """
     normalized_mssv = str(mssv or "").strip()
+    normalized_username = (discord_username or "").strip()[:64] or None
     try:
         normalized_discord_id = int(discord_id)
     except (TypeError, ValueError):
@@ -76,6 +88,10 @@ def claim_discord_identity(mssv: str, discord_id: int, *, force: bool = False) -
         )
 
         if participant.discord_id == normalized_discord_id:
+            # Same link — refresh the display handle if the OAuth flow gave us one.
+            if normalized_username and participant.discord_username != normalized_username:
+                participant.discord_username = normalized_username
+                participant.save(update_fields=["discord_username", "updated_at"])
             return {"status": "already_linked", "participant": _participant_payload(participant)}
         if participant.discord_id is not None and not force:
             return {"status": "mssv_already_linked", "participant": _participant_payload(participant)}
@@ -101,7 +117,11 @@ def claim_discord_identity(mssv: str, discord_id: int, *, force: bool = False) -
 
         previous_discord_id = participant.discord_id
         participant.discord_id = normalized_discord_id
-        participant.save(update_fields=["discord_id", "updated_at"])
+        update_fields = ["discord_id", "updated_at"]
+        if normalized_username:
+            participant.discord_username = normalized_username
+            update_fields.append("discord_username")
+        participant.save(update_fields=update_fields)
 
         if affected_team_ids:
             Team.objects.filter(pk__in=affected_team_ids).update(
@@ -116,6 +136,42 @@ def claim_discord_identity(mssv: str, discord_id: int, *, force: bool = False) -
         "previous_discord_id": previous_discord_id,
         "displaced_participant": displaced,
     }
+
+
+def release_discord_identity(mssv: str) -> dict:
+    """Unlink a participant's Discord account and re-queue their team.
+
+    Clearing ``discord_id`` leaves a stale role on the (now unlinked) member, so
+    the team is marked pending for the bot to reconcile — same trigger the link
+    path uses. No-op if the participant was never linked.
+    """
+    normalized_mssv = str(mssv or "").strip()
+    with transaction.atomic():
+        participant = (
+            Participant.objects.select_for_update()
+            .filter(mssv=normalized_mssv)
+            .first()
+        )
+        if not participant:
+            return {"status": "member_not_found"}
+        if participant.discord_id is None:
+            return {"status": "not_linked", "participant": _participant_payload(participant)}
+
+        membership = participant.memberships.first()
+        affected_team_id = membership.team_id if membership else None
+
+        participant.discord_id = None
+        participant.discord_username = None
+        participant.save(update_fields=["discord_id", "discord_username", "updated_at"])
+
+        if affected_team_id:
+            Team.objects.filter(pk=affected_team_id).update(
+                provision_state=Team.PROVISION_PENDING,
+                provision_last_error=None,
+                updated_at=django_timezone.now(),
+            )
+
+    return {"status": "unlinked", "participant": _participant_payload(participant)}
 
 
 def get_participant_payload(*, mssv: str | None = None, discord_id: int | None = None) -> dict | None:
