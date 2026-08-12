@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 from django.conf import settings
-from django.http import FileResponse, HttpResponseRedirect
+from django.http import FileResponse, HttpResponse
 
 
 logger = logging.getLogger(__name__)
@@ -188,8 +188,25 @@ def proof_file_response(entry: dict):
         return None
 
     if storage == STORAGE_R2:
-        url = presigned_url(key)
-        return HttpResponseRedirect(url) if url else None
+        # Proxy the bytes through our own origin instead of redirecting to a
+        # presigned R2 URL. A browser fetch()/XHR that follows the redirect is
+        # blocked by CORS — R2 sends no Access-Control-Allow-Origin — so the
+        # admin/participant proof image could never load (direct navigation to
+        # the link worked, an <img>/fetch did not). Proofs are small images, so
+        # reading them into memory here is fine.
+        client = _r2_client()
+        if client is None:
+            return None
+        try:
+            obj = client.get_object(Bucket=settings.R2_BUCKET, Key=key)
+            data = obj["Body"].read()
+        except Exception:
+            logger.exception("failed to read payment proof from R2: %s", key)
+            return None
+        content_type = entry.get("type") or obj.get("ContentType") or "application/octet-stream"
+        response = HttpResponse(data, content_type=content_type)
+        response["Content-Length"] = str(len(data))
+        return response
 
     if storage == STORAGE_LOCAL:
         path = Path(settings.MEDIA_ROOT) / key
