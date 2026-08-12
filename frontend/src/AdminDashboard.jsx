@@ -12,6 +12,7 @@ import OperationsPage from './OperationsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, isMasterAdmin, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
 import { navigate, useLocation, useSearchParam } from './router.js'
+import banksData from './lib/banks.json'
 
 // ─────────────────────────────────────────────────────────────────────
 // Icon set — outline SVGs, no emoji
@@ -765,6 +766,209 @@ function PlaceholderPage({ title, icon }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Payment / VietQR bank config (settings tab, admin-only section)
+// ─────────────────────────────────────────────────────────────────────
+const PAY_FIELD_CLASS = 'w-full rounded-lg border border-stone bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10'
+const PAY_LABEL_CLASS = 'mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40'
+const PAY_PRIMARY_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40'
+
+const PAYMENT_CONFIG_DEFAULTS = {
+  bank_bin: '',
+  bank_short_name: '',
+  account_no: '',
+  account_name: '',
+  fee_per_person: 25000,
+  prefix: 'VNUTOUR2026',
+}
+
+function formFromPaymentConfig(cfg) {
+  return {
+    bank_bin: cfg?.bank_bin || '',
+    bank_short_name: cfg?.bank_short_name || '',
+    account_no: cfg?.account_no || '',
+    account_name: cfg?.account_name || '',
+    fee_per_person: cfg?.fee_per_person ?? PAYMENT_CONFIG_DEFAULTS.fee_per_person,
+    prefix: cfg?.prefix || PAYMENT_CONFIG_DEFAULTS.prefix,
+  }
+}
+
+function PaymentConfigSection() {
+  const [config, setConfig] = useState(null)
+  const [form, setForm] = useState(PAYMENT_CONFIG_DEFAULTS)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [apiError, setApiError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const boot = async () => {
+      try {
+        setLoading(true)
+        setApiError('')
+        const payload = await apiRequest('/admin/payment-config')
+        const next = payload?.payment_config || payload
+        if (cancelled) return
+        setConfig(next)
+        setForm(formFromPaymentConfig(next))
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) { logoutAndRedirect('/login'); return }
+        setApiError('Không tải được cấu hình thanh toán.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    boot()
+    return () => { cancelled = true }
+  }, [])
+
+  const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
+
+  const handleBankChange = (e) => {
+    const bin = e.target.value
+    const bank = banksData.data.find(b => b.bin === bin)
+    setForm(f => ({ ...f, bank_bin: bin, bank_short_name: bank ? bank.shortName : '' }))
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setApiError('')
+    setSuccessMsg('')
+    try {
+      const feeInt = Number.parseInt(form.fee_per_person, 10)
+      const safeFee = Number.isFinite(feeInt) && feeInt > 0 ? feeInt : PAYMENT_CONFIG_DEFAULTS.fee_per_person
+      const body = {
+        bank_bin: form.bank_bin,
+        bank_short_name: form.bank_short_name,
+        account_no: form.account_no,
+        account_name: form.account_name,
+        fee_per_person: safeFee,
+        prefix: form.prefix,
+      }
+      const payload = await apiRequest('/admin/payment-config', { method: 'PUT', body })
+      const next = payload?.payment_config || payload
+      setConfig(next)
+      setForm(formFromPaymentConfig(next))
+      setSuccessMsg('Đã lưu cấu hình thanh toán.')
+      setTimeout(() => setSuccessMsg(''), 3000)
+    } catch (error) {
+      if (error?.status === 401) { logoutAndRedirect('/login'); return }
+      setApiError('Không thể lưu cấu hình thanh toán. Vui lòng thử lại.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const previewUrl = form.bank_bin && form.account_no
+    ? `https://img.vietqr.io/image/${form.bank_bin}-${form.account_no}-compact2.png?amount=125000&addInfo=${encodeURIComponent(`${form.prefix} 123456 - 22521234 - NGUYEN VAN A`)}&accountName=${encodeURIComponent(form.account_name || '')}`
+    : ''
+
+  // Compares against the last value the server confirmed (either from the
+  // initial load or the previous save) so the button stays disabled until
+  // something actually changes — same "nothing to save" guard as the rest
+  // of the settings tab.
+  const isDirty = JSON.stringify(formFromPaymentConfig(config)) !== JSON.stringify(form)
+
+  if (loading) {
+    return (
+      <div className={`${CARD} px-4 py-14 text-center text-sm text-ink/35`}>
+        Đang tải cấu hình thanh toán...
+      </div>
+    )
+  }
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <h3 className="mb-4 font-mono text-[11px] uppercase tracking-[0.18em] text-ink/40">
+        Thanh toán / Tài khoản nhận lệ phí
+      </h3>
+
+      <div className="space-y-4">
+        {apiError && (
+          <div className="rounded-lg border border-clay/20 bg-clay/10 px-3 py-2 text-sm text-clay">{apiError}</div>
+        )}
+        {successMsg && (
+          <div className="rounded-lg border border-trail/20 bg-trail/10 px-3 py-2 text-sm text-trail">{successMsg}</div>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className={PAY_LABEL_CLASS}>Ngân hàng</label>
+            <select value={form.bank_bin} onChange={handleBankChange} className={PAY_FIELD_CLASS}>
+              <option value="">— Chọn ngân hàng —</option>
+              {banksData.data.map(bank => (
+                <option key={bank.bin} value={bank.bin}>{bank.shortName} — {bank.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className={PAY_LABEL_CLASS}>Số tài khoản</label>
+            <input
+              value={form.account_no}
+              onChange={e => set('account_no', e.target.value)}
+              placeholder="0123456789"
+              className={PAY_FIELD_CLASS}
+            />
+          </div>
+
+          <div>
+            <label className={PAY_LABEL_CLASS}>Tên chủ tài khoản</label>
+            <input
+              value={form.account_name}
+              onChange={e => set('account_name', e.target.value)}
+              placeholder="NGUYEN VAN A"
+              className={PAY_FIELD_CLASS}
+            />
+            <p className="mt-1 text-xs text-ink/40">IN HOA, KHÔNG DẤU</p>
+          </div>
+
+          <div>
+            <label className={PAY_LABEL_CLASS}>Lệ phí / người (VND)</label>
+            <input
+              type="number"
+              min="0"
+              step="1000"
+              value={form.fee_per_person}
+              onChange={e => set('fee_per_person', e.target.value)}
+              placeholder="25000"
+              className={PAY_FIELD_CLASS}
+            />
+          </div>
+
+          <div>
+            <label className={PAY_LABEL_CLASS}>Tiền tố nội dung chuyển khoản</label>
+            <input
+              value={form.prefix}
+              onChange={e => set('prefix', e.target.value)}
+              placeholder="VNUTOUR2026"
+              className={PAY_FIELD_CLASS}
+            />
+          </div>
+        </div>
+
+        <button type="button" onClick={handleSave} disabled={saving || !isDirty} className={PAY_PRIMARY_BTN}>
+          <Icon name="checkPlain" className="h-4 w-4" />
+          {saving ? 'Đang lưu...' : 'Lưu'}
+        </button>
+
+        {previewUrl && (
+          <div className="border-t border-stone pt-4">
+            <img
+              src={previewUrl}
+              alt="Xem trước mã VietQR"
+              className="h-56 w-56 rounded-lg border border-stone bg-white object-contain p-2"
+            />
+            <p className="mt-2 text-xs text-ink/40">Xem trước QR (mẫu 5 người = 125.000₫)</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────────────
 function AdminDashboard() {
@@ -1117,7 +1321,12 @@ function AdminDashboard() {
             ) : activeTab === 'operations' ? (
               <OperationsPage />
             ) : activeTab === 'settings' ? (
-              <SettingsPage />
+              <div className="space-y-5">
+                <SettingsPage />
+                <div className="mx-auto max-w-3xl">
+                  <PaymentConfigSection />
+                </div>
+              </div>
             ) : (
               <PlaceholderPage title={activeMeta?.label || ''} icon={activeMeta?.icon} />
             )}

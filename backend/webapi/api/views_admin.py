@@ -8,7 +8,7 @@ from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Q, Count
 
 from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
@@ -18,6 +18,8 @@ from api.services.team_service import (
 from api.services.audit_service import record_audit
 from api.services import team_merge_service
 from api.services.registration_service import normalize_gender
+from api.services.submission_storage_service import proof_file_response
+from api.services.payment_service import get_payment_config, save_payment_config
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 
 
@@ -39,20 +41,34 @@ def teams_collection_view(request: HttpRequest):
         return err
 
     if request.method == "GET":
-        qs = Team.objects.all().order_by("code")
-
-        # Filters
-        approval_status = request.GET.get("approval_status")
-        if approval_status:
-            qs = qs.filter(approval_status=approval_status)
+        # Search applies to both the tab counts and the listed page; the
+        # approval_status tab filter applies only to the listed page.
+        base_qs = Team.objects.all()
 
         q = request.GET.get("q")
         if q:
-            qs = qs.filter(
+            base_qs = base_qs.filter(
                 Q(name__icontains=q)
                 | Q(code__icontains=q)
                 | Q(owner_account__username__icontains=q),
             )
+
+        # Per-status totals for the tab badges — counted across the whole
+        # (search-filtered) set, not just the loaded page.
+        status_counts = {
+            Team.APPROVAL_DRAFT: 0,
+            Team.APPROVAL_PENDING: 0,
+            Team.APPROVAL_APPROVED: 0,
+            Team.APPROVAL_REJECTED: 0,
+        }
+        for row in base_qs.values("approval_status").annotate(n=Count("id")):
+            status_counts[row["approval_status"]] = row["n"]
+        total_all = sum(status_counts.values())
+
+        qs = base_qs.order_by("code")
+        approval_status = request.GET.get("approval_status")
+        if approval_status:
+            qs = qs.filter(approval_status=approval_status)
 
         # Pagination
         try:
@@ -111,6 +127,10 @@ def teams_collection_view(request: HttpRequest):
         return JsonResponse({
             "items": items,
             "page": page, "limit": limit, "total": total,
+            # Tab badges: full per-status counts + the "all" total, independent
+            # of the active tab and the current page.
+            "status_counts": status_counts,
+            "total_all": total_all,
         })
 
     if request.method == "POST":
@@ -196,9 +216,14 @@ def team_item_view(request: HttpRequest, team_key: str):
         }
         if is_admin(acc):
             payload.update({
+                "id": team.id,
                 "owner_username": team.owner_account.username if team.owner_account else None,
                 "approval_note": team.approval_note,
                 "payment_proof": team.payment_proof,
+                # True only for a real uploaded image (drawer renders it inline);
+                # `has_payment_proof` also covers the legacy pasted link (fallback to a link).
+                "has_payment_proof": bool(team.payment_proof_file) or bool(team.payment_proof),
+                "has_payment_proof_file": bool(team.payment_proof_file),
                 "reviewed_by": team.reviewed_by.username if team.reviewed_by else None,
                 "reviewed_at": team.reviewed_at.isoformat() if team.reviewed_at else None,
                 "provision_state": team.provision_state,
@@ -348,6 +373,56 @@ def team_reject_view(request: HttpRequest, team_key: str):
         "code": team.code, "approval_status": team.approval_status,
         "approval_note": team.approval_note,
     })
+
+
+# =====================================================================
+# Team payment (VietQR)
+# =====================================================================
+
+@csrf_exempt
+def admin_team_payment_proof_view(request: HttpRequest, team_id: int):
+    """GET: stream a team's uploaded payment proof file to an admin."""
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    try:
+        team = Team.objects.get(pk=team_id)
+    except Team.DoesNotExist:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    if team.payment_proof_file:
+        resp = proof_file_response(team.payment_proof_file)
+        if resp is not None:
+            return resp
+
+    return JsonResponse({"error": "not_found"}, status=404)
+
+
+@csrf_exempt
+def admin_payment_config_view(request: HttpRequest):
+    """GET/PUT the shared VietQR payment configuration (bank + fee + prefix)."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method == "GET":
+        return JsonResponse({"payment_config": get_payment_config()})
+
+    if request.method == "PUT":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        try:
+            saved = save_payment_config(data)
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        return JsonResponse({"payment_config": saved})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
 
 
 # =====================================================================

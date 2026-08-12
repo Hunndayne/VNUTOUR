@@ -6,7 +6,7 @@ from api.views_participant import (
     my_team_members_view, my_team_member_detail_view, my_team_member_resolve_view,
     my_team_qr_view, my_team_forms_view, my_team_form_submit_view, my_experience_view,
     my_team_captain_vote_view, my_team_stations_view, my_team_station_state_view,
-    my_team_form_draft_view,
+    my_team_form_draft_view, my_team_payment_view, my_team_payment_proof_view,
 )
 
 urlpatterns = [
@@ -36,6 +36,12 @@ urlpatterns = [
     path("my-team/station-state/", my_team_station_state_view),
     path("my-team/captain-vote", my_team_captain_vote_view),
     path("my-team/captain-vote/", my_team_captain_vote_view),
+    path("my-team/payment", my_team_payment_view),
+    path("my-team/payment/", my_team_payment_view),
+    path("my-team/payment-proof", my_team_payment_proof_view),
+    path("my-team/payment-proof/", my_team_payment_proof_view),
+    path("my-team/payment-proof/file", my_team_payment_proof_view),
+    path("my-team/payment-proof/file/", my_team_payment_proof_view),
     path("me/experience", my_experience_view),
     path("me/experience/", my_experience_view),
 ]
