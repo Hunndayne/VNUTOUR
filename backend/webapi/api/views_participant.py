@@ -3,6 +3,7 @@ Participant self-service views — §9.2
 """
 
 import json
+from pathlib import Path
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
@@ -20,8 +21,12 @@ from api.services.registration_service import (
 )
 from api.services.program_service import get_current_sub_event
 from api.services.checkin_qr_service import team_qr_visible
+
 from api.services.station_service import set_submission_score, replay_lock_reason
-from api.services.submission_storage_service import save_submission_files
+from api.services.submission_storage_service import (
+    save_submission_files, save_payment_proof, proof_file_response,
+)
+from api.services.payment_service import build_payment_info
 from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
     public_config as public_submission_config,
@@ -455,6 +460,7 @@ def my_team_view(request: HttpRequest):
                 "approval_note": team.approval_note,
                 "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
                 "payment_proof": team.payment_proof,
+                "has_payment_proof": bool(team.payment_proof_file) or bool(team.payment_proof),
                 "is_late_registration": team.is_late_registration,
             },
             "members": get_team_members(team, visibility="self", requester=acc),
@@ -558,6 +564,75 @@ def my_team_view(request: HttpRequest):
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
 
+def my_team_payment_view(request: HttpRequest):
+    """GET: VietQR payment info (bank details + QR) for the caller's team."""
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    return JsonResponse(build_payment_info(membership.team))
+
+
+PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
+PAYMENT_PROOF_ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+
+
+@csrf_exempt
+def my_team_payment_proof_view(request: HttpRequest):
+    """POST: upload the team's payment proof image. GET: fetch it back."""
+    if request.method not in ("POST", "GET"):
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+    team = membership.team
+
+    if request.method == "GET":
+        if not team.payment_proof_file:
+            return JsonResponse({"error": "not_found"}, status=404)
+        resp = proof_file_response(team.payment_proof_file)
+        return resp if resp else JsonResponse({"error": "not_found"}, status=404)
+
+    # POST — re-upload is allowed right up until the team is approved, same as
+    # every other team-editing endpoint in this file.
+    if not team_is_editable(team):
+        return JsonResponse({"error": "team_locked"}, status=409)
+
+    uploaded = request.FILES.get("file")
+    if not uploaded:
+        return JsonResponse({"error": "missing_file"}, status=400)
+
+    content_type = (getattr(uploaded, "content_type", "") or "").lower()
+    extension = Path(uploaded.name).suffix.lower().lstrip(".")
+    if not (content_type.startswith("image/") or extension in PAYMENT_PROOF_ALLOWED_EXTENSIONS):
+        return JsonResponse({"error": "file_type_not_allowed"}, status=400)
+    if uploaded.size > PAYMENT_PROOF_MAX_BYTES:
+        return JsonResponse({"error": "file_too_large"}, status=400)
+
+    entry = save_payment_proof(team, uploaded)
+    team.payment_proof_file = entry
+    team.save(update_fields=["payment_proof_file", "updated_at"])
+    return JsonResponse({
+        "has_proof": True,
+        "name": entry.get("name"),
+        "size": entry.get("size"),
+    })
+
+
 @csrf_exempt
 def my_team_submit_view(request: HttpRequest):
     """POST: submit team for approval."""
@@ -592,7 +667,7 @@ def my_team_submit_view(request: HttpRequest):
 
     for field in schema.get("team_fields", []):
         if field.get("enabled", True) and field.get("required") and field.get("key") == "payment_proof":
-            if not team.payment_proof:
+            if not team.payment_proof_file and not team.payment_proof:
                 return JsonResponse({"error": "missing:team:payment_proof"}, status=400)
 
     for index, member in enumerate(members, start=1):

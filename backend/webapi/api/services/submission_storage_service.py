@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from django.conf import settings
+from django.http import FileResponse, HttpResponseRedirect
 
 
 logger = logging.getLogger(__name__)
@@ -140,3 +141,60 @@ def save_submission_files(station, team, uploaded_files, attachment_config: dict
         stored.append(entry)
 
     return stored
+
+
+def save_payment_proof(team, uploaded) -> dict:
+    """Persist one uploaded payment proof image and return its metadata entry."""
+    client = _r2_client()
+    safe_name = _safe_name(uploaded.name)
+    key = f"payment-proofs/{team.code}/{uuid.uuid4().hex}_{safe_name}"
+    entry = {
+        "name": uploaded.name,
+        "size": uploaded.size,
+        "type": getattr(uploaded, "content_type", "") or "",
+        "key": key,
+    }
+
+    if client is not None:
+        try:
+            uploaded.seek(0)
+            client.upload_fileobj(
+                uploaded,
+                settings.R2_BUCKET,
+                key,
+                ExtraArgs={"ContentType": entry["type"] or "application/octet-stream"},
+            )
+            entry["storage"] = STORAGE_R2
+            if settings.R2_PUBLIC_BASE_URL:
+                entry["url"] = f"{settings.R2_PUBLIC_BASE_URL}/{key}"
+            return entry
+        except Exception:
+            logger.exception("R2 upload failed for %s; falling back to local storage", key)
+            uploaded.seek(0)
+
+    entry["storage"] = STORAGE_LOCAL
+    entry["url"] = _store_local(key, uploaded)
+    return entry
+
+
+def proof_file_response(entry: dict):
+    """Return a Django response serving a stored payment proof, or None if unavailable."""
+    if not entry:
+        return None
+
+    storage = entry.get("storage")
+    key = entry.get("key")
+    if not key:
+        return None
+
+    if storage == STORAGE_R2:
+        url = presigned_url(key)
+        return HttpResponseRedirect(url) if url else None
+
+    if storage == STORAGE_LOCAL:
+        path = Path(settings.MEDIA_ROOT) / key
+        if not path.exists():
+            return None
+        return FileResponse(open(path, "rb"), content_type=entry.get("type") or None)
+
+    return None

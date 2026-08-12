@@ -129,6 +129,11 @@ class Team(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     qr_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
     payment_proof = models.CharField(max_length=500, null=True, blank=True)
+    # Random 6-digit code, stable per team, for future auto-reconciliation of bank transfers.
+    payment_code = models.CharField(max_length=6, null=True, blank=True)
+    # Uploaded payment proof file metadata: {name,size,type,key,storage,url?} (R2/local).
+    # Kept alongside the legacy `payment_proof` (pasted link) field, which stays as-is.
+    payment_proof_file = models.JSONField(null=True, blank=True)
     provision_state = models.CharField(
         max_length=10, choices=PROVISION_CHOICES, default=PROVISION_NONE,
     )

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD, APPROVAL, PROVISION, Badge } from './ui.jsx'
-import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
+import { apiRequest, apiDownload, formatDateTime, logoutAndRedirect } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
 
@@ -163,6 +163,57 @@ function QuickStat({ label, value, done = false, accent }) {
   )
 }
 
+function ProofImage({ teamId }) {
+  const [status, setStatus] = useState('loading')
+  const [url, setUrl] = useState('')
+
+  useEffect(() => {
+    setStatus('loading')
+    setUrl('')
+
+    if (!teamId) {
+      setStatus('error')
+      return
+    }
+
+    let cancelled = false
+    let objectUrl = ''
+
+    apiDownload(`/admin/teams/${teamId}/payment-proof`)
+      .then(({ blob }) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+        setStatus('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('error')
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [teamId])
+
+  if (status === 'loading') {
+    return <span className="text-ink/35">Đang tải...</span>
+  }
+
+  if (status === 'error' || !url) {
+    return <span className="text-clay/70">Không tải được ảnh.</span>
+  }
+
+  return (
+    <img
+      src={url}
+      alt="Minh chứng thanh toán"
+      onClick={() => window.open(url, '_blank')}
+      className="max-h-72 w-auto cursor-zoom-in rounded-lg border border-stone"
+    />
+  )
+}
+
 function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
   const [mode, setMode] = useState('idle')
   const [note, setNote] = useState('')
@@ -237,7 +288,9 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
                   Minh chứng thanh toán
                 </p>
                 <div className={`${CARD} px-4 py-3 text-sm`}>
-                  {team.paymentProof ? (
+                  {team.hasPaymentProof ? (
+                    <ProofImage teamId={team.teamId} />
+                  ) : team.paymentProof ? (
                     <a
                       href={team.paymentProof}
                       target="_blank"
@@ -685,6 +738,7 @@ function MergeTeamsModal({
 
 function TeamsPage() {
   const [teams, setTeams] = useState([])
+  const [statusCounts, setStatusCounts] = useState(null)
   const [filter, setFilter] = useSearchParam('status', 'all')
   const [query, setQuery] = useSearchParam('q', '')
   const [selectedId, setSelectedId] = useSearchParam('team', '')
@@ -709,6 +763,13 @@ function TeamsPage() {
     if (query.trim()) params.set('q', query.trim())
     const payload = await apiRequest(`/teams?${params.toString()}`)
     setTeams((payload.items || []).map(normalizeTeamSummary))
+    // Tab badges come from server-side counts (whole set, all statuses), not
+    // the loaded page — otherwise switching tabs zeroes the other tabs' counts.
+    setStatusCounts(
+      payload.status_counts
+        ? { ...payload.status_counts, all: payload.total_all ?? 0 }
+        : null,
+    )
   }, [filter, query])
 
   useEffect(() => {
@@ -753,6 +814,7 @@ function TeamsPage() {
         if (cancelled) return
         setSelectedTeam({
           id: detail.code,
+          teamId: detail.id ?? null,
           name: detail.name,
           owner: detail.owner_username || '',
           status: detail.approval_status,
@@ -760,6 +822,7 @@ function TeamsPage() {
           submittedAt: detail.submitted_at,
           note: detail.approval_note || '',
           paymentProof: detail.payment_proof || '',
+          hasPaymentProof: Boolean(detail.has_payment_proof_file),
           isLateRegistration: Boolean(detail.is_late_registration),
           members: detail.members || [],
         })
@@ -784,12 +847,14 @@ function TeamsPage() {
   }, [selectedId])
 
   const counts = useMemo(() => {
+    // Prefer server-side counts; fall back to counting the loaded page.
+    if (statusCounts) return statusCounts
     const next = { all: teams.length }
     for (const team of teams) {
       next[team.status] = (next[team.status] || 0) + 1
     }
     return next
-  }, [teams])
+  }, [statusCounts, teams])
 
   const rows = teams
 
@@ -819,6 +884,7 @@ function TeamsPage() {
       const detail = await apiRequest(`/teams/${selectedId}`)
       setSelectedTeam({
         id: detail.code,
+        teamId: detail.id ?? null,
         name: detail.name,
         owner: detail.owner_username || '',
         status: detail.approval_status,
@@ -826,6 +892,7 @@ function TeamsPage() {
         submittedAt: detail.submitted_at,
         note: detail.approval_note || '',
         paymentProof: detail.payment_proof || '',
+        hasPaymentProof: Boolean(detail.has_payment_proof),
         isLateRegistration: Boolean(detail.is_late_registration),
         members: detail.members || [],
       })
@@ -842,6 +909,7 @@ function TeamsPage() {
       const detail = await apiRequest(`/teams/${selectedId}`)
       setSelectedTeam({
         id: detail.code,
+        teamId: detail.id ?? null,
         name: detail.name,
         owner: detail.owner_username || '',
         status: detail.approval_status,
@@ -849,6 +917,7 @@ function TeamsPage() {
         submittedAt: detail.submitted_at,
         note: detail.approval_note || '',
         paymentProof: detail.payment_proof || '',
+        hasPaymentProof: Boolean(detail.has_payment_proof),
         isLateRegistration: Boolean(detail.is_late_registration),
         members: detail.members || [],
       })

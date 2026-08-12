@@ -6,8 +6,16 @@ import SettingsPage from './SettingsPage.jsx'
 import StationRunPage from './StationRunPage.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
-import { apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
+import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
+import { compressImage } from './imageCompress.js'
+import {
+  BANK_DEEPLINK_OPTIONS,
+  buildBankDeeplink,
+  buildTimoDeeplink,
+  buildVietQrPayload,
+  openDeeplinkWithFallback,
+} from './lib/bankDeeplinks'
 
 const MAX_MEMBERS = 5
 const COLORS = {
@@ -61,6 +69,7 @@ const STEPS = [
   { key: 'profile', label: 'Hồ sơ' },
   { key: 'team', label: 'Đội' },
   { key: 'members', label: 'Thành viên' },
+  { key: 'payment', label: 'Thanh toán' },
   { key: 'submit', label: 'Gửi duyệt' },
   { key: 'approved', label: 'Được duyệt' },
 ]
@@ -104,6 +113,7 @@ function normalizeTeam(teamPayload, teamDetail = null) {
     approval_note: teamDetail?.approval_note || teamPayload.team.approval_note || '',
     submitted_at: teamDetail?.submitted_at || teamPayload.team.submitted_at || null,
     payment_proof: teamDetail?.payment_proof || teamPayload.team.payment_proof || '',
+    has_payment_proof: Boolean(teamDetail?.has_payment_proof ?? teamPayload?.team?.has_payment_proof),
   }
 }
 
@@ -400,6 +410,7 @@ function getStepState(step, profile, team, members, fields) {
     profile: isProfileComplete(profile, fields),
     team: Boolean(team?.team_name),
     members: members.length > 0,
+    payment: Boolean(team?.has_payment_proof),
     submit: status === 'pending_approval' || status === 'approved',
     approved: status === 'approved',
   }
@@ -407,7 +418,8 @@ function getStepState(step, profile, team, members, fields) {
   if (step.key === 'profile') return 'active'
   if (step.key === 'team' && done.profile) return 'active'
   if (step.key === 'members' && done.team) return 'active'
-  if (step.key === 'submit' && done.members) return 'active'
+  if (step.key === 'payment' && done.members && done.profile) return 'active'
+  if (step.key === 'submit' && done.payment) return 'active'
   return 'idle'
 }
 
@@ -472,7 +484,7 @@ function getNextAction(profile, team, members, fields) {
 function ProgressTrail({ profile, team, members, fields }) {
   return (
     <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
-      <div className="grid grid-cols-5 divide-x divide-[#DCD8CC]">
+      <div className="grid grid-cols-6 divide-x divide-[#DCD8CC]">
         {STEPS.map((step, index) => {
           const state = getStepState(step, profile, team, members, fields)
           const active = state === 'active'
@@ -934,6 +946,280 @@ function CaptainVoteCard({ vote, myMssv, selected, onSelect, onVote, busy }) {
   )
 }
 
+function formatVnd(amount) {
+  const formatted = new Intl.NumberFormat('vi-VN').format(Number(amount) || 0)
+  return `${formatted}₫`
+}
+
+// Fee payment sits between "add members" and "submit for approval": the
+// team's captain scans/opens a VietQR to pay, then uploads a screenshot as
+// proof. The backend already tracks the proof file on the team, so all this
+// card owns is the VietQR display, the bank-app deeplinks, and the upload.
+function PaymentSection({ team, editable, onProofChange }) {
+  const [info, setInfo] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [hasProof, setHasProof] = useState(false)
+  const [proofUrl, setProofUrl] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    apiRequest('/my-team/payment')
+      .then((payload) => {
+        if (cancelled) return
+        setInfo(payload)
+        setHasProof(Boolean(payload?.has_proof))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(explainApiError(err))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [team?.team_id])
+
+  useEffect(() => {
+    if (!hasProof) {
+      setProofUrl(null)
+      return undefined
+    }
+    let cancelled = false
+    let objectUrl = null
+    apiDownload('/my-team/payment-proof/file')
+      .then(({ blob }) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setProofUrl(objectUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setProofUrl(null)
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [hasProof])
+
+  const handleDownloadQr = async () => {
+    if (!info?.qr_image_url) return
+    try {
+      const response = await fetch(info.qr_image_url)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'vietqr.png'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      window.open(info.qr_image_url, '_blank', 'noopener')
+    }
+  }
+
+  const handleCopyContent = async () => {
+    if (!info?.content) return
+    try {
+      await navigator.clipboard.writeText(info.content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setNotice('Không copy được — hãy bôi đen nội dung và chép tay.')
+    }
+  }
+
+  const handleDeeplink = (bankKey) => {
+    setNotice('')
+    try {
+      const emv = buildVietQrPayload({
+        bankBin: info.bank.bin,
+        accountNumber: info.bank.account_no,
+        amount: info.amount,
+        description: info.content,
+      })
+      const url = bankKey === 'timo'
+        ? buildTimoDeeplink({
+          bankCode: info.bank.short_name,
+          bankName: info.bank.short_name,
+          accNumber: info.bank.account_no,
+          amount: info.amount,
+          description: info.content,
+        }).url
+        : buildBankDeeplink({ bankKey, qrPayload: emv }).url
+      openDeeplinkWithFallback({
+        deeplinkUrl: url,
+        onFallback: () => setNotice('Nếu app không mở, hãy quét mã QR ở trên.'),
+      })
+    } catch {
+      setNotice('Không mở được app ngân hàng — hãy quét mã QR ở trên.')
+    }
+  }
+
+  const handleFileChange = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setUploading(true)
+    setError('')
+    try {
+      const compressed = await compressImage(file)
+      const fd = new FormData()
+      fd.append('file', compressed, compressed.name || file.name)
+      await apiRequest('/my-team/payment-proof', { method: 'POST', body: fd })
+      setHasProof(true)
+      setInfo((current) => (current ? { ...current, has_proof: true } : current))
+      await onProofChange?.()
+    } catch (err) {
+      setError(explainApiError(err))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className={`${PARTICIPANT_CARD} p-5 text-sm text-ink/45`}>
+        Đang tải thông tin thanh toán...
+      </div>
+    )
+  }
+
+  const bankReady = Boolean(info?.bank?.account_no)
+
+  return (
+    <div id="payment-section" className={`${PARTICIPANT_CARD} p-5`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Lệ phí</p>
+          <h2 className="mt-1 font-display text-xl font-bold text-ink">Thanh toán lệ phí</h2>
+        </div>
+        <Badge
+          label={hasProof ? 'Đã upload minh chứng' : 'Chưa upload minh chứng'}
+          cls={hasProof ? 'bg-[#1F7A6B]/12 text-[#1F7A6B]' : 'bg-[#E0A23A]/15 text-[#9A6B12]'}
+        />
+      </div>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+          {error}
+        </div>
+      )}
+
+      {info && (
+        <p className="mt-3 text-sm leading-6 text-ink/55">
+          {info.member_count} người × {formatVnd(info.fee_per_person)} ={' '}
+          <span className="font-semibold text-ink">{formatVnd(info.amount)}</span>
+        </p>
+      )}
+
+      {!bankReady ? (
+        <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1] px-4 py-3 text-sm text-ink/55">
+          BTC chưa cấu hình tài khoản nhận. Vui lòng quay lại sau.
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 flex flex-col items-center gap-3 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/60 px-4 py-5">
+            <img
+              src={info.qr_image_url}
+              alt="VietQR"
+              className="h-auto w-56 rounded-lg border border-[#DCD8CC] bg-white"
+            />
+            <button type="button" onClick={handleDownloadQr} className={SECONDARY_BUTTON}>
+              <Icon name="doc" className="h-4 w-4" />
+              Tải mã QR
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-white px-4 py-3">
+            <p className="text-sm font-semibold text-ink">{info.bank.short_name}</p>
+            <p className="mt-1 text-sm text-ink/60">
+              Số TK: <span className="font-mono font-semibold text-ink">{info.bank.account_no}</span>
+            </p>
+            <p className="mt-1 text-sm text-ink/60">Chủ TK: {info.bank.account_name}</p>
+          </div>
+
+          <div className="mt-3">
+            <span className="text-xs font-medium text-ink/50">Nội dung chuyển khoản</span>
+            <div className="mt-1 flex items-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-3 py-2">
+              <span className="flex-1 truncate font-mono text-sm text-ink">{info.content}</span>
+              <button type="button" onClick={handleCopyContent} className={SECONDARY_BUTTON}>
+                {copied ? 'Đã copy' : 'Copy'}
+              </button>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-ink/45">Chuyển đúng nội dung để BTC đối soát nhanh.</p>
+          </div>
+
+          <div className="mt-4">
+            <span className="text-xs font-medium text-ink/50">Mở app ngân hàng</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {BANK_DEEPLINK_OPTIONS.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => handleDeeplink(option.key)}
+                  className="rounded-full border border-[#DCD8CC] bg-white px-3 py-1.5 text-xs font-semibold text-[#20312B]/65 transition hover:bg-[#F3F4F1] hover:text-[#20312B]"
+                >
+                  {option.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {notice && <p className="mt-2 text-xs leading-5 text-[#9A6B12]">{notice}</p>}
+        </>
+      )}
+
+      <div className="mt-5 border-t border-[#DCD8CC] pt-4">
+        <span className="text-xs font-medium text-ink/50">Minh chứng thanh toán</span>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          {proofUrl ? (
+            <img
+              src={proofUrl}
+              alt="Minh chứng thanh toán"
+              className="h-24 w-24 rounded-lg border border-[#DCD8CC] object-cover"
+            />
+          ) : hasProof ? (
+            <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-[#DCD8CC] bg-[#F3F4F1] text-center text-xs text-ink/40">
+              Đang tải ảnh...
+            </div>
+          ) : (
+            <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-[#DCD8CC] bg-[#F3F4F1] text-center text-xs text-ink/40">
+              Chưa có ảnh
+            </div>
+          )}
+          {editable ? (
+            <label className={`cursor-pointer ${SECONDARY_BUTTON}`}>
+              <Icon name="paperclip" className="h-4 w-4" />
+              {uploading ? 'Đang tải lên...' : hasProof ? 'Đổi ảnh' : 'Tải ảnh lên'}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={uploading}
+                onChange={handleFileChange}
+              />
+            </label>
+          ) : (
+            <p className="text-sm text-ink/45">
+              {hasProof ? 'Đội đã khoá chỉnh sửa — không thể đổi ảnh.' : 'Đội chưa upload minh chứng thanh toán.'}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ParticipantDashboard() {
   const [user, setUser] = useState(() => getStoredUser() || {
     username: 'participant',
@@ -948,7 +1234,6 @@ function ParticipantDashboard() {
   const [team, setTeam] = useState(null)
   const [members, setMembers] = useState([])
   const [teamNameDraft, setTeamNameDraft] = useState('')
-  const [paymentProofDraft, setPaymentProofDraft] = useState('')
   const [memberDialog, setMemberDialog] = useState(null)
   const [memberForm, setMemberForm] = useState(null)
   const [memberDraftSavedAt, setMemberDraftSavedAt] = useState(null)
@@ -996,7 +1281,6 @@ function ParticipantDashboard() {
     const normalizedTeam = normalizeTeam(teamPayload)
     setTeam(normalizedTeam)
     setTeamNameDraft(normalizedTeam?.team_name || '')
-    setPaymentProofDraft(normalizedTeam?.payment_proof || '')
     setMembers(Array.isArray(teamPayload?.members) ? teamPayload.members : [])
     setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
     setRegistrationSchema(schemaPayload)
@@ -1064,10 +1348,6 @@ function ParticipantDashboard() {
   const currentPhase = experience?.current_phase || 'registration'
   const personFields = useMemo(
     () => (registrationSchema?.person_fields || []).filter((field) => field.enabled !== false),
-    [registrationSchema],
-  )
-  const teamFields = useMemo(
-    () => (registrationSchema?.team_fields || []).filter((field) => field.enabled !== false),
     [registrationSchema],
   )
   const maxMembers = registrationSchema?.team_size_max || registrationSchema?.team_size || MAX_MEMBERS
@@ -1167,24 +1447,18 @@ function ParticipantDashboard() {
 
   const saveTeamNameIfNeeded = async () => {
     if (!team || !editable) return
-    // Renaming needs a full team; the placeholder is resent unchanged so the
-    // payment_proof edit on the same request still goes through.
+    // Renaming needs a full team; a not-yet-full team keeps its placeholder.
     const nextName = canRenameTeam ? teamNameDraft.trim() : team.team_name
-    const nextPaymentProof = paymentProofDraft.trim()
-    if (!nextName) return
-    if (nextName === team.team_name && nextPaymentProof === (team.payment_proof || '')) return
+    if (!nextName || nextName === team.team_name) return
 
     const payload = await apiRequest('/my-team', {
       method: 'PATCH',
-      body: { team_name: nextName, payment_proof: nextPaymentProof },
+      body: { team_name: nextName },
     })
     setTeam((current) => (
-      current
-        ? { ...current, team_name: payload.name || nextName, payment_proof: payload.payment_proof || nextPaymentProof }
-        : current
+      current ? { ...current, team_name: payload.name || nextName } : current
     ))
     setTeamNameDraft(payload.name || nextName)
-    setPaymentProofDraft(payload.payment_proof || nextPaymentProof)
   }
 
   const withBusy = async (actionKey, task) => {
@@ -1500,6 +1774,8 @@ function ParticipantDashboard() {
                 onCreate={createTeam}
               />
             ) : teamEditingOpen && team ? (
+              <>
+              <PaymentSection team={team} editable={editable} onProofChange={loadDashboard} />
               <div id="team-editor" className={`${PARTICIPANT_CARD} p-5`}>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -1535,18 +1811,7 @@ function ParticipantDashboard() {
                     </p>
                   ) : null}
                 </div>
-                {teamFields.some((field) => field.key === 'payment_proof') && (
-                  <div className="mt-3">
-                    <SchemaField
-                      field={teamFields.find((field) => field.key === 'payment_proof')}
-                      value={paymentProofDraft}
-                      disabled={!editable}
-                      onChange={setPaymentProofDraft}
-                    />
-                  </div>
-                )}
-
-                {editable && (teamNameDraft !== team.team_name || paymentProofDraft !== (team.payment_proof || '')) && (
+                {editable && teamNameDraft !== team.team_name && (
                   <div className="mt-3 flex justify-end">
                     <button
                       type="button"
@@ -1577,7 +1842,7 @@ function ParticipantDashboard() {
                   <button
                     type="button"
                     onClick={submitTeam}
-                    disabled={!editable || !profileComplete || members.length === 0 || team.approval_status === 'pending_approval' || Boolean(busyAction)}
+                    disabled={!editable || !profileComplete || members.length === 0 || !team.has_payment_proof || team.approval_status === 'pending_approval' || Boolean(busyAction)}
                     className={TRAIL_BUTTON}
                   >
                     <Icon name="checkPlain" className="h-4 w-4" />
@@ -1593,12 +1858,18 @@ function ParticipantDashboard() {
                     Thêm thành viên
                   </button>
                 </div>
+                {editable && !team.has_payment_proof && (
+                  <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
+                    Cần upload minh chứng thanh toán ở bước Thanh toán trước khi gửi duyệt.
+                  </p>
+                )}
                 {apiError && (
                   <div className="mt-3 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
                     {apiError}
                   </div>
                 )}
               </div>
+              </>
             ) : (
               <div className={`${PARTICIPANT_CARD} p-5`}>
                 <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Phase hiện tại</p>
