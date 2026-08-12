@@ -77,6 +77,9 @@ function explainScanError(error) {
     session_not_found: 'Không tìm thấy phiên trạm đang mở cho đội này.',
     policy_free_play: 'Trạm này đang ở chế độ tự do, không cần scan.',
     results_locked: 'Kết quả đã khóa ở phase Kết thúc nên không thể tiếp tục thao tác trạm.',
+    // Luật chơi lại (bật theo event): server chặn ngay ở bước quét vào trạm.
+    replay_locked_incomplete: 'Đội phải đi hết tất cả các trạm khác rồi mới được quay lại trạm này.',
+    replay_locked_passed: 'Đội đã qua trạm này rồi nên không cần vào lại.',
   }
   return map[code] || 'Không thể xử lý mã vừa quét.'
 }
@@ -98,6 +101,11 @@ function buildStationView(station) {
     capacityMode: station.capacity_mode || 'unlimited',
     maxConcurrentTeams: Number(station.max_concurrent_teams) || 0,
     order: station.order ?? 0,
+    // Có thể chưa có ở endpoint này (chỉ /station-scan chắc chắn trả về) — mặc định
+    // score_only để ô nhập điểm cũ vẫn hoạt động bình thường khi thiếu field.
+    scoringMode: station.scoring_mode || 'score_only',
+    passThreshold: station.pass_threshold ?? null,
+    passPoints: station.pass_points ?? null,
   }
 }
 
@@ -448,6 +456,33 @@ function CoopDashboard() {
     }
   }, [refreshLive, scoreDraft, setScoreDrafts])
 
+  // Trạm ở chế độ pass_fail không có điểm số để nhập — coop chỉ bấm đạt/không đạt,
+  // server tự cộng `pass_points` khi đạt. Payload body vì vậy khác hẳn saveSessionScore.
+  const saveSessionOutcome = useCallback(async (sessionId, outcome) => {
+    if (!sessionId) return
+    setSavingScoreId(sessionId)
+    try {
+      await apiRequest(`/station-sessions/${sessionId}/score`, {
+        method: 'PATCH',
+        body: { outcome },
+      })
+      setFlashMessage('success', outcome === 'passed' ? 'Đã ghi nhận đội đạt trạm.' : 'Đã ghi nhận đội không đạt trạm.')
+      await refreshLive()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setFlashMessage('error', error?.data?.error === 'not_assigned_to_station'
+        ? 'Bạn không phụ trách trạm này nên không thể chấm kết quả.'
+        : error?.data?.error === 'results_locked'
+          ? 'Kết quả đã khóa ở phase Kết thúc nên không thể lưu kết quả.'
+        : 'Không lưu được kết quả.')
+    } finally {
+      setSavingScoreId(null)
+    }
+  }, [refreshLive])
+
   useEffect(() => {
     if (!selectedEventId) return undefined
     let cancelled = false
@@ -517,6 +552,12 @@ function CoopDashboard() {
         timestamp: response.checked_in_at || response.exited_at || response.entered_at || new Date().toISOString(),
         // Chỉ lúc rời trạm mới mở ô chấm điểm cho người quản trạm.
         sessionId: response.kind === 'exit' ? response.id : null,
+        // Trạm quy định cách tính điểm; quyết định card kết quả render ô điểm hay
+        // nút Đạt/Không đạt. `/station-scan` là nguồn đáng tin nhất vì nó luôn
+        // đọc thẳng từ trạm vừa quét, không phụ thuộc trạm đang chọn trên UI.
+        scoringMode: response.scoring_mode || null,
+        passThreshold: response.pass_threshold ?? null,
+        passPoints: response.pass_points ?? null,
       })
 
       const message = response.kind === 'event'
@@ -777,14 +818,27 @@ function CoopDashboard() {
                           </div>
                           {lastResult.kind === 'exit' && lastResult.sessionId && (
                             <div className="rounded-lg border border-stone bg-paper px-4 py-3">
-                              <p className="text-xs text-ink/40">Chấm điểm cho đội vừa rời trạm</p>
+                              <p className="text-xs text-ink/40">Chấm kết quả cho đội vừa rời trạm</p>
                               <div className="mt-2">
-                                <ScoreEditor
-                                  value={scoreDrafts[lastResult.sessionId] ?? ''}
-                                  onChange={(value) => setScoreDrafts((current) => ({ ...current, [lastResult.sessionId]: value }))}
-                                  onSave={() => saveSessionScore(lastResult.sessionId, scoreDrafts[lastResult.sessionId] ?? 0)}
-                                  saving={savingScoreId === lastResult.sessionId}
-                                />
+                                {lastResult.scoringMode === 'pass_fail' ? (
+                                  <OutcomeButtons
+                                    onPass={() => saveSessionOutcome(lastResult.sessionId, 'passed')}
+                                    onFail={() => saveSessionOutcome(lastResult.sessionId, 'failed')}
+                                    saving={savingScoreId === lastResult.sessionId}
+                                  />
+                                ) : (
+                                  <>
+                                    {lastResult.scoringMode === 'threshold' && lastResult.passThreshold != null && (
+                                      <p className="mb-2 text-xs text-ink/45">Đạt khi điểm ≥ {lastResult.passThreshold}</p>
+                                    )}
+                                    <ScoreEditor
+                                      value={scoreDrafts[lastResult.sessionId] ?? ''}
+                                      onChange={(value) => setScoreDrafts((current) => ({ ...current, [lastResult.sessionId]: value }))}
+                                      onSave={() => saveSessionScore(lastResult.sessionId, scoreDrafts[lastResult.sessionId] ?? 0)}
+                                      saving={savingScoreId === lastResult.sessionId}
+                                    />
+                                  </>
+                                )}
                               </div>
                             </div>
                           )}
@@ -855,16 +909,39 @@ function CoopDashboard() {
                           </div>
                         </div>
                         <div className="mt-2 flex items-center justify-between gap-2 border-t border-stone pt-2">
-                          <span className="text-xs text-ink/45">
-                            Điểm: <span className="font-mono font-semibold text-ink">{session.score ?? 0}</span>
-                          </span>
-                          <ScoreEditor
-                            compact
-                            value={scoreDrafts[session.id] ?? String(session.score ?? 0)}
-                            onChange={(value) => setScoreDrafts((current) => ({ ...current, [session.id]: value }))}
-                            onSave={() => saveSessionScore(session.id, scoreDrafts[session.id] ?? session.score ?? 0)}
-                            saving={savingScoreId === session.id}
-                          />
+                          {selectedStation?.scoringMode === 'pass_fail' ? (
+                            <>
+                              <span className="text-xs text-ink/45">
+                                {session.outcome === 'passed' ? (
+                                  <span className="font-semibold text-trail">Đạt</span>
+                                ) : session.outcome === 'failed' ? (
+                                  <span className="font-semibold text-clay">Không đạt</span>
+                                ) : 'Chưa chấm'}
+                              </span>
+                              <OutcomeButtons
+                                compact
+                                onPass={() => saveSessionOutcome(session.id, 'passed')}
+                                onFail={() => saveSessionOutcome(session.id, 'failed')}
+                                saving={savingScoreId === session.id}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs text-ink/45">
+                                Điểm: <span className="font-mono font-semibold text-ink">{session.score ?? 0}</span>
+                                {selectedStation?.scoringMode === 'threshold' && selectedStation?.passThreshold != null && (
+                                  <span className="ml-1.5 text-ink/35">(đạt ≥ {selectedStation.passThreshold})</span>
+                                )}
+                              </span>
+                              <ScoreEditor
+                                compact
+                                value={scoreDrafts[session.id] ?? String(session.score ?? 0)}
+                                onChange={(value) => setScoreDrafts((current) => ({ ...current, [session.id]: value }))}
+                                onSave={() => saveSessionScore(session.id, scoreDrafts[session.id] ?? session.score ?? 0)}
+                                saving={savingScoreId === session.id}
+                              />
+                            </>
+                          )}
                         </div>
                       </div>
                     )) : (
@@ -908,6 +985,30 @@ function CoopDashboard() {
           </>
         )}
       </main>
+    </div>
+  )
+}
+
+function OutcomeButtons({ onPass, onFail, saving, compact = false }) {
+  const size = compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-xs'
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onPass}
+        disabled={saving}
+        className={`rounded-lg bg-trail font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-45 ${size}`}
+      >
+        {saving ? '...' : 'Đạt'}
+      </button>
+      <button
+        type="button"
+        onClick={onFail}
+        disabled={saving}
+        className={`rounded-lg border border-clay/30 font-semibold text-clay transition hover:bg-clay/10 disabled:cursor-not-allowed disabled:opacity-45 ${size}`}
+      >
+        {saving ? '...' : 'Không đạt'}
+      </button>
     </div>
   )
 }

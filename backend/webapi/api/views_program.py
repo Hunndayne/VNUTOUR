@@ -147,12 +147,14 @@ def sub_event_create_view(request: HttpRequest, phase_key: str):
             start_date=data.get("start_date") or None,
             end_date=data.get("end_date") or None,
             uses_stations=bool(data.get("uses_stations")),
+            replay_after_all=bool(data.get("replay_after_all")),
             note=data.get("note"),
             order=data.get("order", 0),
         )
         return JsonResponse({
             "id": se.id, "phase_key": phase_key, "name": se.name,
             "type": se.type, "uses_stations": se.uses_stations,
+            "replay_after_all": se.replay_after_all,
         }, status=201)
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
@@ -172,13 +174,15 @@ def sub_event_detail_view(request: HttpRequest, event_id: int):
 
         try:
             kwargs = {}
-            for f in ("name", "type", "start_date", "end_date", "uses_stations", "note", "order"):
+            for f in ("name", "type", "start_date", "end_date", "uses_stations",
+                      "replay_after_all", "note", "order"):
                 if f in data:
                     kwargs[f] = data[f]
             se = update_sub_event(event_id, **kwargs)
             return JsonResponse({
                 "id": se.id, "name": se.name, "type": se.type,
                 "uses_stations": se.uses_stations,
+                "replay_after_all": se.replay_after_all,
             })
         except SubEvent.DoesNotExist:
             return JsonResponse({"error": "not_found"}, status=404)

@@ -68,6 +68,9 @@ function explainError(error) {
     invalid_station_id: 'Mã trạm không hợp lệ.',
     method_not_allowed: 'Yêu cầu không hợp lệ.',
     not_found: 'Không tìm thấy dữ liệu của trạm này.',
+    // Luật chơi lại (bật theo event): quét vào trạm bị chặn ở hai lý do này.
+    replay_locked_incomplete: explainReplayLock('incomplete'),
+    replay_locked_passed: explainReplayLock('passed'),
   }
   if (code && map[code]) return map[code]
   if (typeof code === 'string' && code.startsWith('request_failed_')) {
@@ -79,8 +82,9 @@ function explainError(error) {
 function capacityLabel(capacity) {
   const max = capacity?.max_concurrent_teams
   const current = capacity?.current_teams ?? 0
-  if (!max) return `${current} đội đang chơi · không giới hạn chỗ`
-  return `${current}/${max} đội đang chơi`
+  // Không giới hạn (max = 0/None): chỉ hiện số đội đang chơi, bỏ hẳn phần sức chứa.
+  if (!max) return `${current} đội đang chơi`
+  return `${current}/${max} đội`
 }
 
 function isStationFull(station) {
@@ -91,11 +95,33 @@ function isStationFull(station) {
 }
 
 function listStatusBadge(station) {
-  const status = station?.my_session?.status
-  if (status === 'active') return { label: 'Đang ở trạm', cls: 'bg-[#1F7A6B]/14 text-[#1F7A6B]' }
-  if (status === 'closed') return { label: 'Đã hoàn thành', cls: 'bg-[#20312B]/[0.07] text-[#20312B]/55' }
+  // `status` là trạng thái hành trình suy trên server (not_visited/active/passed/failed).
+  // Payload cũ (backend chưa deploy luật chơi lại) sẽ thiếu field này — rơi xuống suy
+  // từ my_session/my_submission như trước để giao diện không vỡ.
+  const status = station?.status
+  if (status === 'active') return { label: 'Đang ở đây', cls: 'bg-[#1F7A6B]/14 text-[#1F7A6B]' }
+  if (status === 'passed') {
+    const score = Number(station?.best_score) || 0
+    return {
+      label: score > 0 ? `Đã qua · ${score} điểm` : 'Đã qua',
+      cls: 'bg-[#3E7CA8]/14 text-[#3E7CA8]',
+    }
+  }
+  if (status === 'failed') return { label: 'Chưa qua', cls: 'bg-[#D6492B]/14 text-[#D6492B]' }
+  if (status === 'not_visited') return { label: 'Chưa ghé', cls: 'bg-[#20312B]/[0.06] text-[#20312B]/45' }
+
+  const sessionStatus = station?.my_session?.status
+  if (sessionStatus === 'active') return { label: 'Đang ở trạm', cls: 'bg-[#1F7A6B]/14 text-[#1F7A6B]' }
+  if (sessionStatus === 'closed') return { label: 'Đã hoàn thành', cls: 'bg-[#20312B]/[0.07] text-[#20312B]/55' }
   if (hasSubmitted(station?.my_submission)) return { label: 'Đã nộp bài', cls: 'bg-[#E0A23A]/20 text-[#9A6B12]' }
   return { label: 'Chưa vào', cls: 'bg-[#20312B]/[0.06] text-[#20312B]/45' }
+}
+
+/** Câu giải thích khi một trạm đang bị khoá chơi lại (luật bật, xem plan/qualifying-journey-and-replay.md). */
+function explainReplayLock(reason) {
+  if (reason === 'passed') return 'Đội đã qua trạm này rồi nên không cần vào lại.'
+  if (reason === 'incomplete') return 'Đội phải đi hết tất cả các trạm khác rồi mới được quay lại trạm này.'
+  return 'Trạm này hiện đang khoá lượt chơi lại.'
 }
 
 /**
@@ -126,6 +152,9 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
 
   // `null` (chưa vào) hoặc `cancelled` (CTV đã huỷ phiên): đội đang đứng ngoài.
   if (blockedStationId != null) return 'blocked'
+  // Luật chơi lại chặn NGAY TỪ LÚC quét (server sẽ trả 409), nhưng cờ này đã có
+  // sẵn trong `/my-team/stations` nên báo trước cho đội khỏi mất công quét hụt.
+  if (station.replay_locked) return 'replay_locked'
   return qrReady ? 'entry_qr' : 'entry_disabled'
 }
 
@@ -270,6 +299,8 @@ function StationRow({ station, onOpen }) {
   const badge = listStatusBadge(station)
   const full = isStationFull(station)
   const staffScan = station.checkin_policy === 'staff_scan'
+  const visitCount = Number(station?.visit_count) || 0
+  const replayNote = station?.replay_locked ? explainReplayLock(station.replay_reason) : ''
 
   return (
     <button
@@ -293,7 +324,9 @@ function StationRow({ station, onOpen }) {
             </p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink/45">
-            <span className={full ? 'font-semibold text-[#D6492B]' : ''}>{capacityLabel(station.capacity)}</span>
+            <span className={full ? 'font-semibold text-[#D6492B]' : ''}>
+              {capacityLabel(station.capacity)}{full ? ' · đầy' : ''}
+            </span>
             <span>·</span>
             <span>{staffScan ? 'CTV quét QR để vào' : 'Tự do vào chơi'}</span>
             {station.has_form && (
@@ -302,7 +335,16 @@ function StationRow({ station, onOpen }) {
                 <span>Có bài nộp</span>
               </>
             )}
+            {visitCount > 1 && (
+              <>
+                <span>·</span>
+                <span>Đã ghé {visitCount} lần</span>
+              </>
+            )}
           </div>
+          {replayNote && (
+            <p className="mt-1.5 text-xs text-[#9A6B12]">{replayNote}</p>
+          )}
         </div>
         <Icon name="chevronR" className="mt-3 h-5 w-5 shrink-0 text-ink/25" />
       </div>
@@ -313,6 +355,13 @@ function StationRow({ station, onOpen }) {
 function StationListScreen({ payload, loading, error, activeStationId, onOpen, onRefresh }) {
   const stations = payload?.stations || []
   const activeStation = stations.find((item) => item.station_id === activeStationId) || null
+  const hasJourneyStats = Boolean(payload) && typeof payload.total_stations === 'number' && payload.total_stations > 0
+  // Chỉ cộng điểm khi payload thật sự mang best_score — payload cũ (backend chưa
+  // deploy) sẽ không có field này ở bất kỳ trạm nào, lúc đó coi như "chưa tính được".
+  const stationsWithScore = stations.filter((item) => item?.best_score !== undefined && item?.best_score !== null)
+  const totalScore = stationsWithScore.length > 0
+    ? stationsWithScore.reduce((sum, item) => sum + (Number(item.best_score) || 0), 0)
+    : null
 
   return (
     <div className="space-y-4">
@@ -320,6 +369,19 @@ function StationListScreen({ payload, loading, error, activeStationId, onOpen, o
         <div className="min-w-0">
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Vòng loại</p>
           <h1 className="mt-1 font-display text-2xl font-bold text-ink sm:text-3xl">Các trạm đang mở</h1>
+          {hasJourneyStats && (
+            <p className="mt-1 text-sm text-ink/50">
+              Đã đi {payload.visited_count ?? 0}/{payload.total_stations} trạm · Đã qua {payload.passed_count ?? 0}
+              {totalScore !== null && ` · Tổng điểm ${totalScore}`}
+            </p>
+          )}
+          {payload?.replay_enabled && (
+            <p className="mt-1 text-xs text-ink/40">
+              {payload.all_visited
+                ? 'Đội đã đi hết các trạm — được quay lại các trạm chưa qua.'
+                : 'Luật chơi lại: đi hết tất cả các trạm mới được quay lại trạm đã ghé.'}
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -449,6 +511,19 @@ function StationStageScreen({
         >
           <ElsewhereBanner station={blockedStation} stationId={blockedStationId} onGo={null} />
           <button type="button" onClick={onBack} className={`mt-4 w-full ${PRIMARY_BUTTON}`}>
+            Về danh sách trạm
+          </button>
+        </StatusPanel>
+      )}
+
+      {step === 'replay_locked' && (
+        <StatusPanel
+          tone="clay"
+          eyebrow="Khoá chơi lại"
+          title={station?.replay_reason === 'passed' ? 'Đã qua trạm này' : 'Đi hết trạm rồi mới được vào lại'}
+          body={explainReplayLock(station?.replay_reason)}
+        >
+          <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
             Về danh sách trạm
           </button>
         </StatusPanel>

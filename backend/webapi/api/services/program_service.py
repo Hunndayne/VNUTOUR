@@ -42,6 +42,7 @@ def get_program() -> dict:
                     "start_date": se.start_date.isoformat() if se.start_date else None,
                     "end_date": se.end_date.isoformat() if se.end_date else None,
                     "uses_stations": se.uses_stations,
+                    "replay_after_all": se.replay_after_all,
                     "note": se.note,
                     "order": se.order,
                     "is_current": bool(current_event and current_event.id == se.id),

@@ -267,6 +267,26 @@ function SubEventEditor({ initialEvent, submitLabel, onSave, onCancel, canEdit, 
           </label>
         </div>
 
+        {form.usesStations && (
+          <div className="sm:col-span-2">
+            <label className="inline-flex items-start gap-2 text-sm text-ink/65">
+              <input
+                type="checkbox"
+                checked={form.replayAfterAll}
+                disabled={!canEdit}
+                onChange={(event) => set('replayAfterAll', event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20 disabled:cursor-not-allowed disabled:opacity-40"
+              />
+              <span>
+                Cho phép chơi lại trạm sau khi đã đi hết
+                <span className="mt-0.5 block text-xs font-normal text-ink/40">
+                  Đội phải đi hết tất cả các trạm rồi mới được quay lại trạm chưa qua.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
         <div>
           <label className={FIELD_LABEL} htmlFor="event-start">Bắt đầu</label>
           <input
@@ -468,12 +488,17 @@ function EventManagementPage({
               <SubEventEditor
                 key={`create-${selectedPhase}`}
                 draftKey={`sub-event:new:${selectedPhase}`}
-                initialEvent={createSubEvent({
-                  startDate: phaseSchedule[selectedPhase]?.startDate || '',
-                  endDate: phaseSchedule[selectedPhase]?.endDate || '',
-                  type: selectedPhase === 'registration' ? 'workflow' : 'social',
-                  usesStations: false,
-                })}
+                initialEvent={{
+                  ...createSubEvent({
+                    startDate: phaseSchedule[selectedPhase]?.startDate || '',
+                    endDate: phaseSchedule[selectedPhase]?.endDate || '',
+                    type: selectedPhase === 'registration' ? 'workflow' : 'social',
+                    usesStations: false,
+                  }),
+                  // adminProgram.js createSubEvent() chưa mang field này (không được sửa
+                  // ở đây) — thêm tay để form luật chơi lại có chỗ bám.
+                  replayAfterAll: false,
+                }}
                 submitLabel="Tạo event"
                 onSave={(draft) => {
                   onCreateSubEvent(selectedPhase, draft)
@@ -486,7 +511,14 @@ function EventManagementPage({
               <SubEventEditor
                 key={`${selectedSubEvent.id}-${detailSeed}`}
                 draftKey={`sub-event:${selectedSubEvent.id}`}
-                initialEvent={selectedSubEvent}
+                initialEvent={{
+                  ...selectedSubEvent,
+                  // api.js normalizeProgramForFrontend() cũng chưa map field này (không
+                  // được sửa ở đây) — đọc thẳng field thô nếu server đã trả về.
+                  replayAfterAll: selectedSubEvent.replay_after_all
+                    ?? selectedSubEvent.replayAfterAll
+                    ?? false,
+                }}
                 submitLabel="Lưu event"
                 onSave={(draft) => {
                   onUpdateSubEvent(selectedPhase, selectedSubEvent.id, draft)

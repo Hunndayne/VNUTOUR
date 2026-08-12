@@ -34,9 +34,56 @@ def _stored_submission_config(config):
     return normalize_config(config)
 
 
+_SCORING_MODES = {Station.SCORING_PASS_FAIL, Station.SCORING_THRESHOLD, Station.SCORING_SCORE_ONLY}
+
+
+def _clean_scoring_kwargs(data: dict, require_defaults: bool) -> tuple[dict, str | None]:
+    """Validate scoring_mode/pass_threshold/pass_points from a request body.
+
+    `require_defaults=True` (station creation) always resolves the three
+    fields, falling back to the model defaults when absent, matching how the
+    other station fields are given a default on create. `require_defaults=False`
+    (station update) only touches fields the caller actually sent, matching the
+    partial-update behaviour of every other station field.
+
+    A negative threshold/points is never satisfiable / never worth anything,
+    so it is clamped to 0 rather than rejected — a stray minus sign shouldn't
+    block the whole save.
+    """
+    out: dict = {}
+    if require_defaults or "scoring_mode" in data:
+        mode = data.get("scoring_mode", Station.SCORING_SCORE_ONLY)
+        if mode not in _SCORING_MODES:
+            return {}, "invalid_scoring_mode"
+        out["scoring_mode"] = mode
+    if require_defaults or "pass_threshold" in data:
+        try:
+            out["pass_threshold"] = max(0, int(data.get("pass_threshold") or 0))
+        except (TypeError, ValueError):
+            return {}, "invalid_pass_threshold"
+    if require_defaults or "pass_points" in data:
+        try:
+            out["pass_points"] = max(0, int(data.get("pass_points") or 0))
+        except (TypeError, ValueError):
+            return {}, "invalid_pass_points"
+    return out, None
+
+
+def _station_scoring_dict(s: Station) -> dict:
+    return {
+        "scoring_mode": s.scoring_mode,
+        "pass_threshold": s.pass_threshold,
+        "pass_points": s.pass_points,
+    }
+
+
 @csrf_exempt
 def station_session_score_view(request: HttpRequest, session_id: int):
-    """PATCH: cập nhật điểm cho phiên trạm (admin, hoặc collab được phân công trạm đó)."""
+    """PATCH: cập nhật điểm/kết quả cho phiên trạm (admin, hoặc collab được phân công trạm đó).
+
+    Body phụ thuộc `station.scoring_mode`: `pass_fail` nhận `{"outcome": "passed"|"failed"}`
+    (không cần điểm số); `threshold`/`score_only` nhận `{"score": N}` (outcome tự suy).
+    """
     acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
     if err:
         return err
@@ -47,8 +94,6 @@ def station_session_score_view(request: HttpRequest, session_id: int):
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
-    if "score" not in data:
-        return JsonResponse({"error": "missing_score"}, status=400)
 
     session = StationSession.objects.select_related("station").filter(id=session_id).first()
     if not session:
@@ -59,15 +104,27 @@ def station_session_score_view(request: HttpRequest, session_id: int):
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
-    updated, err = set_session_score(session_id, acc, data.get("score"), data.get("note"))
+    if session.station.scoring_mode == Station.SCORING_PASS_FAIL:
+        updated, err = set_session_score(
+            session_id, acc, score=None, note=data.get("note"), outcome=data.get("outcome"),
+        )
+    else:
+        if "score" not in data:
+            return JsonResponse({"error": "missing_score"}, status=400)
+        updated, err = set_session_score(session_id, acc, score=data.get("score"), note=data.get("note"))
+
     if err:
-        status = 409 if err == "results_locked" else (400 if err == "invalid_score" else 404)
+        status = (
+            409 if err == "results_locked"
+            else (400 if err in ("invalid_score", "missing_score", "missing_outcome") else 404)
+        )
         return JsonResponse({"error": err}, status=status)
 
     return JsonResponse({
         "id": updated.id,
         "team_code": updated.team.code,
         "score": updated.score,
+        "outcome": updated.outcome,
     })
 
 
@@ -206,6 +263,7 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
                 "capacity_mode": s.capacity_mode,
                 "max_concurrent_teams": s.max_concurrent_teams,
                 "submission_config": station_config(s),
+                **_station_scoring_dict(s),
             }
             for s in stations
         ],
@@ -231,6 +289,10 @@ def station_create_view(request: HttpRequest, event_id: int):
     if not code or not name:
         return JsonResponse({"error": "missing_code_or_name"}, status=400)
 
+    scoring_kwargs, err = _clean_scoring_kwargs(data, require_defaults=True)
+    if err:
+        return JsonResponse({"error": err}, status=400)
+
     try:
         station = create_station(
             event_id, code, name,
@@ -241,6 +303,7 @@ def station_create_view(request: HttpRequest, event_id: int):
             capacity_mode=data.get("capacity_mode", "unlimited"),
             max_concurrent_teams=data.get("max_concurrent_teams"),
             submission_config=_stored_submission_config(data.get("submission_config")),
+            **scoring_kwargs,
         )
     except ValueError as exc:
         if str(exc) == "duplicate_station_code":
@@ -248,6 +311,7 @@ def station_create_view(request: HttpRequest, event_id: int):
         raise
     return JsonResponse({
         "id": station.id, "code": station.code, "name": station.name,
+        **_station_scoring_dict(station),
     }, status=201)
 
 
@@ -270,10 +334,15 @@ def station_detail_view(request: HttpRequest, station_id: int):
                 kwargs[f] = data[f]
         if "submission_config" in kwargs:
             kwargs["submission_config"] = _stored_submission_config(kwargs["submission_config"])
+        scoring_kwargs, err = _clean_scoring_kwargs(data, require_defaults=False)
+        if err:
+            return JsonResponse({"error": err}, status=400)
+        kwargs.update(scoring_kwargs)
         station = update_station(station_id, **kwargs)
         return JsonResponse({
             "id": station.id, "code": station.code, "name": station.name,
             "active": station.active,
+            **_station_scoring_dict(station),
         })
 
     if request.method == "DELETE":
@@ -345,6 +414,8 @@ def station_enter_view(request: HttpRequest):
             "results_locked": 409,
             "checkin_qr_disabled": 403,
             "checkin_qr_phase_mismatch": 403,
+            "replay_locked_incomplete": 409,
+            "replay_locked_passed": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
@@ -512,6 +583,7 @@ def station_scan_view(request: HttpRequest):
             "team_not_in_phase": 403, "results_locked": 409,
             "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
             "session_not_found": 404,
+            "replay_locked_incomplete": 409, "replay_locked_passed": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
@@ -535,6 +607,7 @@ def station_scan_view(request: HttpRequest):
         "entered_at": session.entered_at.isoformat() if session.entered_at else None,
         "exited_at": session.exited_at.isoformat() if session.exited_at else None,
         "score": session.score,
+        **_station_scoring_dict(session.station),
     }, status=200 if is_exit else 201)
 
 

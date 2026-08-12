@@ -106,6 +106,27 @@ const CAPACITY_MODE_META = {
   },
 }
 
+const SCORING_MODE_META = {
+  score_only: {
+    label: 'Chỉ nhập điểm',
+    hint: 'Coop nhập điểm cho mỗi lượt chơi; không có khái niệm đạt/trượt.',
+    cls: 'bg-ink/[0.07] text-ink/55',
+    selectedCls: 'border-ink/25 bg-ink/[0.06] text-ink',
+  },
+  threshold: {
+    label: 'Ngưỡng điểm đạt',
+    hint: 'Coop nhập điểm; đạt từ ngưỡng trở lên mới tính là qua trạm.',
+    cls: 'bg-gold/15 text-gold',
+    selectedCls: 'border-gold/30 bg-gold/10 text-gold',
+  },
+  pass_fail: {
+    label: 'Đạt / Không đạt',
+    hint: 'Coop chỉ bấm đạt hay không, không nhập điểm số; đạt được cộng điểm cấu hình sẵn.',
+    cls: 'bg-trail/12 text-trail',
+    selectedCls: 'border-trail/30 bg-trail/10 text-trail',
+  },
+}
+
 function makeLocalId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -226,6 +247,9 @@ function createBlankStation() {
     checkinPolicy: 'staff_scan',
     capacityMode: 'unlimited',
     maxConcurrentTeams: 2,
+    scoringMode: 'score_only',
+    passThreshold: 0,
+    passPoints: 0,
     teamsHere: [],
     teamsDone: [],
     submission: createSubmissionConfig(),
@@ -248,6 +272,11 @@ function createStation(station = {}) {
   next.checkinPolicy = Object.hasOwn(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
   next.capacityMode = station.capacityMode === 'limited' ? 'limited' : 'unlimited'
   next.maxConcurrentTeams = Math.max(1, Number(station.maxConcurrentTeams) || 2)
+  next.scoringMode = Object.hasOwn(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
+  const rawThreshold = Number(station.passThreshold)
+  next.passThreshold = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? Math.round(rawThreshold) : 0
+  const rawPoints = Number(station.passPoints)
+  next.passPoints = Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 0
   next.submission = createSubmissionConfig(station.submission)
 
   return next
@@ -768,6 +797,9 @@ function stationFromApi(station, sessions = []) {
     checkinPolicy: station.checkin_policy || 'staff_scan',
     capacityMode: station.capacity_mode || 'unlimited',
     maxConcurrentTeams: Math.max(1, Number(station.max_concurrent_teams) || 2),
+    scoringMode: station.scoring_mode || 'score_only',
+    passThreshold: station.pass_threshold,
+    passPoints: station.pass_points,
     teamsHere,
     teamsDone,
     submission: createSubmissionConfig(station.submission_config),
@@ -785,6 +817,15 @@ function buildStationPayload(form, order, active) {
     max_concurrent_teams: form.capacityMode === 'limited'
       ? Math.max(1, Number(form.maxConcurrentTeams) || 1)
       : null,
+    scoring_mode: form.scoringMode,
+    // Chỉ giữ giá trị của ô đang áp dụng — tránh gửi lên số liệu cũ của chế độ
+    // đã bỏ chọn, giống cách max_concurrent_teams về null khi hết giới hạn.
+    pass_threshold: form.scoringMode === 'threshold'
+      ? Math.max(0, Number(form.passThreshold) || 0)
+      : 0,
+    pass_points: form.scoringMode === 'pass_fail'
+      ? Math.max(0, Number(form.passPoints) || 0)
+      : 0,
     submission_config: sanitizeSubmission(form.submission),
   }
 }
@@ -1560,6 +1601,7 @@ function SubmissionItemSummary({ item, index }) {
 
 function StationFlowOverview({ station }) {
   const policyMeta = CHECKIN_POLICY_META[station.checkinPolicy] ?? CHECKIN_POLICY_META.staff_scan
+  const scoringMeta = SCORING_MODE_META[station.scoringMode] ?? SCORING_MODE_META.score_only
 
   return (
     <div className="px-4 pb-4">
@@ -1578,6 +1620,16 @@ function StationFlowOverview({ station }) {
             {station.capacityMode === 'limited'
               ? `Hệ thống cần chặn thêm đội mới khi đã có ${station.maxConcurrentTeams} đội đang chơi.`
               : 'Trạm này không cần giới hạn số đội đang chơi cùng lúc.'}
+          </p>
+        </div>
+        <div className={`${CARD} px-4 py-3`}>
+          <div className="flex items-center gap-2">
+            <Badge label={scoringMeta.label} cls={scoringMeta.cls} />
+          </div>
+          <p className="mt-2 text-sm leading-6 text-ink/60">
+            {station.scoringMode === 'threshold' && `Đạt từ ${station.passThreshold} điểm trở lên.`}
+            {station.scoringMode === 'pass_fail' && `Đạt được cộng ${station.passPoints} điểm.`}
+            {station.scoringMode === 'score_only' && scoringMeta.hint}
           </p>
         </div>
       </div>
@@ -1933,6 +1985,64 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
               min={1}
               value={form.maxConcurrentTeams}
               onChange={event => set('maxConcurrentTeams', Math.max(1, Number(event.target.value) || 1))}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            />
+          </div>
+        )}
+
+        <div className="sm:col-span-2">
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Cách tính điểm
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {Object.entries(SCORING_MODE_META).map(([key, meta]) => {
+              const active = form.scoringMode === key
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => set('scoringMode', key)}
+                  className={`rounded-lg border px-2.5 py-2 text-xs font-semibold transition ${
+                    active
+                      ? meta.selectedCls
+                      : 'border-stone bg-white text-ink/55 hover:bg-paper hover:text-ink'
+                  }`}
+                >
+                  {meta.label}
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-1.5 text-xs leading-5 text-ink/45">
+            {(SCORING_MODE_META[form.scoringMode] ?? SCORING_MODE_META.score_only).hint}
+          </p>
+        </div>
+
+        {form.scoringMode === 'threshold' && (
+          <div className="sm:col-span-2">
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Điểm đạt tối thiểu
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={form.passThreshold}
+              onChange={event => set('passThreshold', Math.max(0, Number(event.target.value) || 0))}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            />
+          </div>
+        )}
+
+        {form.scoringMode === 'pass_fail' && (
+          <div className="sm:col-span-2">
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Điểm khi đạt
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={form.passPoints}
+              onChange={event => set('passPoints', Math.max(0, Number(event.target.value) || 0))}
               className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
             />
           </div>
