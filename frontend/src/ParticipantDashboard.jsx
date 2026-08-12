@@ -9,6 +9,7 @@ import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
 import { compressImage } from './imageCompress.js'
+import { useEnumSearchParam } from './router.js'
 import {
   BANK_DEEPLINK_OPTIONS,
   buildBankDeeplink,
@@ -73,6 +74,7 @@ const STEPS = [
   { key: 'submit', label: 'Gửi duyệt' },
   { key: 'approved', label: 'Được duyệt' },
 ]
+const STEP_KEYS = STEPS.map((step) => step.key)
 
 const EMPTY_PROFILE = {
   full_name: '',
@@ -481,7 +483,11 @@ function getNextAction(profile, team, members, fields) {
   }
 }
 
-function ProgressTrail({ profile, team, members, fields }) {
+// The trail doubles as the wizard's navigation. A step is a clickable button
+// only once it is reachable (done, or the current active step); future steps
+// stay locked so nobody skips ahead of the prerequisites. `activeStep` is the
+// screen currently shown — highlighted with the paper background.
+function ProgressTrail({ profile, team, members, fields, activeStep, onSelect }) {
   return (
     <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
       <div className="grid grid-cols-6 divide-x divide-[#DCD8CC]">
@@ -489,26 +495,56 @@ function ProgressTrail({ profile, team, members, fields }) {
           const state = getStepState(step, profile, team, members, fields)
           const active = state === 'active'
           const done = state === 'done'
+          const unlocked = active || done
+          const selected = step.key === activeStep
           const circleStyle = done
             ? { backgroundColor: COLORS.trail, borderColor: COLORS.trail, color: 'white' }
             : active
               ? { backgroundColor: 'rgba(224,162,58,0.15)', borderColor: COLORS.gold, color: '#9A6B12' }
               : { backgroundColor: COLORS.paper, borderColor: COLORS.stone, color: 'rgba(32,49,43,0.3)' }
           return (
-            <div key={step.key} className="relative px-2 py-4 text-center" style={{ backgroundColor: active ? COLORS.paper : 'white' }}>
+            <button
+              key={step.key}
+              type="button"
+              disabled={!unlocked}
+              aria-current={selected ? 'step' : undefined}
+              onClick={() => unlocked && onSelect?.(step.key)}
+              className={`relative px-2 py-4 text-center transition ${unlocked ? 'cursor-pointer hover:bg-[#F3F4F1]' : 'cursor-not-allowed'}`}
+              style={{ backgroundColor: selected ? COLORS.paper : 'white' }}
+            >
               <span
-                className="mx-auto flex h-8 w-8 items-center justify-center rounded-full border font-mono text-xs font-semibold"
+                className={`mx-auto flex h-8 w-8 items-center justify-center rounded-full border font-mono text-xs font-semibold ${selected ? 'ring-2 ring-offset-2 ring-[#20312B]/25' : ''}`}
                 style={circleStyle}
               >
                 {done ? <Icon name="checkPlain" className="h-4 w-4" /> : index + 1}
               </span>
-              <p className={`mt-2 text-xs font-medium ${done || active ? 'text-ink' : 'text-ink/35'}`}>
+              <p className={`mt-2 text-xs font-medium ${selected ? 'text-ink font-semibold' : done || active ? 'text-ink' : 'text-ink/35'}`}>
                 {step.label}
               </p>
-            </div>
+            </button>
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// Back / continue controls shared by every wizard step.
+function StepNav({ onBack, onNext, nextLabel = 'Tiếp tục', nextDisabled = false, hint }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {onBack && (
+        <button type="button" onClick={onBack} className={SECONDARY_BUTTON}>
+          ← Quay lại
+        </button>
+      )}
+      {onNext && (
+        <button type="button" onClick={onNext} disabled={nextDisabled} className={PRIMARY_BUTTON}>
+          {nextLabel}
+          <Icon name="chevronR" className="h-4 w-4" />
+        </button>
+      )}
+      {hint && <p className="w-full text-xs leading-5 text-[#9A6B12]">{hint}</p>}
     </div>
   )
 }
@@ -1388,6 +1424,23 @@ function ParticipantDashboard() {
   const captainIndex = members.findIndex((member) => member.is_captain)
   const displayedMemberCount = captainIndex === -1 ? members.length + 1 : members.length
 
+  // ── Wizard navigation ───────────────────────────────────────────────
+  // Each step is its own screen, synced to ?step=. A step is reachable only
+  // when it is done or it is the current active step; a step linked into the
+  // URL that isn't reachable yet snaps back to where the team actually stands.
+  // This is what keeps member editing off the Thanh toán screen — you navigate
+  // back to the Thành viên step for that.
+  const stepStates = useMemo(
+    () => Object.fromEntries(STEPS.map((s) => [s.key, getStepState(s, profile, team, members, personFields)])),
+    [profile, team, members, personFields],
+  )
+  const stepUnlocked = (key) => stepStates[key] === 'done' || stepStates[key] === 'active'
+  const currentStepKey = STEPS.find((s) => stepStates[s.key] === 'active')?.key
+    || (stepStates.approved === 'done' ? 'approved' : 'submit')
+  const [stepParam, setStepParam] = useEnumSearchParam('step', STEP_KEYS, currentStepKey)
+  const activeStep = stepUnlocked(stepParam) ? stepParam : currentStepKey
+  const gotoStep = (key) => { if (stepUnlocked(key)) setStepParam(key) }
+
   // Adding a member means typing MSSV, email and whatever the schema asks for,
   // five times over. The dialog is not a `useDraftState` because the parent
   // owns `memberForm` and the identity being edited changes between openings,
@@ -1609,19 +1662,31 @@ function ParticipantDashboard() {
 
   const handleNextAction = () => {
     if (!registrationOpen) return
-    if (nextAction.kind === 'create-team') {
-      document.getElementById('create-team-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      window.requestAnimationFrame(() => document.getElementById('team-name')?.focus())
+    // Route the "việc cần làm" shortcut to the step that owns that action
+    // instead of scrolling a single long page.
+    switch (nextAction.kind) {
+      case 'profile':
+        gotoStep('profile')
+        setProfileDetailsOpen(true)
+        break
+      case 'create-team':
+      case 'fix':
+        gotoStep('team')
+        break
+      case 'add-member':
+        gotoStep('members')
+        openMemberDialog()
+        break
+      case 'members':
+        gotoStep('members')
+        break
+      case 'submit':
+        // Can't submit before paying; send them to the payment step first.
+        gotoStep(stepUnlocked('submit') ? 'submit' : 'payment')
+        break
+      default:
+        break
     }
-    if (nextAction.kind === 'profile') {
-      setProfileDetailsOpen(true)
-      window.requestAnimationFrame(() => {
-        document.getElementById('captain-profile')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      })
-    }
-    if (nextAction.kind === 'add-member') openMemberDialog()
-    if (nextAction.kind === 'submit') submitTeam()
-    if (nextAction.kind === 'fix') window.scrollTo({ top: 360, behavior: 'smooth' })
   }
 
   const logout = () => {
@@ -1739,7 +1804,14 @@ function ParticipantDashboard() {
               </div>
             </section>
 
-            <ProgressTrail profile={profile} team={team} members={members} fields={personFields} />
+            <ProgressTrail
+              profile={profile}
+              team={team}
+              members={members}
+              fields={personFields}
+              activeStep={activeStep}
+              onSelect={gotoStep}
+            />
           </>
         ) : (
           <>
@@ -1767,12 +1839,181 @@ function ParticipantDashboard() {
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
-            {registrationOpen && !team ? (
-              <EmptyTeamCard
-                busy={busyAction === 'create-team'}
-                maxMembers={maxMembers}
-                onCreate={createTeam}
-              />
+            {registrationOpen ? (
+              <>
+                {/* BƯỚC 1 — HỒ SƠ */}
+                {activeStep === 'profile' && (
+                  <div id="captain-profile" className={`${PARTICIPANT_CARD} p-5`}>
+                    <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 1</p>
+                    <h2 className="mt-1 font-display text-xl font-bold text-ink">Hồ sơ đội trưởng</h2>
+                    <p className="mt-2 text-sm leading-6 text-ink/55">
+                      Hoàn thiện thông tin của bạn trước — đây là hồ sơ đội trưởng.
+                    </p>
+                    <div className="mt-4 overflow-hidden rounded-lg border border-[#DCD8CC]">
+                      <CaptainProfileEditor
+                        profile={profile}
+                        fields={personFields}
+                        open
+                        saved={profileSaved}
+                        saving={busyAction === 'save-profile'}
+                        error={profileError}
+                        onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                        onSave={saveProfile}
+                      />
+                    </div>
+                    <div className="mt-5">
+                      <StepNav
+                        onNext={() => gotoStep('team')}
+                        nextDisabled={!profileComplete}
+                        hint={!profileComplete ? 'Cần điền đủ thông tin hồ sơ để sang bước tiếp theo.' : undefined}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* BƯỚC 2 — ĐỘI */}
+                {activeStep === 'team' && (team ? (
+                  <div className={`${PARTICIPANT_CARD} p-5`}>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 2</p>
+                        <h2 className="mt-1 font-display text-xl font-bold text-ink">Tên đội</h2>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge label={status.label} cls={status.cls} />
+                        <Badge label={provision.label} cls={provision.cls} />
+                      </div>
+                    </div>
+                    {team.approval_status === 'rejected' && team.approval_note && (
+                      <div className="mt-4 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+                        Lý do cần sửa: {team.approval_note}
+                      </div>
+                    )}
+                    <div className="mt-5">
+                      <Field
+                        label="Tên đội"
+                        value={teamNameDraft}
+                        disabled={!editable || !canRenameTeam}
+                        onChange={setTeamNameDraft}
+                        required
+                      />
+                      {!canRenameTeam ? (
+                        <p className="mt-1 text-xs leading-5 text-ink/45">{teamNameHint}</p>
+                      ) : captainShouldNameTeam ? (
+                        <p className="mt-1 text-xs leading-5 text-[#9A6B12]">
+                          Đội vừa bầu xong và vẫn đang lấy mã đội làm tên. Bạn là đội trưởng — hãy đặt
+                          tên chính thức cho đội.
+                        </p>
+                      ) : null}
+                    </div>
+                    {editable && teamNameDraft !== team.team_name && (
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => withBusy('save-team-name', saveTeamNameIfNeeded)}
+                          disabled={Boolean(busyAction)}
+                          className={SECONDARY_BUTTON}
+                        >
+                          <Icon name="checkPlain" className="h-4 w-4" />
+                          Lưu tên đội
+                        </button>
+                      </div>
+                    )}
+                    <div className="mt-5">
+                      <StepNav onBack={() => gotoStep('profile')} onNext={() => gotoStep('members')} />
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyTeamCard
+                    busy={busyAction === 'create-team'}
+                    maxMembers={maxMembers}
+                    onCreate={createTeam}
+                  />
+                ))}
+
+                {/* BƯỚC 4 — THANH TOÁN (bước 3 Thành viên là khối danh sách bên dưới) */}
+                {activeStep === 'payment' && team && (
+                  <>
+                    <PaymentSection team={team} editable={editable} onProofChange={loadDashboard} />
+                    <div className={`${PARTICIPANT_CARD} p-5`}>
+                      <StepNav
+                        onBack={() => gotoStep('members')}
+                        onNext={() => gotoStep('submit')}
+                        nextDisabled={!team.has_payment_proof}
+                        hint={!team.has_payment_proof ? 'Tải minh chứng thanh toán để sang bước Gửi duyệt.' : undefined}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* BƯỚC 5 — GỬI DUYỆT */}
+                {activeStep === 'submit' && team && (
+                  <div id="team-editor" className={`${PARTICIPANT_CARD} p-5`}>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 5</p>
+                        <h2 className="mt-1 font-display text-xl font-bold text-ink">{status.title}</h2>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge label={status.label} cls={status.cls} />
+                        <Badge label={provision.label} cls={provision.cls} />
+                      </div>
+                    </div>
+                    {team.approval_status === 'rejected' && team.approval_note && (
+                      <div className="mt-4 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+                        Lý do cần sửa: {team.approval_note}
+                      </div>
+                    )}
+                    <div className="mt-5 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/70 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-ink">Tiến độ thành viên</p>
+                        <p className="font-mono text-xs text-ink/45">{members.length}/{maxMembers}</p>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                        <div className="h-full" style={{ width: `${Math.min(100, (members.length / maxMembers) * 100)}%`, backgroundColor: status.color }} />
+                      </div>
+                    </div>
+                    <div className="mt-5">
+                      <button
+                        type="button"
+                        onClick={submitTeam}
+                        disabled={!editable || !profileComplete || members.length === 0 || !team.has_payment_proof || team.approval_status === 'pending_approval' || Boolean(busyAction)}
+                        className={TRAIL_BUTTON}
+                      >
+                        <Icon name="checkPlain" className="h-4 w-4" />
+                        {busyAction === 'submit-team' ? 'Đang gửi...' : 'Gửi duyệt'}
+                      </button>
+                    </div>
+                    {editable && !team.has_payment_proof && (
+                      <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
+                        Cần upload minh chứng thanh toán ở bước Thanh toán trước khi gửi duyệt.
+                      </p>
+                    )}
+                    {apiError && (
+                      <div className="mt-3 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+                        {apiError}
+                      </div>
+                    )}
+                    <div className="mt-5">
+                      <StepNav onBack={() => gotoStep('payment')} />
+                    </div>
+                  </div>
+                )}
+
+                {/* BƯỚC 6 — ĐƯỢC DUYỆT */}
+                {activeStep === 'approved' && (
+                  <div className={`${PARTICIPANT_CARD} p-5`}>
+                    <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 6</p>
+                    <h2 className="mt-1 font-display text-xl font-bold text-ink">Đội đã được duyệt</h2>
+                    <p className="mt-3 text-sm leading-6 text-ink/55">
+                      Đội của bạn đã được BTC duyệt. Theo dõi Discord và thông báo từ BTC để nhận lịch.
+                    </p>
+                    <div className="mt-5">
+                      <StepNav onBack={() => gotoStep('payment')} />
+                    </div>
+                  </div>
+                )}
+              </>
             ) : teamEditingOpen && team ? (
               <>
               <PaymentSection team={team} editable={editable} onProofChange={loadDashboard} />
@@ -1886,7 +2127,7 @@ function ParticipantDashboard() {
               </div>
             )}
 
-            {registrationOpen ? (
+            {registrationOpen && activeStep === 'members' ? (
             <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div id="team-members" className="flex items-center justify-between gap-3 border-b border-[#DCD8CC] px-5 py-4">
                 <div>
@@ -2026,6 +2267,14 @@ function ParticipantDashboard() {
                     </div>
                   )
                 })}
+              </div>
+              <div className="border-t border-[#DCD8CC] px-5 py-4">
+                <StepNav
+                  onBack={() => gotoStep('team')}
+                  onNext={() => gotoStep('payment')}
+                  nextDisabled={!stepUnlocked('payment')}
+                  hint={members.length === 0 ? 'Thêm ít nhất một thành viên để sang bước Thanh toán.' : undefined}
+                />
               </div>
             </div>
             ) : null}
