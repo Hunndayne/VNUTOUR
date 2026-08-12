@@ -1848,15 +1848,19 @@ function ParticipantDashboard() {
                     <Icon name="checkPlain" className="h-4 w-4" />
                     {busyAction === 'submit-team' ? 'Đang gửi...' : 'Gửi duyệt'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openMemberDialog()}
-                    disabled={!editable || members.length >= maxMembers || Boolean(busyAction)}
-                    className={SECONDARY_BUTTON}
-                  >
-                    <Icon name="plus" className="h-4 w-4" />
-                    Thêm thành viên
-                  </button>
+                  {/* Thêm thành viên chỉ được thao tác ở mục Thành viên. Tại bước
+                      Thanh toán/Gửi duyệt chỉ cho điều hướng về đó — không thêm
+                      trực tiếp ở khu vực này. */}
+                  {editable && members.length < maxMembers && (
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById('team-members')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      className={SECONDARY_BUTTON}
+                    >
+                      <Icon name="chevronR" className="h-4 w-4" />
+                      Đến mục Thành viên để thêm
+                    </button>
+                  )}
                 </div>
                 {editable && !team.has_payment_proof && (
                   <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
@@ -1884,12 +1888,25 @@ function ParticipantDashboard() {
 
             {registrationOpen ? (
             <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
-              <div className="flex items-center justify-between border-b border-[#DCD8CC] px-5 py-4">
+              <div id="team-members" className="flex items-center justify-between gap-3 border-b border-[#DCD8CC] px-5 py-4">
                 <div>
                   <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Danh sách</p>
                   <h2 className="mt-1 font-display text-lg font-bold text-ink">Thành viên đội</h2>
                 </div>
-                <span className="font-mono text-xs text-ink/40">{displayedMemberCount} người</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-ink/40">{displayedMemberCount} người</span>
+                  {team && editable && (
+                    <button
+                      type="button"
+                      onClick={() => openMemberDialog()}
+                      disabled={members.length >= maxMembers || Boolean(busyAction)}
+                      className={SECONDARY_BUTTON}
+                    >
+                      <Icon name="plus" className="h-4 w-4" />
+                      Thêm thành viên
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="divide-y divide-stone">
