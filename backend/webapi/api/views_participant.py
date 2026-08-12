@@ -21,7 +21,8 @@ from api.services.registration_service import (
 )
 from api.services.program_service import get_current_sub_event
 from api.services.checkin_qr_service import team_qr_visible
-from api.services.station_service import set_submission_score
+
+from api.services.station_service import set_submission_score, replay_lock_reason
 from api.services.submission_storage_service import (
     save_submission_files, save_payment_proof, proof_file_response,
 )
@@ -931,7 +932,7 @@ def my_team_stations_view(request: HttpRequest):
     )
     station_ids = [station.id for station in stations]
 
-    # Three grouped queries rather than three per station.
+    # Four grouped queries rather than one (or more) per station.
     occupancy = {
         row["station_id"]: row["total"]
         for row in StationSession.objects.filter(
@@ -949,11 +950,57 @@ def my_team_stations_view(request: HttpRequest):
         team=team, station_id__in=station_ids,
     ).order_by("station_id", "-created_at"):
         my_submissions.setdefault(submission.station_id, submission)
+    # The journey needs every non-cancelled play of every station, not just the
+    # latest one (`my_sessions` above) — visit counts and the best-of-N score
+    # both have to look across every attempt. Cancelled plays are dropped, same
+    # as `visit_count`'s definition: a coop who voids a session didn't "count"
+    # a visit.
+    journey_sessions: dict[int, list[dict]] = {}
+    for row in StationSession.objects.filter(
+        team=team, station_id__in=station_ids,
+    ).exclude(status=StationSession.STATUS_CANCELLED).values("station_id", "status", "score", "outcome"):
+        journey_sessions.setdefault(row["station_id"], []).append(row)
 
+    replay_enabled = bool(current_event.replay_after_all)
+    total_stations = len(stations)
+    visited_count = 0
+    passed_count = 0
+    all_visited = all(journey_sessions.get(station.id) for station in stations)
+
+    station_payloads = []
     for station in stations:
         session = my_sessions.get(station.id)
         submission = my_submissions.get(station.id)
-        payload["stations"].append({
+        rows = journey_sessions.get(station.id, [])
+
+        visit_count = len(rows)
+        if visit_count:
+            visited_count += 1
+        has_active = any(r["status"] == StationSession.STATUS_ACTIVE for r in rows)
+        has_closed = any(r["status"] == StationSession.STATUS_CLOSED for r in rows)
+        has_passed = any(r["outcome"] == StationSession.OUTCOME_PASSED for r in rows)
+        if has_passed:
+            passed_count += 1
+
+        if station.scoring_mode == Station.SCORING_PASS_FAIL:
+            best_score = station.pass_points if has_passed else 0
+        elif station.scoring_mode == Station.SCORING_THRESHOLD:
+            passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
+            best_score = max(passed_scores) if passed_scores else 0
+        else:  # score_only
+            scores = [r["score"] for r in rows]
+            best_score = max(scores) if scores else 0
+
+        if has_active:
+            journey_status = "active"
+        elif has_passed:
+            journey_status = "passed"
+        elif has_closed:
+            journey_status = "failed"
+        else:
+            journey_status = "not_visited"
+
+        station_payload = {
             "station_id": station.id,
             "station_code": station.code,
             "station_name": station.name,
@@ -978,7 +1025,25 @@ def my_team_stations_view(request: HttpRequest):
                 "status": submission.status,
                 "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
             } if submission else None,
-        })
+            "visit_count": visit_count,
+            "best_score": best_score,
+            "status": journey_status,
+            "scoring_mode": station.scoring_mode,
+        }
+        if replay_enabled:
+            reason = replay_lock_reason(
+                has_prior_closed=has_closed, all_visited=all_visited, has_passed=has_passed,
+            )
+            station_payload["replay_locked"] = reason is not None
+            station_payload["replay_reason"] = reason
+        station_payloads.append(station_payload)
+
+    payload["stations"] = station_payloads
+    payload["visited_count"] = visited_count
+    payload["total_stations"] = total_stations
+    payload["passed_count"] = passed_count
+    payload["all_visited"] = all_visited
+    payload["replay_enabled"] = replay_enabled
 
     return JsonResponse(payload)
 

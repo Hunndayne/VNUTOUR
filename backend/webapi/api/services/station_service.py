@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 
 from api.models import (
     Account, Team, Station, StationSession, SubEvent,
@@ -96,6 +97,124 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
 
 
 # =====================================================================
+# Scoring — one ScoreEntry(kind=station) per (team, station), max across plays
+# =====================================================================
+
+def _derive_numeric_outcome(station: Station, points: int) -> Optional[str]:
+    """Outcome implied by a plain numeric score.
+
+    `pass_fail` stations have no number to read a verdict from — a coop states
+    the outcome directly (see `set_session_score`) — so this returns None for
+    that mode and the caller leaves `outcome` untouched.
+    """
+    if station.scoring_mode == Station.SCORING_THRESHOLD:
+        return (
+            StationSession.OUTCOME_PASSED if points >= station.pass_threshold
+            else StationSession.OUTCOME_FAILED
+        )
+    if station.scoring_mode == Station.SCORING_SCORE_ONLY:
+        return StationSession.OUTCOME_PASSED
+    return None
+
+
+def _sync_station_score_entry(team: Team, station: Station, operator: Optional[Account] = None) -> None:
+    """Recompute the team's score at a station and collapse it onto one row.
+
+    Replaying a station must never let scores stack, so exactly one
+    `ScoreEntry(kind=station)` is allowed to exist per (team, station) — this
+    is the only place that writes one. Called after every `exit_station`,
+    `set_session_score` and `set_submission_score`, it re-derives the value
+    from every non-cancelled session per `station.scoring_mode`:
+      - score_only: max score across every session (a play doesn't need to
+        "pass" to count).
+      - threshold: max score, but only among sessions that passed; none
+        passed yet is worth 0.
+      - pass_fail: `pass_points` if any session passed, else 0.
+    then parks the entry on whichever session earned that value and deletes
+    any other station/submission-scoped entries left over from earlier plays.
+    """
+    sessions = list(
+        StationSession.objects.filter(team=team, station=station)
+        .exclude(status=StationSession.STATUS_CANCELLED)
+        .order_by("-entered_at")
+    )
+
+    if station.scoring_mode == Station.SCORING_PASS_FAIL:
+        passed = [s for s in sessions if s.outcome == StationSession.OUTCOME_PASSED]
+        best_session = passed[0] if passed else None
+        value = station.pass_points if best_session else 0
+    elif station.scoring_mode == Station.SCORING_THRESHOLD:
+        passed = [s for s in sessions if s.outcome == StationSession.OUTCOME_PASSED]
+        best_session = max(passed, key=lambda s: s.score, default=None)
+        value = best_session.score if best_session else 0
+    else:  # score_only
+        best_session = max(sessions, key=lambda s: s.score, default=None)
+        value = best_session.score if best_session else 0
+
+    # A team keeps at most one StationSubmission per station (the form view
+    # overwrites it in place on resubmission), so this is the only submission
+    # that could already own a ScoreEntry for this pair.
+    submission = StationSubmission.objects.filter(
+        team=team, station=station,
+    ).order_by("-created_at").first()
+
+    session_ids = [s.id for s in sessions]
+    scope = Q(pk__in=[])
+    if session_ids:
+        scope |= Q(station_session_id__in=session_ids)
+    if submission:
+        scope |= Q(submission=submission)
+    existing = list(ScoreEntry.objects.filter(Q(kind=ScoreEntry.KIND_STATION) & scope))
+
+    if value <= 0 or best_session is None:
+        if existing:
+            ScoreEntry.objects.filter(id__in=[e.id for e in existing]).delete()
+        return
+
+    keep = existing[0] if existing else None
+    if len(existing) > 1:
+        ScoreEntry.objects.filter(id__in=[e.id for e in existing[1:]]).delete()
+
+    fields = {
+        "phase": best_session.phase,
+        "sub_event": best_session.sub_event,
+        "team": team,
+        "points": value,
+        "note": best_session.note or f"Tram {station.code}",
+        "station_session": best_session,
+        # Keep the submission link (if any) purely for traceability — grading a
+        # submission still funnels through this same recompute.
+        "submission": submission,
+    }
+    if keep:
+        for field, val in fields.items():
+            setattr(keep, field, val)
+        if operator is not None:
+            keep.created_by = operator
+        keep.save()
+    else:
+        ScoreEntry.objects.create(kind=ScoreEntry.KIND_STATION, created_by=operator, **fields)
+
+
+def replay_lock_reason(
+    *, has_prior_closed: bool, all_visited: bool, has_passed: bool,
+) -> Optional[str]:
+    """Decide whether the qualifying-round replay rule blocks a re-entry.
+
+    A pure function of three facts so `enter_station` (fresh, row-locked reads)
+    and `/my-team/stations` (grouped, display-only reads) can never drift apart
+    on what "locked" means. Returns None (allowed), "incomplete" or "passed".
+    """
+    if not has_prior_closed:
+        return None  # the very first visit to a station is always allowed
+    if not all_visited:
+        return "incomplete"
+    if has_passed:
+        return "passed"
+    return None
+
+
+# =====================================================================
 # Station sessions — enter / exit
 # =====================================================================
 
@@ -151,6 +270,31 @@ def enter_station(
 
     if station.sub_event_id != int(event_id):
         return None, "station_not_in_event"
+
+    if sub_event.replay_after_all:
+        has_prior_closed = StationSession.objects.filter(
+            team=team, station=station, status=StationSession.STATUS_CLOSED,
+        ).exists()
+        if has_prior_closed:
+            active_station_ids = set(
+                Station.objects.filter(sub_event=sub_event, active=True).values_list("id", flat=True)
+            )
+            visited_station_ids = set(
+                StationSession.objects.filter(team=team, sub_event=sub_event)
+                .exclude(status=StationSession.STATUS_CANCELLED)
+                .values_list("station_id", flat=True)
+            )
+            all_visited = active_station_ids <= visited_station_ids
+            has_passed = StationSession.objects.filter(
+                team=team, station=station, outcome=StationSession.OUTCOME_PASSED,
+            ).exists()
+            reason = replay_lock_reason(
+                has_prior_closed=has_prior_closed, all_visited=all_visited, has_passed=has_passed,
+            )
+            if reason == "incomplete":
+                return None, "replay_locked_incomplete"
+            if reason == "passed":
+                return None, "replay_locked_passed"
 
     now = datetime.now(timezone.utc)
     try:
@@ -215,29 +359,19 @@ def exit_station(
                 session.score = int(score)
             except (TypeError, ValueError):
                 return None, "invalid_score"
+            # threshold/score_only can read a verdict straight off the number;
+            # pass_fail has none, so it stays `pending` until a coop taps the
+            # dedicated Đạt/Không đạt action (`set_session_score`).
+            derived = _derive_numeric_outcome(session.station, session.score)
+            if derived is not None:
+                session.outcome = derived
         if note is not None:
             session.note = note
-        session.save(update_fields=["status", "exited_at", "exited_by", "score", "note", "updated_at"])
+        session.save(update_fields=[
+            "status", "exited_at", "exited_by", "score", "outcome", "note", "updated_at",
+        ])
 
-        score_entries = ScoreEntry.objects.filter(
-            station_session=session,
-            kind=ScoreEntry.KIND_STATION,
-        )
-        if session.score:
-            ScoreEntry.objects.update_or_create(
-                station_session=session,
-                kind=ScoreEntry.KIND_STATION,
-                defaults={
-                    "phase": session.phase,
-                    "sub_event": session.sub_event,
-                    "team": team,
-                    "points": session.score,
-                    "note": session.note or f"Tram {session.station.code}",
-                    "created_by": operator,
-                },
-            )
-        else:
-            score_entries.delete()
+        _sync_station_score_entry(team, session.station, operator)
 
         # Inside the transaction, as in enter_station: the exit and the QR going
         # stale have to land together or neither.
@@ -249,15 +383,19 @@ def exit_station(
 def set_session_score(
     session_id: int,
     operator: Account,
-    score,
+    score=None,
     note: str | None = None,
+    outcome: str | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
-    """Set/cập nhật điểm cho một phiên trạm và đồng bộ ScoreEntry tương ứng."""
-    try:
-        points = int(score)
-    except (TypeError, ValueError):
-        return None, "invalid_score"
+    """Chấm điểm/kết quả một phiên trạm, đồng bộ ScoreEntry, theo `station.scoring_mode`.
 
+    - `pass_fail`: cần `outcome` ("passed"/"failed"); điểm phiên suy ra là
+      `pass_points` khi đạt, else 0 — không nhận `score` trực tiếp vì trạm này
+      không có khái niệm điểm số.
+    - `threshold`/`score_only`: cần `score`; outcome tự suy theo ngưỡng (hoặc
+      luôn `passed` với score_only). Bất kỳ `outcome` truyền vào bị bỏ qua —
+      hai mode này không cho chấm tay kết quả, tránh lệch với điểm.
+    """
     with transaction.atomic():
         session = StationSession.objects.select_for_update().select_related(
             "phase", "sub_event", "team", "station",
@@ -268,30 +406,27 @@ def set_session_score(
         if results_are_locked():
             return None, "results_locked"
 
-        session.score = points
+        station = session.station
+        if station.scoring_mode == Station.SCORING_PASS_FAIL:
+            if outcome not in (StationSession.OUTCOME_PASSED, StationSession.OUTCOME_FAILED):
+                return None, "missing_outcome"
+            session.outcome = outcome
+            session.score = station.pass_points if outcome == StationSession.OUTCOME_PASSED else 0
+        else:
+            if score is None:
+                return None, "missing_score"
+            try:
+                points = int(score)
+            except (TypeError, ValueError):
+                return None, "invalid_score"
+            session.score = points
+            session.outcome = _derive_numeric_outcome(station, points)
+
         if note is not None:
             session.note = note
-        session.save(update_fields=["score", "note", "updated_at"])
+        session.save(update_fields=["score", "outcome", "note", "updated_at"])
 
-        entries = ScoreEntry.objects.filter(
-            station_session=session,
-            kind=ScoreEntry.KIND_STATION,
-        )
-        if points:
-            ScoreEntry.objects.update_or_create(
-                station_session=session,
-                kind=ScoreEntry.KIND_STATION,
-                defaults={
-                    "phase": session.phase,
-                    "sub_event": session.sub_event,
-                    "team": session.team,
-                    "points": points,
-                    "note": note or f"Tram {session.station.code}",
-                    "created_by": operator,
-                },
-            )
-        else:
-            entries.delete()
+        _sync_station_score_entry(session.team, station, operator)
 
     return session, None
 
@@ -304,8 +439,11 @@ def set_submission_score(
 ) -> Optional[str]:
     """Set/cập nhật điểm cho một bài nộp và đồng bộ ScoreEntry tương ứng.
 
-    Bài nộp gắn với phiên trạm dùng chung ScoreEntry của phiên đó (tránh cộng đôi
-    với điểm coop chấm lúc checkout); bài nộp tự do khóa entry theo submission.
+    Bài nộp gắn với phiên trạm CHÍNH LÀ điểm của phiên đó, nên đi qua cùng luật
+    tổng hợp 1-entry/trạm mà exit_station/set_session_score dùng — nếu không,
+    chấm lại một bài nộp cũ (từ một lần chơi trước) có thể chồng lên điểm của
+    lần chơi mới nhất. Bài nộp tự do (trạm free-play chưa từng có phiên nào)
+    thì khoá entry theo submission như trước, vì không có phiên nào để tổng hợp.
     """
     if results_are_locked():
         return "results_locked"
@@ -319,40 +457,41 @@ def set_submission_score(
     submission.save(update_fields=["score", "updated_at"])
 
     session = submission.station_session
-    entry = None
-    if session:
-        entry = ScoreEntry.objects.filter(
-            station_session=session, kind=ScoreEntry.KIND_STATION,
-        ).first()
-    if entry is None:
+    if session is None:
         entry = ScoreEntry.objects.filter(
             submission=submission, kind=ScoreEntry.KIND_STATION,
         ).first()
+        default_note = f"Bai nop tram {submission.station.code}"
+        if entry:
+            entry.points = points
+            if note is not None:
+                entry.note = note
+            entry.save(update_fields=["points", "note", "updated_at"])
+        else:
+            ScoreEntry.objects.create(
+                phase=submission.station.sub_event.phase,
+                sub_event=submission.station.sub_event,
+                submission=submission,
+                team=submission.team,
+                kind=ScoreEntry.KIND_STATION,
+                points=points,
+                note=note or default_note,
+                created_by=operator,
+            )
+        return None
 
-    default_note = f"Bai nop tram {submission.station.code}"
-    if entry:
-        entry.points = points
-        entry.submission = submission
-        if note is not None:
-            entry.note = note
-        entry.save(update_fields=["points", "submission", "note", "updated_at"])
-    else:
-        ScoreEntry.objects.create(
-            phase=submission.station.sub_event.phase,
-            sub_event=submission.station.sub_event,
-            station_session=session,
-            submission=submission,
-            team=submission.team,
-            kind=ScoreEntry.KIND_STATION,
-            points=points,
-            note=note or default_note,
-            created_by=operator,
-        )
+    session.score = points
+    update_fields = ["score", "updated_at"]
+    derived = _derive_numeric_outcome(session.station, points)
+    if derived is not None:
+        session.outcome = derived
+        update_fields.append("outcome")
+    if note is not None:
+        session.note = note
+        update_fields.append("note")
+    session.save(update_fields=update_fields)
 
-    if session:
-        session.score = points
-        session.save(update_fields=["score", "updated_at"])
-
+    _sync_station_score_entry(submission.team, submission.station, operator)
     return None
 
 

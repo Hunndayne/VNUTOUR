@@ -248,6 +248,9 @@ export function normalizeProgramForFrontend(programPayload = {}) {
             note: subEvent.note || '',
             order: subEvent.order ?? 0,
             isCurrent: Boolean(subEvent.is_current),
+            // Công tắc "cho chơi lại trạm sau khi đã đi hết" — nếu không đọc ở
+            // đây thì form sửa event luôn thấy false dù DB đã lưu true.
+            replayAfterAll: Boolean(subEvent.replay_after_all),
           })),
         ]
       }),

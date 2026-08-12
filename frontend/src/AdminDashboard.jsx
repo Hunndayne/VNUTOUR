@@ -1195,6 +1195,7 @@ function AdminDashboard() {
           uses_stations: Boolean(draft.usesStations),
           note: draft.note || '',
           order: draft.order || 0,
+          replay_after_all: Boolean(draft.replayAfterAll),
         },
       })
       await loadProgram()
@@ -1214,6 +1215,7 @@ function AdminDashboard() {
           uses_stations: Boolean(nextEvent.usesStations),
           note: nextEvent.note || '',
           order: nextEvent.order || 0,
+          replay_after_all: Boolean(nextEvent.replayAfterAll),
         },
       })
       await loadProgram()

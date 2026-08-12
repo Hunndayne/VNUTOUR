@@ -255,6 +255,12 @@ class SubEvent(models.Model):
     uses_stations = models.BooleanField(default=False)
     note = models.TextField(null=True, blank=True)
     order = models.IntegerField(default=0)
+    # Qualifying-round "play it again" rule: once on, a team may only re-enter a
+    # station it has already closed a session at after it has visited every
+    # other active station of the event, and never again once it has passed
+    # that station. Off by default so every other event keeps today's
+    # unlimited-replay behaviour.
+    replay_after_all = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -327,6 +333,19 @@ class Station(models.Model):
         (CAPACITY_LIMITED, "Limited"),
     ]
 
+    # How a team's visits to this station turn into a score. `pass_points` and
+    # `pass_threshold` are only meaningful for their matching mode — the other
+    # sits unused at its default of 0, which also happens to be the safe no-op
+    # value if a station is ever switched between modes.
+    SCORING_PASS_FAIL = "pass_fail"
+    SCORING_THRESHOLD = "threshold"
+    SCORING_SCORE_ONLY = "score_only"
+    SCORING_CHOICES = [
+        (SCORING_PASS_FAIL, "Đạt/Không đạt"),
+        (SCORING_THRESHOLD, "Ngưỡng điểm đạt"),
+        (SCORING_SCORE_ONLY, "Chỉ nhập điểm"),
+    ]
+
     sub_event = models.ForeignKey(
         SubEvent, on_delete=models.CASCADE, related_name="stations",
     )
@@ -343,6 +362,11 @@ class Station(models.Model):
     )
     max_concurrent_teams = models.IntegerField(null=True, blank=True)
     submission_config = models.JSONField(null=True, blank=True)
+    scoring_mode = models.CharField(
+        max_length=20, choices=SCORING_CHOICES, default=SCORING_SCORE_ONLY,
+    )
+    pass_threshold = models.IntegerField(default=0)
+    pass_points = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -452,6 +476,19 @@ class StationSession(models.Model):
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
+    # Whether this particular visit cleared the station, independent of
+    # `status`: a session can be `closed` (the team walked away) yet still
+    # `pending` if nobody has graded it, or `failed` and still worth re-playing
+    # under the replay rule. Set at checkout time, see `station_service`.
+    OUTCOME_PENDING = "pending"
+    OUTCOME_PASSED = "passed"
+    OUTCOME_FAILED = "failed"
+    OUTCOME_CHOICES = [
+        (OUTCOME_PENDING, "Chưa chấm"),
+        (OUTCOME_PASSED, "Đạt"),
+        (OUTCOME_FAILED, "Không đạt"),
+    ]
+
     phase = models.ForeignKey(
         ProgramPhase, on_delete=models.CASCADE, related_name="station_sessions",
     )
@@ -478,6 +515,9 @@ class StationSession(models.Model):
         related_name="exited_sessions",
     )
     score = models.IntegerField(default=0)
+    outcome = models.CharField(
+        max_length=10, choices=OUTCOME_CHOICES, default=OUTCOME_PENDING,
+    )
     note = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
