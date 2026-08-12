@@ -32,6 +32,16 @@ def registration_is_open() -> bool:
     return bool(value)
 
 
+def set_registration_open(value: bool) -> bool:
+    """Persist the registration switch and return the stored bool."""
+    stored = bool(value)
+    SystemSetting.objects.update_or_create(
+        key="registration_open",
+        defaults={"value": stored},
+    )
+    return stored
+
+
 def profile_is_account_owned_by_other(
     participant: Optional[Participant],
     actor: Optional[Account],

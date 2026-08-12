@@ -5,6 +5,7 @@ Main API URL router — delegates to domain-specific sub-routers.
 from django.urls import path, include
 
 from .urls_auth import urlpatterns as auth_patterns
+from .urls_public import urlpatterns as public_patterns
 from .urls_register import urlpatterns as register_patterns
 from .urls_participant import urlpatterns as participant_patterns
 from .urls_admin import urlpatterns as admin_patterns
@@ -22,6 +23,7 @@ from .urls_backup import urlpatterns as backup_patterns
 
 urlpatterns = (
     auth_patterns
+    + public_patterns
     + register_patterns
     + participant_patterns
     + admin_patterns

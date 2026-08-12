@@ -122,8 +122,10 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
   - `/`: `LandingPage` — public landing (guests only)
   - `/login`: `LoginPage` — Google OAuth + fallback email login
   - `/admin`, `/admin/<tab>`: `AdminDashboard` — tab ∈ `events`, `stations`, `teams`,
-    `scores`, `accounts`, `discord`, `email`, `operations`, `settings`; bare `/admin`
-    is the overview, and unknown tabs are rewritten to it
+    `scores`, `accounts`, `discord`, `email`, `operations`, `system`, `settings`; bare
+    `/admin` is the overview, and unknown tabs are rewritten to it. `system` is the
+    system-wide settings page (mở/đóng đăng ký, VietQR, schema đăng ký) reached from the
+    sidebar, distinct from `settings` = personal account settings reached from the user menu
   - `/coop`: `CoopDashboard` — station duty, QR scanning
   - `/participant`: `ParticipantDashboard` — score view, personal info
   - `/form`: `FormResponses` — form submission (participants)
