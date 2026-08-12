@@ -14,10 +14,11 @@ from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team,
     get_team_members, add_member, link_account_profile,
+    registration_is_open, set_registration_open,
 )
 from api.services.audit_service import record_audit
 from api.services import team_merge_service
-from api.services.registration_service import normalize_gender
+from api.services.registration_service import normalize_gender, get_schema, save_schema
 from api.services.submission_storage_service import proof_file_response
 from api.services.payment_service import get_payment_config, save_payment_config
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
@@ -421,6 +422,53 @@ def admin_payment_config_view(request: HttpRequest):
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
         return JsonResponse({"payment_config": saved})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def admin_site_config_view(request: HttpRequest):
+    """GET/PUT the registration switch (the public `allow_signup` flag)."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method == "GET":
+        return JsonResponse({"registration_open": registration_is_open()})
+
+    if request.method == "PUT":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        raw = data.get("registration_open")
+        # Parse tolerantly the same way registration_is_open() reads strings.
+        if isinstance(raw, str):
+            value = raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            value = bool(raw)
+        return JsonResponse({"registration_open": set_registration_open(value)})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def admin_registration_schema_view(request: HttpRequest):
+    """GET/PUT the schema-driven registration form definition."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method == "GET":
+        return JsonResponse(get_schema())
+
+    if request.method == "PUT":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        schema = data.get("schema")
+        if not isinstance(schema, dict) or not isinstance(schema.get("person_fields"), list):
+            return JsonResponse({"error": "invalid_schema"}, status=400)
+        return JsonResponse(save_schema(schema))
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 

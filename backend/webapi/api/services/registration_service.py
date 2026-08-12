@@ -184,6 +184,15 @@ def get_schema() -> dict:
     return _with_gender_field(default_schema())
 
 
+def save_schema(schema: dict) -> dict:
+    """Persist the admin-edited schema; return it as `get_schema()` would."""
+    SystemSetting.objects.update_or_create(
+        key=SCHEMA_KEY,
+        defaults={"value": schema},
+    )
+    return get_schema()
+
+
 def _enabled_person_fields(schema: dict) -> list[dict]:
     return [f for f in schema.get("person_fields", []) if f.get("enabled", True)]
 

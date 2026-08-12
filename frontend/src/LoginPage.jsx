@@ -20,6 +20,7 @@ function LoginPage() {
   const [apiError, setApiError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [googleReady, setGoogleReady] = useState(false)
+  const [allowSignup, setAllowSignup] = useState(true)
   const googleInitialized = useRef(false)
 
   const resetSignup = () => {
@@ -47,6 +48,16 @@ function LoginPage() {
       .catch(() => {})
   }, [mode, schoolOptions.length])
 
+  // Site-wide switch: when signup is turned off, hide the entry point and
+  // block the signup form. Fail open on error so a transient network hiccup
+  // doesn't lock out signup UI.
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/public/site-config`)
+      .then(r => r.json())
+      .then(cfg => { if (cfg && typeof cfg.allow_signup === 'boolean') setAllowSignup(cfg.allow_signup) })
+      .catch(() => {})
+  }, [])
+
   const handleApiError = useCallback((data, fallback) => {
     if (!data) return
     const map = {
@@ -54,6 +65,7 @@ function LoginPage() {
       conflict: 'Tên đăng nhập, email hoặc MSSV đã tồn tại',
       username_email_or_mssv_exists: 'Tên đăng nhập, email hoặc MSSV đã tồn tại',
       registration_closed: 'Đăng ký hiện đang đóng. Vui lòng quay lại sau.',
+      signup_closed: 'Đăng ký tài khoản mới hiện đang tạm đóng. Vui lòng quay lại sau.',
       missing_credential: 'Không nhận được thông tin xác thực Google',
       invalid_google_token: 'Xác thực Google không hợp lệ. Vui lòng thử lại.',
       email_not_verified: 'Email Google của bạn chưa được xác minh.',
@@ -273,12 +285,14 @@ function LoginPage() {
 
   const titleByStep = mode === 'login'
     ? 'Đăng nhập'
+    : !allowSignup ? 'Đăng ký tạm đóng'
     : signupStep === 'form' ? 'Đăng ký'
     : signupStep === 'confirm' ? 'Xác nhận thông tin'
     : 'Bổ sung thông tin'
 
   const subtitleByStep = mode === 'login'
     ? 'Chào mừng trở lại! Vui lòng đăng nhập để tiếp tục.'
+    : !allowSignup ? 'Vui lòng quay lại sau.'
     : signupStep === 'form' ? 'Tạo tài khoản mới để tham gia VNUTour.'
     : signupStep === 'confirm' ? 'Chúng tôi đã tìm thấy đăng ký của bạn. Vui lòng xác nhận.'
     : 'Chưa có đăng ký khớp. Vui lòng điền thông tin cơ bản.'
@@ -302,7 +316,7 @@ function LoginPage() {
           <p className="mt-2 text-center text-sm text-white/50">{subtitleByStep}</p>
 
           {/* Signup step indicator */}
-          {mode === 'signup' && (
+          {mode === 'signup' && allowSignup && (
             <div className="mt-4 flex items-center justify-center gap-2">
               {['form', signupStep === 'manual' ? 'manual' : 'confirm'].map((s, i) => (
                 <span key={i}
@@ -319,6 +333,18 @@ function LoginPage() {
             </div>
           )}
 
+          {mode === 'signup' && !allowSignup ? (
+            <div className="mt-6 space-y-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm text-white/70">
+                Đăng ký tài khoản mới hiện đang tạm đóng. Vui lòng quay lại sau.
+              </div>
+              <button type="button"
+                onClick={() => { setMode('login'); setApiError(''); setErrors({}); resetSignup() }}
+                className="w-full rounded-2xl bg-white px-6 py-3.5 text-sm font-bold uppercase text-[#0e1218] transition hover:bg-white/90 active:scale-[0.98]">
+                Về trang đăng nhập
+              </button>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             {/* LOGIN */}
             {mode === 'login' && (
@@ -432,6 +458,7 @@ function LoginPage() {
               </button>
             )}
           </form>
+          )}
 
           {showGoogle && (
             <>
@@ -444,17 +471,19 @@ function LoginPage() {
             </>
           )}
 
-          <p className="mt-6 text-center text-sm text-white/50">
-            {mode === 'login' ? 'Chưa có tài khoản?' : 'Đã có tài khoản?'}{' '}
-            <button type="button"
-              onClick={() => {
-                setMode(mode === 'login' ? 'signup' : 'login')
-                setApiError(''); setErrors({}); resetSignup()
-              }}
-              className="font-semibold text-white underline underline-offset-4 transition hover:text-white/80">
-              {mode === 'login' ? 'Đăng ký ngay' : 'Đăng nhập ngay'}
-            </button>
-          </p>
+          {(mode === 'signup' || allowSignup) && (
+            <p className="mt-6 text-center text-sm text-white/50">
+              {mode === 'login' ? 'Chưa có tài khoản?' : 'Đã có tài khoản?'}{' '}
+              <button type="button"
+                onClick={() => {
+                  setMode(mode === 'login' ? 'signup' : 'login')
+                  setApiError(''); setErrors({}); resetSignup()
+                }}
+                className="font-semibold text-white underline underline-offset-4 transition hover:text-white/80">
+                {mode === 'login' ? 'Đăng ký ngay' : 'Đăng nhập ngay'}
+              </button>
+            </p>
+          )}
 
           <p className="mt-4 text-center">
             <a href="/" className="text-sm text-white/40 underline underline-offset-4 transition hover:text-white/60">
