@@ -68,8 +68,8 @@ const PROVISION = {
 
 const STEPS = [
   { key: 'profile', label: 'Hồ sơ' },
-  { key: 'team', label: 'Đội' },
   { key: 'members', label: 'Thành viên' },
+  { key: 'team', label: 'Đội' },
   { key: 'payment', label: 'Thanh toán' },
   { key: 'submit', label: 'Gửi duyệt' },
   { key: 'approved', label: 'Được duyệt' },
@@ -418,9 +418,9 @@ function getStepState(step, profile, team, members, fields) {
   }
   if (done[step.key]) return 'done'
   if (step.key === 'profile') return 'active'
-  if (step.key === 'team' && done.profile) return 'active'
-  if (step.key === 'members' && done.team) return 'active'
-  if (step.key === 'payment' && done.members && done.profile) return 'active'
+  if (step.key === 'members' && done.profile) return 'active'
+  if (step.key === 'team' && done.members) return 'active'
+  if (step.key === 'payment' && done.team && done.members && done.profile) return 'active'
   if (step.key === 'submit' && done.payment) return 'active'
   return 'idle'
 }
@@ -1671,7 +1671,7 @@ function ParticipantDashboard() {
         break
       case 'create-team':
       case 'fix':
-        gotoStep('team')
+        gotoStep('members')
         break
       case 'add-member':
         gotoStep('members')
@@ -1863,7 +1863,7 @@ function ParticipantDashboard() {
                     </div>
                     <div className="mt-5">
                       <StepNav
-                        onNext={() => gotoStep('team')}
+                        onNext={() => gotoStep('members')}
                         nextDisabled={!profileComplete}
                         hint={!profileComplete ? 'Cần điền đủ thông tin hồ sơ để sang bước tiếp theo.' : undefined}
                       />
@@ -1871,12 +1871,22 @@ function ParticipantDashboard() {
                   </div>
                 )}
 
-                {/* BƯỚC 2 — ĐỘI */}
-                {activeStep === 'team' && (team ? (
+                {/* BƯỚC 2 — THÀNH VIÊN: chưa có đội thì tạo đội ở đây; danh
+                    sách + nút Thêm nằm ở khối bên dưới (cùng activeStep). */}
+                {activeStep === 'members' && !team && (
+                  <EmptyTeamCard
+                    busy={busyAction === 'create-team'}
+                    maxMembers={maxMembers}
+                    onCreate={createTeam}
+                  />
+                )}
+
+                {/* BƯỚC 3 — ĐỘI (đặt tên, sau khi đã có thành viên) */}
+                {activeStep === 'team' && team && (
                   <div className={`${PARTICIPANT_CARD} p-5`}>
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 2</p>
+                        <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 3</p>
                         <h2 className="mt-1 font-display text-xl font-bold text-ink">Tên đội</h2>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -1920,16 +1930,10 @@ function ParticipantDashboard() {
                       </div>
                     )}
                     <div className="mt-5">
-                      <StepNav onBack={() => gotoStep('profile')} onNext={() => gotoStep('members')} />
+                      <StepNav onBack={() => gotoStep('members')} onNext={() => gotoStep('payment')} />
                     </div>
                   </div>
-                ) : (
-                  <EmptyTeamCard
-                    busy={busyAction === 'create-team'}
-                    maxMembers={maxMembers}
-                    onCreate={createTeam}
-                  />
-                ))}
+                )}
 
                 {/* BƯỚC 4 — THANH TOÁN (bước 3 Thành viên là khối danh sách bên dưới) */}
                 {activeStep === 'payment' && team && (
@@ -1937,7 +1941,7 @@ function ParticipantDashboard() {
                     <PaymentSection team={team} editable={editable} onProofChange={loadDashboard} />
                     <div className={`${PARTICIPANT_CARD} p-5`}>
                       <StepNav
-                        onBack={() => gotoStep('members')}
+                        onBack={() => gotoStep('team')}
                         onNext={() => gotoStep('submit')}
                         nextDisabled={!team.has_payment_proof}
                         hint={!team.has_payment_proof ? 'Tải minh chứng thanh toán để sang bước Gửi duyệt.' : undefined}
@@ -2127,7 +2131,7 @@ function ParticipantDashboard() {
               </div>
             )}
 
-            {registrationOpen && activeStep === 'members' ? (
+            {registrationOpen && activeStep === 'members' && team ? (
             <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div id="team-members" className="flex items-center justify-between gap-3 border-b border-[#DCD8CC] px-5 py-4">
                 <div>
@@ -2270,10 +2274,10 @@ function ParticipantDashboard() {
               </div>
               <div className="border-t border-[#DCD8CC] px-5 py-4">
                 <StepNav
-                  onBack={() => gotoStep('team')}
-                  onNext={() => gotoStep('payment')}
-                  nextDisabled={!stepUnlocked('payment')}
-                  hint={members.length === 0 ? 'Thêm ít nhất một thành viên để sang bước Thanh toán.' : undefined}
+                  onBack={() => gotoStep('profile')}
+                  onNext={() => gotoStep('team')}
+                  nextDisabled={!stepUnlocked('team')}
+                  hint={members.length === 0 ? 'Thêm ít nhất một thành viên để sang bước Đội.' : undefined}
                 />
               </div>
             </div>
