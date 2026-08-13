@@ -963,7 +963,87 @@ class SystemSetting(models.Model):
 
 
 # =====================================================================
-# 19. MssvLinkAudit
+# 20. PhotoFrame — public "ghép khung ảnh" tool
+# =====================================================================
+
+class PhotoFrame(models.Model):
+    """An admin-uploaded transparent frame the public photo tool overlays on top
+    of a user's photo.
+
+    The frame is the top layer with a fixed output size (its own natural pixel
+    dimensions); the visitor's photo is the bottom layer, freely moved / scaled /
+    rotated beneath it. The image bytes are kept in the same R2/local storage the
+    rest of the app uses (see submission_storage_service), described by the
+    ``image`` metadata dict — ``{name, size, type, key, storage, url}`` — rather
+    than a Django FileField, so the frame can be served same-origin (avoiding the
+    canvas-taint / CORS problem when the browser composites and exports).
+    """
+
+    title = models.CharField(max_length=200)
+    description = models.CharField(max_length=500, blank=True, default="")
+
+    # Stored-file descriptor, same shape submission_storage_service returns.
+    image = models.JSONField(default=dict, blank=True)
+    # Natural pixel size of the frame image; the editor uses it as the canvas /
+    # output size and to preserve aspect ratio.
+    width = models.PositiveIntegerField(default=0)
+    height = models.PositiveIntegerField(default=0)
+
+    # Only active frames are exposed to the public gallery; drafts stay admin-only.
+    is_active = models.BooleanField(default=False, db_index=True)
+    # Manual ordering in the public gallery (lower shown first).
+    sort_order = models.IntegerField(default=0)
+    # Denormalised counter kept in step with FrameDownloadLog for cheap listing.
+    download_count = models.PositiveIntegerField(default=0)
+
+    created_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="uploaded_frames",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "photo_frame"
+        ordering = ["sort_order", "-created_at"]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+# =====================================================================
+# 21. FrameDownloadLog — one row per successful compose + download
+# =====================================================================
+
+class FrameDownloadLog(models.Model):
+    """Records every time a visitor successfully composes and downloads a framed
+    photo, so admins can see how much each frame is used.
+
+    The frame title is snapshotted so stats survive the frame being deleted.
+    """
+
+    frame = models.ForeignKey(
+        PhotoFrame, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="downloads",
+    )
+    frame_title = models.CharField(max_length=200, blank=True, default="")
+    account = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="frame_downloads",
+    )
+    ip = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "frame_download_log"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.frame_title} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+# =====================================================================
+# 22. MssvLinkAudit
 # =====================================================================
 
 class MssvLinkAudit(models.Model):

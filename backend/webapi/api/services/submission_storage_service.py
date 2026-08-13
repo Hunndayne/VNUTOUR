@@ -177,6 +177,86 @@ def save_payment_proof(team, uploaded) -> dict:
     return entry
 
 
+FRAME_IMAGE_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+FRAME_IMAGE_MAX_BYTES = 15 * 1024 * 1024
+
+
+def save_frame_image(uploaded) -> dict:
+    """Persist one uploaded photo-frame image and return its metadata entry."""
+    extension = Path(uploaded.name).suffix.lower().lstrip(".")
+    if extension not in FRAME_IMAGE_ALLOWED_EXTENSIONS:
+        raise ValueError("file_type_not_allowed")
+    if uploaded.size > FRAME_IMAGE_MAX_BYTES:
+        raise ValueError("file_too_large")
+
+    client = _r2_client()
+    safe_name = _safe_name(uploaded.name)
+    key = f"frames/{uuid.uuid4().hex}_{safe_name}"
+    entry = {
+        "name": uploaded.name,
+        "size": uploaded.size,
+        "type": getattr(uploaded, "content_type", "") or "",
+        "key": key,
+    }
+
+    if client is not None:
+        try:
+            uploaded.seek(0)
+            client.upload_fileobj(
+                uploaded,
+                settings.R2_BUCKET,
+                key,
+                ExtraArgs={"ContentType": entry["type"] or "application/octet-stream"},
+            )
+            entry["storage"] = STORAGE_R2
+            if settings.R2_PUBLIC_BASE_URL:
+                entry["url"] = f"{settings.R2_PUBLIC_BASE_URL}/{key}"
+            return entry
+        except Exception:
+            logger.exception("R2 upload failed for %s; falling back to local storage", key)
+            uploaded.seek(0)
+
+    entry["storage"] = STORAGE_LOCAL
+    entry["url"] = _store_local(key, uploaded)
+    return entry
+
+
+def frame_file_response(entry: dict):
+    """Return a Django response serving a stored photo-frame image, or None if unavailable."""
+    if not entry:
+        return None
+
+    storage = entry.get("storage")
+    key = entry.get("key")
+    if not key:
+        return None
+
+    if storage == STORAGE_R2:
+        # Proxy the bytes through our own origin instead of redirecting to a
+        # presigned R2 URL — see proof_file_response for why (CORS).
+        client = _r2_client()
+        if client is None:
+            return None
+        try:
+            obj = client.get_object(Bucket=settings.R2_BUCKET, Key=key)
+            data = obj["Body"].read()
+        except Exception:
+            logger.exception("failed to read frame image from R2: %s", key)
+            return None
+        content_type = entry.get("type") or obj.get("ContentType") or "image/png"
+        response = HttpResponse(data, content_type=content_type)
+        response["Content-Length"] = str(len(data))
+        return response
+
+    if storage == STORAGE_LOCAL:
+        path = Path(settings.MEDIA_ROOT) / key
+        if not path.exists():
+            return None
+        return FileResponse(open(path, "rb"), content_type=entry.get("type") or "image/png")
+
+    return None
+
+
 def proof_file_response(entry: dict):
     """Return a Django response serving a stored payment proof, or None if unavailable."""
     if not entry:

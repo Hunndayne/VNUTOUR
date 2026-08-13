@@ -11,6 +11,7 @@ const navigationItems = [
   { label: 'TOUR', href: '#tour' },
   { label: 'PRICING', href: '#pricing' },
   { label: 'FAQ', href: '#faq' },
+  { label: 'GHÉP KHUNG ẢNH', href: '/frame' },
 ]
 
 const organizerLogos = [
