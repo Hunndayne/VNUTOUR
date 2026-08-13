@@ -121,8 +121,11 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
   gated per route; a wrong-role visit lands on that role's home instead.
   - `/`: `LandingPage` — public landing (guests only)
   - `/login`: `LoginPage` — Google OAuth + fallback email login
+  - `/frame`: `FramePage` — public "ghép khung ảnh" photo-frame tool; listed in
+    `PUBLIC_PATHS`, so it renders for everyone (guest or signed-in, any role) and
+    is never redirected home. Admin uploads frames under the `frames` tab.
   - `/admin`, `/admin/<tab>`: `AdminDashboard` — tab ∈ `events`, `stations`, `teams`,
-    `scores`, `accounts`, `discord`, `email`, `operations`, `system`, `settings`; bare
+    `scores`, `accounts`, `discord`, `email`, `operations`, `frames`, `system`, `settings`; bare
     `/admin` is the overview, and unknown tabs are rewritten to it. `system` is the
     system-wide settings page (mở/đóng đăng ký, VietQR, schema đăng ký) reached from the
     sidebar, distinct from `settings` = personal account settings reached from the user menu
