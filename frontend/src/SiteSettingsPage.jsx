@@ -137,7 +137,129 @@ function RegistrationToggleSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// b. Thanh toán / VietQR bank config (moved from AdminDashboard)
+// b. Chống bot — Turnstile cho các endpoint công khai
+// ─────────────────────────────────────────────────────────────────────
+function AntibotToggleSection() {
+  const [enabled, setEnabled] = useState(false)
+  const [serverEnabled, setServerEnabled] = useState(false)
+  const [keysReady, setKeysReady] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [apiError, setApiError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const boot = async () => {
+      try {
+        setLoading(true)
+        setApiError('')
+        const payload = await apiRequest('/admin/site-config')
+        if (cancelled) return
+        const antibot = payload?.antibot || {}
+        setServerEnabled(Boolean(antibot.enabled))
+        setEnabled(Boolean(antibot.enabled))
+        setKeysReady(antibot.turnstile_ready !== false)
+      } catch (error) {
+        if (cancelled) return
+        if (error?.status === 401) { logoutAndRedirect('/login'); return }
+        setApiError('Không tải được cấu hình chống bot.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    boot()
+    return () => { cancelled = true }
+  }, [])
+
+  const isDirty = enabled !== serverEnabled
+
+  const handleSave = async () => {
+    setSaving(true)
+    setApiError('')
+    setSuccessMsg('')
+    try {
+      const payload = await apiRequest('/admin/site-config', {
+        method: 'PUT',
+        body: { antibot_enabled: enabled },
+      })
+      const antibot = payload?.antibot || {}
+      setServerEnabled(Boolean(antibot.enabled))
+      setEnabled(Boolean(antibot.enabled))
+      setKeysReady(antibot.turnstile_ready !== false)
+      setSuccessMsg('Đã lưu cấu hình chống bot.')
+      setTimeout(() => setSuccessMsg(''), 3000)
+    } catch (error) {
+      if (error?.status === 401) { logoutAndRedirect('/login'); return }
+      setApiError('Không thể lưu cấu hình chống bot. Vui lòng thử lại.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className={`${CARD} px-4 py-14 text-center text-sm text-ink/35`}>
+        Đang tải cấu hình chống bot...
+      </div>
+    )
+  }
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <h3 className="mb-4 font-mono text-[11px] uppercase tracking-[0.18em] text-ink/40">
+        Chống bot
+      </h3>
+
+      <div className="space-y-4">
+        <ErrorNote>{apiError}</ErrorNote>
+        <SuccessNote>{successMsg}</SuccessNote>
+
+        {!keysReady && (
+          <div className="rounded-lg border border-gold/30 bg-gold/10 px-4 py-3 text-sm leading-6 text-[#9A6B12]">
+            Chưa cấu hình <span className="font-mono text-xs">TURNSTILE_SITE_KEY</span> /{' '}
+            <span className="font-mono text-xs">TURNSTILE_SECRET_KEY</span> trên server —
+            bật công tắc sẽ không có tác dụng cho đến khi đủ cặp key.
+          </div>
+        )}
+
+        <div className="flex items-start justify-between gap-4 rounded-lg border border-stone bg-paper px-4 py-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink">Yêu cầu xác minh Cloudflare Turnstile</p>
+            <p className="mt-1 text-xs leading-5 text-ink/45">
+              Khi bật, các form công khai (đăng nhập, đăng ký tài khoản, đăng ký thi, tải khung ảnh)
+              yêu cầu xác minh vô hình của Cloudflare; server còn chặn honeypot và form nộp quá nhanh.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Bật chống bot Turnstile"
+            onClick={() => setEnabled(v => !v)}
+            className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+              enabled ? 'bg-trail' : 'bg-stone'
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                enabled ? 'translate-x-5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
+
+        <button type="button" onClick={handleSave} disabled={saving || !isDirty} className={PRIMARY_BTN}>
+          <Icon name="checkPlain" className="h-4 w-4" />
+          {saving ? 'Đang lưu...' : 'Lưu'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// c. Thanh toán / VietQR bank config (moved from AdminDashboard)
 // ─────────────────────────────────────────────────────────────────────
 const PAYMENT_CONFIG_DEFAULTS = {
   bank_bin: '',
@@ -475,6 +597,7 @@ function SiteSettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <RegistrationToggleSection />
+      <AntibotToggleSection />
       <PaymentConfigSection />
       <RegistrationSchemaSection />
     </div>
