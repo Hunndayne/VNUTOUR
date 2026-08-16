@@ -125,7 +125,7 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
     `PUBLIC_PATHS`, so it renders for everyone (guest or signed-in, any role) and
     is never redirected home. Admin uploads frames under the `frames` tab.
   - `/admin`, `/admin/<tab>`: `AdminDashboard` — tab ∈ `events`, `stations`, `teams`,
-    `scores`, `accounts`, `discord`, `email`, `operations`, `frames`, `system`, `settings`; bare
+    `scores`, `accounts`, `discord`, `email`, `operations`, `frames`, `links`, `system`, `settings`; bare
     `/admin` is the overview, and unknown tabs are rewritten to it. `system` is the
     system-wide settings page (mở/đóng đăng ký, VietQR, schema đăng ký) reached from the
     sidebar, distinct from `settings` = personal account settings reached from the user menu
@@ -163,6 +163,8 @@ The Django API uses a service-oriented architecture in `webapi/api/`:
 
 Deep links depend on an SPA fallback. `frontend/nginx.conf` already serves
 `try_files $uri $uri/ /index.html`; Vite's dev server does the same by default.
+`/s/<code>` (short links) is the one exception — nginx and Vite's dev proxy
+forward it to Django, which answers with a 302 (see `views_shortlink.py`).
 
 ## Key Data Flows
 

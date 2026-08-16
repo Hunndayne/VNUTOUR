@@ -116,6 +116,20 @@ Ghi chú triển khai
 - Tất cả thời gian trả về theo ISO8601 UTC; UI có thể hiển thị GMT+7.
 - Người dùng, thí sinh, đội và dữ liệu tour đều được lưu trong PostgreSQL qua Django ORM.
 
+Rút gọn link (chỉ admin quản lý; redirect công khai)
+- GET `/s/{code}` (ngoài tiền tố `/api`, nginx proxy thẳng về Django)
+  - 302: chuyển tới `target_url`, mỗi lượt đi qua được đếm vào `click_count`.
+  - 404: link không tồn tại (HTML tiếng Việt). 410: link đã tắt hoặc hết hạn.
+- GET `/admin/short-links`
+  - 200: `{ "links": [ { id, code, short_url, target_url, label, is_active, expires_at, click_count, last_clicked_at, created_by, created_at, updated_at } ] }`
+- POST `/admin/short-links`
+  - Body: `{ "target_url": "https://..." (bắt buộc), "code"?: "a-z0-9_- 3-32 ký tự", "label"?: "...", "expires_at"?: "ISO8601" }`
+  - 201: link vừa tạo (có `short_url` tuyệt đối). 400: `invalid_url | invalid_code | code_taken | invalid_expiry`.
+- PATCH `/admin/short-links/{id}`
+  - Body: bất kỳ trường nào trong `{ target_url, label, code, is_active, expires_at }` (gửi `expires_at: ""` để bỏ hạn).
+- DELETE `/admin/short-links/{id}`
+  - 200: `{ "ok": true }` — `/s/{code}` cũ bắt đầu trả 404.
+
 Ví dụ cURL
 - Đăng nhập:
 ```

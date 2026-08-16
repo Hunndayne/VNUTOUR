@@ -1089,3 +1089,40 @@ class MssvLinkAudit(models.Model):
 
     def __str__(self) -> str:
         return f"{self.mssv} {self.action} ({self.old_email} -> {self.new_email})"
+
+
+# =====================================================================
+# 23. ShortLink
+# =====================================================================
+
+class ShortLink(models.Model):
+    """A vanity redirect served at `/s/<code>` → `target_url`.
+
+    Admins create these to hand out short, printable URLs (the registration
+    form, a Discord invite, a deep SPA link with query strings) instead of
+    long ones, typically baked into posters or QR codes. Every hop is counted
+    (`click_count`) so channels can be compared afterwards.
+    """
+
+    code = models.CharField(max_length=32, unique=True)
+    target_url = models.CharField(max_length=2048)
+    # Free-form admin note saying what the link is for; shown only in the
+    # admin list, never on the redirect page.
+    label = models.CharField(max_length=200, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    click_count = models.PositiveIntegerField(default=0)
+    last_clicked_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="short_links",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "short_link"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"/s/{self.code} -> {self.label or self.target_url}"
