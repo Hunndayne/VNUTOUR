@@ -131,6 +131,9 @@ function LoginPage() {
     if (Object.keys(e).length) return
     if (antibotEnabled && !turnstileToken) {
       setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      // Token có thể đã hết hạn — kick widget chạy lại challenge thay vì để
+      // dấu tích xanh treo đó gây hiểu lầm.
+      setTurnstileReset(n => n + 1)
       return
     }
 
@@ -153,6 +156,9 @@ function LoginPage() {
     if (!validateCredentials()) return
     if (antibotEnabled && !turnstileToken) {
       setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      // Token có thể đã hết hạn — kick widget chạy lại challenge thay vì để
+      // dấu tích xanh treo đó gây hiểu lầm.
+      setTurnstileReset(n => n + 1)
       return
     }
     setIsLoading(true); setApiError('')
@@ -191,6 +197,9 @@ function LoginPage() {
     const info = signupStep === 'confirm' ? matchInfo : basic
     if (antibotEnabled && !turnstileToken) {
       setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      // Token có thể đã hết hạn — kick widget chạy lại challenge thay vì để
+      // dấu tích xanh treo đó gây hiểu lầm.
+      setTurnstileReset(n => n + 1)
       return
     }
     setIsLoading(true); setApiError('')
@@ -225,6 +234,9 @@ function LoginPage() {
   const handleGoogleCredential = useCallback(async (response) => {
     if (antibotEnabled && !turnstileToken) {
       setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      // Token có thể đã hết hạn — kick widget chạy lại challenge thay vì để
+      // dấu tích xanh treo đó gây hiểu lầm.
+      setTurnstileReset(n => n + 1)
       return
     }
     setIsLoading(true); setApiError('')

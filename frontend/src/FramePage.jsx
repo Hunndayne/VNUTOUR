@@ -471,6 +471,7 @@ function FramePage() {
     if (!photoSource || !frameImg || !frameSize.width || !frameSize.height || downloading) return
     if (antibotEnabled && !turnstileToken) {
       setDownloadError('Vui lòng hoàn thành bước xác minh chống bot trước khi tải xuống.')
+      setTurnstileReset((n) => n + 1)
       return
     }
     setDownloading(true)
