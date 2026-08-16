@@ -306,6 +306,8 @@ export default function RegisterPage() {
     setError('')
     if (antibotEnabled && !turnstileToken) {
       setError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      // Token có thể đã hết hạn — kick widget chạy lại challenge.
+      setTurnstileReset((n) => n + 1)
       return
     }
     setSubmitting(true)

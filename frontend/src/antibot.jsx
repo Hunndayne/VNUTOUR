@@ -47,7 +47,13 @@ export function TurnstileWidget({ siteKey, onToken, onError, resetSignal = 0 }) 
         sitekey: siteKey,
         callback: (token) => onTokenRef.current?.(token),
         'error-callback': (code) => onErrorRef.current?.(code || 'turnstile_error'),
-        'expired-callback': () => onTokenRef.current?.(''),
+        // Token hết hạn sau 300s. Khi có expired-callback, widget KHÔNG tự hiển
+        // thị cảnh báo mà vẫn giữ nguyên dấu tích xanh — phải tự reset để giao
+        // diện khớp với thực tế token đã chết và challenge chạy lại.
+        'expired-callback': () => {
+          onTokenRef.current?.('')
+          try { turnstile.reset(widgetIdRef.current) } catch { /* noop */ }
+        },
         theme: 'auto',
       })
     }).catch(() => onErrorRef.current?.('turnstile_script_failed'))
