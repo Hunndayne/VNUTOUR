@@ -11,7 +11,7 @@ from django.conf import settings
 
 from api.services import registration_service
 from api.services.team_service import registration_is_open
-from .views_shared import _json_body, _consume_rate_limit
+from .views_shared import _json_body, _consume_rate_limit, _require_antibot
 
 
 def _registration_closed_response():
@@ -58,6 +58,9 @@ def register_individual_view(request: HttpRequest):
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
+    blocked = _require_antibot(request, data, form_signals=True)
+    if blocked:
+        return blocked
 
     participant, err = registration_service.register_individual(data)
     if err:
@@ -81,6 +84,9 @@ def lookup_view(request: HttpRequest):
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
+    blocked = _require_antibot(request, data, form_signals=True)
+    if blocked:
+        return blocked
     result = registration_service.lookup_participant(
         data.get("mssv", ""), data.get("email", ""),
     )
@@ -105,6 +111,9 @@ def register_team_view(request: HttpRequest):
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
+    blocked = _require_antibot(request, data, form_signals=True)
+    if blocked:
+        return blocked
 
     team, err = registration_service.register_team(data)
     if err:

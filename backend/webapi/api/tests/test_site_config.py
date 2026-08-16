@@ -23,7 +23,8 @@ class PublicSiteConfigViewTests(TestCase):
         response = self.client.get("/api/public/site-config")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"allow_signup": True})
+        self.assertEqual(response.json()["allow_signup"], True)
+        self.assertIn("antibot", response.json())
 
     def test_get_reflects_registration_open_false(self):
         set_registration_open(False)
@@ -31,7 +32,8 @@ class PublicSiteConfigViewTests(TestCase):
         response = self.client.get("/api/public/site-config")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"allow_signup": False})
+        self.assertEqual(response.json()["allow_signup"], False)
+        self.assertIn("antibot", response.json())
 
     def test_non_get_is_method_not_allowed(self):
         response = self.client.post("/api/public/site-config")
@@ -61,7 +63,8 @@ class AdminSiteConfigViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"registration_open": True})
+        self.assertEqual(response.json()["registration_open"], True)
+        self.assertIn("antibot", response.json())
 
     def test_admin_put_toggles_value(self):
         set_registration_open(False)
@@ -74,12 +77,12 @@ class AdminSiteConfigViewTests(TestCase):
         )
 
         self.assertEqual(put_response.status_code, 200)
-        self.assertEqual(put_response.json(), {"registration_open": True})
+        self.assertEqual(put_response.json()["registration_open"], True)
         self.assertTrue(registration_is_open())
 
         # And the public flag now reflects it.
         public = self.client.get("/api/public/site-config")
-        self.assertEqual(public.json(), {"allow_signup": True})
+        self.assertEqual(public.json()["allow_signup"], True)
 
     def test_admin_put_parses_string_values_tolerantly(self):
         put_response = self.client.put(

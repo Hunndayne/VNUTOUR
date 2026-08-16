@@ -35,13 +35,14 @@ export async function listPublicFrames() {
 /**
  * Record one successful compose + download. Best-effort telemetry — it must
  * never block or fail the user's download, so it swallows errors.
+ * `turnstileToken` is required by the server when the anti-bot switch is on.
  */
-export async function logFrameDownload(frameId) {
+export async function logFrameDownload(frameId, { turnstileToken = '' } = {}) {
   try {
     return await apiRequest(`/public/frames/${frameId}/download`, {
       method: 'POST',
       auth: false,
-      body: {},
+      body: turnstileToken ? { turnstile_token: turnstileToken } : {},
     })
   } catch {
     return null

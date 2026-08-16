@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import logoImage from './assets/vnutour-logo.png'
 import { roleHomePath } from './api.js'
+import { TurnstileWidget, HoneypotField } from './antibot.jsx'
+import { useFormSignals, ANTIBOT_ERROR_TEXT, ANTIBOT_ERROR_CODES } from './antibot.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://10.147.17.251:8080/api'
 
@@ -21,12 +23,26 @@ function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [googleReady, setGoogleReady] = useState(false)
   const [allowSignup, setAllowSignup] = useState(true)
+  // Chống bot (bật từ Cài đặt hệ thống): { enabled, site_key } hoặc null.
+  const [antibot, setAntibot] = useState(null)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileReset, setTurnstileReset] = useState(0)
+  const { honeypot, setHoneypot, signals, resetClock } = useFormSignals()
   const googleInitialized = useRef(false)
+
+  const antibotEnabled = Boolean(antibot?.enabled)
+  // Payload gửi kèm mỗi POST công khai khi chống bot bật — token Turnstile +
+  // tín hiệu form (honeypot, thời gian điền).
+  const antibotPayload = useCallback(
+    () => (antibotEnabled ? { turnstile_token: turnstileToken, ...signals() } : {}),
+    [antibotEnabled, turnstileToken, signals],
+  )
 
   const resetSignup = () => {
     setSignupStep('form')
     setMatchInfo(null)
     setBasic({ full_name: '', school: '', faculty: '' })
+    resetClock()
   }
 
   const handleChange = (e) => {
@@ -54,7 +70,10 @@ function LoginPage() {
   useEffect(() => {
     fetch(`${API_BASE_URL}/public/site-config`)
       .then(r => r.json())
-      .then(cfg => { if (cfg && typeof cfg.allow_signup === 'boolean') setAllowSignup(cfg.allow_signup) })
+      .then(cfg => {
+        if (cfg && typeof cfg.allow_signup === 'boolean') setAllowSignup(cfg.allow_signup)
+        if (cfg?.antibot?.enabled) setAntibot(cfg.antibot)
+      })
       .catch(() => {})
   }, [])
 
@@ -76,7 +95,9 @@ function LoginPage() {
       password_too_short: 'Mật khẩu chưa đạt độ dài tối thiểu của hệ thống.',
       too_many_attempts: 'Bạn thao tác quá nhiều lần. Vui lòng chờ rồi thử lại.',
     }
-    setApiError(map[data.error] || `Lỗi: ${data.error || fallback}`)
+    setApiError(map[data.error] || ANTIBOT_ERROR_TEXT[data.error] || `Lỗi: ${data.error || fallback}`)
+    // Lỗi chống bot → token vừa dùng đã cháy/hỏi, cho widget sinh token mới.
+    if (ANTIBOT_ERROR_CODES.has(data.error)) setTurnstileReset(n => n + 1)
   }, [])
 
   // ── Validation ──────────────────────────────────────────────────────
@@ -108,12 +129,16 @@ function LoginPage() {
     if (!form.password) e.password = 'Vui lòng nhập mật khẩu'
     setErrors(e)
     if (Object.keys(e).length) return
+    if (antibotEnabled && !turnstileToken) {
+      setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      return
+    }
 
     setIsLoading(true); setApiError('')
     try {
       const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: form.username, password: form.password }),
+        body: JSON.stringify({ username: form.username, password: form.password, ...antibotPayload() }),
       })
       const data = await res.json()
       if (res.ok) persistAndRedirect(data)
@@ -126,11 +151,15 @@ function LoginPage() {
   // ── Signup step 1 → match ───────────────────────────────────────────
   const handleContinue = async () => {
     if (!validateCredentials()) return
+    if (antibotEnabled && !turnstileToken) {
+      setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      return
+    }
     setIsLoading(true); setApiError('')
     try {
       const res = await fetch(`${API_BASE_URL}/register/lookup`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mssv: form.mssv.trim(), email: form.email.trim() }),
+        body: JSON.stringify({ mssv: form.mssv.trim(), email: form.email.trim(), ...antibotPayload() }),
       })
       const data = await res.json()
       if (data.status === 'match') {
@@ -160,6 +189,10 @@ function LoginPage() {
       if (Object.keys(e).length) return
     }
     const info = signupStep === 'confirm' ? matchInfo : basic
+    if (antibotEnabled && !turnstileToken) {
+      setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      return
+    }
     setIsLoading(true); setApiError('')
     try {
       const res = await fetch(`${API_BASE_URL}/auth/signup`, {
@@ -170,6 +203,7 @@ function LoginPage() {
           full_name: info?.full_name || undefined,
           school: info?.school || undefined,
           faculty: info?.faculty || undefined,
+          ...antibotPayload(),
         }),
       })
       const data = await res.json()
@@ -189,11 +223,18 @@ function LoginPage() {
 
   // ── Google Identity Services ────────────────────────────────────────
   const handleGoogleCredential = useCallback(async (response) => {
+    if (antibotEnabled && !turnstileToken) {
+      setApiError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      return
+    }
     setIsLoading(true); setApiError('')
     try {
       const res = await fetch(`${API_BASE_URL}/auth/google`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential: response.credential }),
+        body: JSON.stringify({
+          credential: response.credential,
+          ...(antibotEnabled ? { turnstile_token: turnstileToken } : {}),
+        }),
       })
       const data = await res.json()
       if (res.ok) persistAndRedirect(data)
@@ -201,7 +242,7 @@ function LoginPage() {
     } catch (err) {
       setApiError(err.message?.includes('fetch') ? 'Không thể kết nối tới server.' : `Lỗi: ${err.message}`)
     } finally { setIsLoading(false) }
-  }, [handleApiError, persistAndRedirect])
+  }, [handleApiError, persistAndRedirect, antibotEnabled, turnstileToken])
 
   useEffect(() => {
     if (googleInitialized.current) return
@@ -438,6 +479,20 @@ function LoginPage() {
                 </div>
               </>
             )}
+
+            {/* Chống bot: xác minh Turnstile khi admin bật ở Cài đặt hệ thống */}
+            {antibotEnabled && (
+              <div className="flex justify-center">
+                <TurnstileWidget
+                  siteKey={antibot.site_key}
+                  onToken={setTurnstileToken}
+                  onError={() => setApiError(ANTIBOT_ERROR_TEXT.turnstile_script_failed)}
+                  resetSignal={turnstileReset}
+                />
+              </div>
+            )}
+
+            <HoneypotField value={honeypot} onChange={setHoneypot} />
 
             {/* Primary action */}
             <button type="submit" disabled={isLoading}

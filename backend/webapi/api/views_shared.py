@@ -16,6 +16,7 @@ from django.core.cache import cache
 from django.middleware.csrf import CsrfViewMiddleware
 
 from api.services.auth_service import find_by_token
+from api.services.antibot_service import antibot_config, check_form_signals, verify_turnstile
 from api.models import Account
 
 AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "token")
@@ -93,6 +94,13 @@ def _cookie_session_csrf_error(request: HttpRequest, from_cookie: bool):
 
 
 def _client_ip(request: HttpRequest) -> str:
+    # Toàn bộ traffic công khai đi qua Cloudflare (firewall chỉ nhận IP của
+    # Cloudflare), nên CF-Connecting-IP là nguồn đáng tin nhất. X-Forwarded-For
+    # đầu tiên thì client tự giả mạo được và từng là chìa khóa xoay qua rate
+    # limit — chỉ dùng làm phương án dự phòng khi không có header của Cloudflare.
+    cf_ip = (request.META.get("HTTP_CF_CONNECTING_IP") or "").strip()
+    if cf_ip:
+        return cf_ip
     if getattr(settings, "TRUST_PROXY_HEADERS", False):
         forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
         if forwarded:
@@ -131,6 +139,32 @@ def _consume_rate_limit(
     )
     response["Retry-After"] = str(window_seconds)
     return response, cache_key
+
+
+def _require_antibot(
+    request: HttpRequest,
+    data: dict,
+    *,
+    form_signals: bool = False,
+):
+    """Kiểm tra 2 lớp chống bot cho một endpoint công khai.
+
+    Trả None khi hợp lệ, hoặc JsonResponse chặn. `form_signals=True` áp thêm
+    honeypot/time-trap — chỉ dành cho form HTML do chính hệ thống render.
+    """
+    if not antibot_config()["enabled"]:
+        return None
+    token = str((data.get("turnstile_token") or "")).strip()
+    if not token:
+        return JsonResponse({"error": "turnstile_required"}, status=400)
+    ok, err = verify_turnstile(token, _client_ip(request))
+    if not ok:
+        return JsonResponse({"error": err}, status=403)
+    if form_signals:
+        signal_error = check_form_signals(data)
+        if signal_error:
+            return JsonResponse({"error": signal_error}, status=400)
+    return None
 
 
 def _auth_or_401(request: HttpRequest):

@@ -5,6 +5,7 @@ Photo-frame overlay views — public gallery + downloads, admin CRUD (frames).
 from __future__ import annotations
 
 from django.http import HttpRequest, JsonResponse
+from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 
 from api.models import Account, PhotoFrame
@@ -14,7 +15,7 @@ from api.services.photo_frame_service import (
 )
 from api.services.auth_service import find_by_token
 from api.services.submission_storage_service import frame_file_response
-from .views_shared import _client_ip, _extract_token, _json_body, _require_role
+from .views_shared import _client_ip, _consume_rate_limit, _extract_token, _json_body, _require_antibot, _require_role
 
 
 TRUTHY = {"1", "true", "yes"}
@@ -60,6 +61,19 @@ def public_frame_download_view(request: HttpRequest, frame_id: int):
     """POST: record a successful compose + download of a frame."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="frame-download",
+        limit=settings.FRAME_DOWNLOAD_RATE_LIMIT,
+        window_seconds=settings.FRAME_DOWNLOAD_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
+    # Body có thể rỗng (telemetry best-effort) — chỉ cần đọc được turnstile_token.
+    blocked = _require_antibot(request, _json_body(request) or {})
+    if blocked:
+        return blocked
 
     frame, err = _get_frame_or_404(frame_id)
     if err:

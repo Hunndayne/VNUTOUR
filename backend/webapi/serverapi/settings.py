@@ -132,7 +132,23 @@ AUTH_REGISTER_RATE_LIMIT = int(os.getenv("AUTH_REGISTER_RATE_LIMIT", "10"))
 AUTH_REGISTER_RATE_WINDOW_SECONDS = int(os.getenv("AUTH_REGISTER_RATE_WINDOW_SECONDS", "3600"))
 AUTH_LOOKUP_RATE_LIMIT = int(os.getenv("AUTH_LOOKUP_RATE_LIMIT", "30"))
 AUTH_LOOKUP_RATE_WINDOW_SECONDS = int(os.getenv("AUTH_LOOKUP_RATE_WINDOW_SECONDS", "900"))
+# Google login tạo được tài khoản participant khi đăng ký đang mở, nên chịu
+# cùng mức giới hạn với signup; tải frame là POST công khai duy nhất còn lại.
+AUTH_GOOGLE_RATE_LIMIT = int(os.getenv("AUTH_GOOGLE_RATE_LIMIT", "10"))
+AUTH_GOOGLE_RATE_WINDOW_SECONDS = int(os.getenv("AUTH_GOOGLE_RATE_WINDOW_SECONDS", "900"))
+FRAME_DOWNLOAD_RATE_LIMIT = int(os.getenv("FRAME_DOWNLOAD_RATE_LIMIT", "30"))
+FRAME_DOWNLOAD_RATE_WINDOW_SECONDS = int(os.getenv("FRAME_DOWNLOAD_RATE_WINDOW_SECONDS", "600"))
 TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "0") == "1"
+
+# Bộ đếm rate limit sống trong cache — phải dùng chung qua PostgreSQL để hai
+# worker gunicorn thấy cùng một bộ số (LocMemCache từng process khiến limit
+# thực tế nhân đôi và reset mỗi khi worker restart).
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "vnutour_cache",
+    }
+}
 
 # Production transport/browser security
 SECURE_SSL_REDIRECT = os.getenv(
