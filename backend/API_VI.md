@@ -154,3 +154,10 @@ Ghi chú
 - Lưu toàn bộ thời gian ở server theo UTC. UI hiển thị GMT+7.
 - Bot và API nên dùng chung TEAM_QR_SECRET để verify QR nhất quán.
 - Web và bot dùng chung PostgreSQL; mọi thao tác ghi đi qua service Django để giữ phân quyền và audit nhất quán.
+
+Rút gọn link (đã triển khai)
+- GET /s/{code} — redirect công khai (ngoài /api): 302 tới đích và đếm click; 404 nếu không tồn tại, 410 nếu tắt/hết hạn.
+- GET /admin/short-links — danh sách (admin).
+- POST /admin/short-links — tạo: { target_url (bắt buộc), code?, label?, expires_at? }; lỗi 400: invalid_url | invalid_code | code_taken | invalid_expiry.
+- PATCH /admin/short-links/{id} — sửa target/label/code/is_active/expires_at.
+- DELETE /admin/short-links/{id} — xoá link.

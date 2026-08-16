@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 
 from api.views_media import submission_media_view
+from api.views_shortlink import short_link_redirect_view
 
 
 urlpatterns = [
@@ -16,5 +17,8 @@ urlpatterns = [
     # Behind an auth + ownership check: these are participants' uploads, and
     # `django.views.static.serve` would hand them to anyone with the URL.
     re_path(r"^media/(?P<path>.*)$", submission_media_view),
+    # Public short links. Registered at the root (not under /api/) to keep
+    # URLs poster-friendly; nginx proxies /s/ to this process like /api/.
+    path("s/<str:code>", short_link_redirect_view),
 ]
 
