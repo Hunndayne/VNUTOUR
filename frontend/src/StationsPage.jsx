@@ -9,6 +9,9 @@ import CheckinQrToggle from './CheckinQrToggle.jsx'
 
 const LEGACY_STATIONS_STORAGE_KEY = 'vnutour:admin:stations-by-phase'
 
+// QR điểm danh tạm ẩn khỏi trang Trạm — bật lại bằng đổi cờ này, không xoá gì thêm.
+const SHOW_CHECKIN_QR = false
+
 const STATUS = {
   active: { label: 'Đang hoạt động', cls: 'bg-trail/12 text-trail' },
   inactive: { label: 'Chưa mở', cls: 'bg-ink/[0.07] text-ink/50' },
@@ -1165,59 +1168,33 @@ function SubmissionModeList({ submission, compact = false }) {
   )
 }
 
-function SummaryCard({ value, label, accent }) {
-  const valueClass = accent === 'trail'
-    ? 'text-trail'
-    : accent === 'gold'
-      ? 'text-gold'
-      : accent === 'sky'
-        ? 'text-[#3E7CA8]'
-        : 'text-ink/70'
-
-  return (
-    <div className={`${CARD} px-4 py-3`}>
-      <p className={`font-mono text-2xl font-bold leading-none ${valueClass}`}>{value}</p>
-      <p className="mt-1.5 text-xs text-ink/40">{label}</p>
-    </div>
-  )
-}
-
 function StationEventSwitcher({ selectedEventId, events, stationsByEvent, onChange }) {
   return (
-    <div className="grid gap-2 lg:grid-cols-2">
+    <div className="flex flex-wrap gap-2">
       {events.map((eventItem) => {
         const active = eventItem.id === selectedEventId
         const typeMeta = SUB_EVENT_TYPE_META[eventItem.type] ?? SUB_EVENT_TYPE_META.custom
         const stationCount = (stationsByEvent[eventItem.id] ?? []).length
+        const hoverHint = [
+          typeMeta.label,
+          eventItem.note ? stripMarkdown(eventItem.note) : '',
+        ].filter(Boolean).join(' · ')
 
         return (
           <button
             key={eventItem.id}
             type="button"
             onClick={() => onChange(eventItem.id)}
-            className={`rounded-xl border px-4 py-3 text-left transition ${
+            title={hoverHint}
+            className={`inline-flex max-w-full items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition ${
               active
-                ? 'border-gold/30 bg-gold/10 shadow-[0_3px_10px_rgba(32,49,43,0.08)]'
-                : 'border-stone bg-white hover:bg-paper'
+                ? 'border-gold/40 bg-gold/10 font-semibold text-ink'
+                : 'border-stone bg-white text-ink/60 hover:bg-paper hover:text-ink'
             }`}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge label={typeMeta.label} cls={typeMeta.cls} />
-                  <Badge label={`${stationCount} tram`} cls="bg-ink/[0.07] text-ink/55" />
-                </div>
-                <p className="mt-2 truncate text-sm font-semibold text-ink">{eventItem.name}</p>
-                {eventItem.note && (
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink/45">{stripMarkdown(eventItem.note)}</p>
-                )}
-              </div>
-              {active && (
-                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gold text-white">
-                  <Icon name="checkPlain" className="h-3.5 w-3.5" />
-                </span>
-              )}
-            </div>
+            {active && <Icon name="checkPlain" className="h-3.5 w-3.5 shrink-0 text-gold" />}
+            <span className="truncate">{eventItem.name}</span>
+            <span className="shrink-0 font-mono text-[11px] text-ink/40">{stationCount} trạm</span>
           </button>
         )
       })}
@@ -2715,6 +2692,47 @@ function StationSubmissionsDrawer({ stationId, stationName, onClose }) {
   )
 }
 
+function StationCreateDrawer({ phaseInfo, phaseMeta, selectedEvent, draftKey, onSave, onClose }) {
+  if (!selectedEvent) return null
+  const eventMeta = SUB_EVENT_TYPE_META[selectedEvent.type] ?? SUB_EVENT_TYPE_META.custom
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[560px] flex-col border-l border-stone bg-paper shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
+          <div className="min-w-0">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Thêm trạm mới</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
+              <Badge label={selectedEvent.name} cls={eventMeta.cls} />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="space-y-5 py-4">
+            <StationForm
+              initial={createBlankStation()}
+              onSave={onSave}
+              onCancel={onClose}
+              allowInitialAssignment
+              draftKey={draftKey}
+            />
+          </div>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function StationsPage({
   phase = 'registration',
   phaseOptions = DEFAULT_PHASE_OPTIONS,
@@ -2867,11 +2885,6 @@ function StationsPage({
   const inactive = stations.filter(station => !station.active)
   const totalHere = stations.reduce((total, station) => total + station.teamsHere.length, 0)
   const totalDone = stations.reduce((total, station) => total + station.teamsDone.length, 0)
-  const configured = stations.filter(station => hasSubmissionConfig(station.submission))
-  const attachmentRequired = stations.filter(station => (
-    createSubmissionConfig(station.submission).items.some(item => item.type === 'attachment')
-  ))
-  const totalScore = stations.reduce((total, station) => total + sumStationScore(station), 0)
 
   const toggleActive = async (id) => {
     const station = stations.find(item => item.id === id)
@@ -3005,74 +3018,15 @@ function StationsPage({
         </div>
       )}
 
-      <div className={`${CARD} overflow-hidden`}>
-        <div className="border-b border-stone px-5 py-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-3xl">
-              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">
-                Trạm nằm bên trong event con
-              </p>
-              <h2 className="mt-2 font-display text-xl font-semibold text-ink">
-                Quản lý bộ trạm theo phase và event
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-ink/60">
-                {phaseMeta.description}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
-              <span className="rounded-full bg-paper px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink/45">
-                API-backed
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-3 px-5 py-4">
+      <div className={`${CARD} space-y-3 px-5 py-4`}>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <PhaseSwitcher
             phase={phase}
             phaseOptions={phaseOptions}
             onChange={onPhaseChange}
             disabled={!canEditStations}
           />
-          {phaseStationEvents.length > 0 ? (
-            <>
-              <StationEventSwitcher
-                selectedEventId={selectedEventId}
-                events={phaseStationEvents}
-                stationsByEvent={phaseBucket}
-                onChange={setSelectedEventId}
-              />
-              <p className="text-xs leading-5 text-ink/45">
-                Chỉ các event con bật "Có trạm" mới xuất hiện ở đây. Mỗi trạm có thể cấu hình bài nộp dạng form,
-                trắc nghiệm, file đính kèm, hoặc kết hợp nhiều loại cùng lúc.
-              </p>
-            </>
-          ) : (
-            <div className="rounded-xl border border-dashed border-stone bg-paper px-4 py-4 text-sm leading-6 text-ink/45">
-              Phase này chưa có event nào bật "Có trạm". Hãy vào tab Quản lý sự kiện, tạo event con và bật tuỳ chọn đó trước khi thêm trạm.
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <SummaryCard value={String(phaseStationEvents.length)} label="Event có trạm" />
-        <SummaryCard value={String(stations.length)} label="Trạm của event" />
-        <SummaryCard value={String(active.length)} label="Đang hoạt động" accent="trail" />
-        <SummaryCard value={String(configured.length)} label="Có bài nộp" accent="sky" />
-        <SummaryCard value={String(totalScore)} label="Tổng điểm trạm" accent="gold" />
-        <SummaryCard value={String(totalDone)} label="Lượt hoàn thành" accent="trail" />
-      </div>
-
-      <CheckinQrToggle />
-
-      <div className={`${CARD} px-4 py-3`}>
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <p className="font-mono text-xs text-ink/40">
-            {selectedEvent ? `${selectedEvent.name} · ` : ''}{active.length} trạm hoạt động · {inactive.length} chưa mở · {attachmentRequired.length} trạm yêu cầu tệp · {totalHere} đội đang ở trạm
-          </p>
           <div className="flex flex-wrap items-center gap-2">
             {listLoading && <span className="text-xs text-ink/40">Đang tải trạm...</span>}
             <button
@@ -3101,44 +3055,42 @@ function StationsPage({
             )}
           </div>
         </div>
-      </div>
 
-      {adding && selectedEvent && (
-        <div className={`${CARD} overflow-hidden`}>
-          <div className="flex items-center justify-between gap-3 border-b border-stone px-5 py-3">
-            <p className="font-display font-semibold text-ink">Thêm trạm mới</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
-              <Badge
-                label={selectedEvent.name}
-                cls={(SUB_EVENT_TYPE_META[selectedEvent.type] ?? SUB_EVENT_TYPE_META.custom).cls}
-              />
+        {phaseStationEvents.length > 0 ? (
+          <div className="space-y-2.5 border-t border-stone pt-3">
+            <StationEventSwitcher
+              selectedEventId={selectedEventId}
+              events={phaseStationEvents}
+              stationsByEvent={phaseBucket}
+              onChange={setSelectedEventId}
+            />
+            <p className="font-mono text-xs leading-5 text-ink/45">
+              {selectedEvent ? `${selectedEvent.name} · ` : ''}
+              {stations.length} trạm · {active.length} hoạt động · {inactive.length} chưa mở · {totalHere} đội đang ở trạm · {totalDone} lượt hoàn thành
+            </p>
+          </div>
+        ) : (
+          <div className="border-t border-stone pt-3">
+            <div className="rounded-lg border border-dashed border-stone bg-paper px-4 py-3 text-sm leading-6 text-ink/45">
+              Phase này chưa có event nào bật "Có trạm" — hãy vào tab Quản lý sự kiện, tạo event con và bật tuỳ chọn đó trước khi thêm trạm.
             </div>
           </div>
-          <StationForm
-            initial={createBlankStation()}
-            onSave={addStation}
-            onCancel={() => setAdding(false)}
-            allowInitialAssignment
-            // Trạm mới chưa có id — khoá nháp theo phase/event đang chọn để hai
-            // event khác nhau không lỡ trộn nháp "thêm trạm" của nhau.
-            draftKey={`station:new:${phase}:${selectedEventId}`}
-          />
-        </div>
-      )}
+        )}
+      </div>
+
+      {SHOW_CHECKIN_QR && <CheckinQrToggle />}
 
       {selectedEvent ? (
         <div className={`${CARD} overflow-hidden`}>
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[1020px] text-left">
+          <table className="w-full min-w-[880px] text-left">
             <thead>
               <tr className="border-b border-stone font-mono text-[10px] uppercase tracking-wider text-ink/35">
                 <th className="w-12 px-4 py-3 font-medium">STT</th>
                 <th className="px-4 py-3 font-medium">Tên trạm</th>
                 <th className="hidden px-4 py-3 font-medium md:table-cell">Địa điểm</th>
                 <th className="px-4 py-3 font-medium">Bài nộp</th>
-                <th className="px-4 py-3 text-center font-medium">Đang ở</th>
-                <th className="px-4 py-3 text-center font-medium">Xong</th>
+                <th className="px-4 py-3 text-center font-medium">Đội ở · xong</th>
                 <th className="px-4 py-3 text-right font-medium">Điểm</th>
                 <th className="px-4 py-3 font-medium">Trạng thái</th>
                 <th className="w-8 px-4 py-3" />
@@ -3147,7 +3099,7 @@ function StationsPage({
             <tbody className="divide-y divide-stone/60">
               {listLoading && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-14 text-center text-sm text-ink/35">
+                  <td colSpan={8} className="px-4 py-14 text-center text-sm text-ink/35">
                     Đang đồng bộ danh sách trạm...
                   </td>
                 </tr>
@@ -3175,11 +3127,8 @@ function StationsPage({
                       <p className="max-w-[220px] truncate text-sm text-ink/55">{station.location || '-'}</p>
                     </td>
                     <td className="px-4 py-3.5">
-                      <div className="space-y-1">
+                      <div className="flex items-center gap-2">
                         <SubmissionModeList submission={station.submission} compact />
-                        {station.submission.brief && (
-                          <p className="max-w-[260px] truncate text-xs text-ink/40">{stripMarkdown(station.submission.brief)}</p>
-                        )}
                         {hasSubmissionConfig(station.submission) && (
                           <button
                             type="button"
@@ -3187,20 +3136,19 @@ function StationsPage({
                               event.stopPropagation()
                               setSubmissionsStationId(station.id)
                             }}
-                            className="mt-1 inline-flex items-center gap-1 rounded-md border border-stone bg-white px-2 py-1 text-[11px] font-semibold text-ink/60 transition hover:bg-paper hover:text-ink"
+                            title={`Bài nộp · ${station.name}`}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-stone bg-white px-2 py-1 text-[11px] font-semibold text-ink/55 transition hover:bg-paper hover:text-ink"
                           >
-                            <Icon name="doc" className="h-3 w-3" />
-                            Bài nộp
+                            <Icon name="doc" className="h-3.5 w-3.5" />
                           </button>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3.5 text-center">
+                    <td className="whitespace-nowrap px-4 py-3.5 text-center">
                       <span className={`font-mono text-sm font-semibold ${station.teamsHere.length > 0 ? 'text-gold' : 'text-ink/25'}`}>
                         {station.teamsHere.length}
                       </span>
-                    </td>
-                    <td className="px-4 py-3.5 text-center">
+                      <span className="mx-1 text-ink/25">·</span>
                       <span className={`font-mono text-sm font-semibold ${station.teamsDone.length > 0 ? 'text-trail' : 'text-ink/25'}`}>
                         {station.teamsDone.length}
                       </span>
@@ -3222,7 +3170,7 @@ function StationsPage({
 
               {!listLoading && stations.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-16 text-center text-sm text-ink/35">
+                  <td colSpan={8} className="px-4 py-16 text-center text-sm text-ink/35">
                     Chưa có trạm nào cho event {selectedEvent.name.toLowerCase()}. Bấm "Thêm trạm" để bắt đầu.
                   </td>
                 </tr>
@@ -3232,6 +3180,19 @@ function StationsPage({
           </div>
         </div>
       ) : null}
+
+      {adding && (
+        <StationCreateDrawer
+          phaseInfo={phaseInfo}
+          phaseMeta={phaseMeta}
+          selectedEvent={selectedEvent}
+          // Trạm mới chưa có id — khoá nháp theo phase/event đang chọn để hai
+          // event khác nhau không lỡ trộn nháp "thêm trạm" của nhau.
+          draftKey={`station:new:${phase}:${selectedEventId}`}
+          onSave={addStation}
+          onClose={() => setAdding(false)}
+        />
+      )}
 
       <StationDrawer
         key={selectedId}
