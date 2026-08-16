@@ -1476,112 +1476,12 @@ function SubmissionItemCard({
   )
 }
 
-function StationSubmissionOverview({ submission }) {
-  const config = createSubmissionConfig(submission ?? {})
-
-  return (
-    <div className="px-4 pb-4">
-      <SectionTitle title="Cấu hình bài nộp" action={<SubmissionModeList submission={submission} />} />
-
-      {config.items.length === 0 ? (
-        <div className={`${CARD} px-4 py-4 text-sm italic text-ink/35`}>
-          Trạm này hiện chưa yêu cầu đội nộp gì.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {config.brief && (
-            <div className={`${CARD} px-4 py-3`}>
-              <MarkdownPreview content={config.brief} />
-            </div>
-          )}
-
-          <div className={`${CARD} px-4 py-4`}>
-            <SectionTitle title="Các mục đội phải hoàn thành" />
-            <div className="space-y-2.5">
-              {config.items.map((item, index) => (
-                <SubmissionItemSummary key={item.id} item={item} index={index} />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Read-only rendering of one builder item, in the order admins arranged it. */
-function SubmissionItemSummary({ item, index }) {
-  const meta = MODE_META[item.type] ?? MODE_META.text
-
-  return (
-    <div className="rounded-lg border border-stone bg-paper px-3 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm font-medium text-ink">
-          <span className="font-mono text-xs text-ink/40">{index + 1}. </span>
-          {item.type === 'quiz' && (item.question || 'Chưa đặt nội dung câu hỏi')}
-          {item.type === 'text' && (item.label || 'Chưa đặt nội dung câu hỏi')}
-          {item.type === 'attachment' && `Nộp tệp · tối đa ${item.maxFiles} file`}
-        </p>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {item.type === 'text' && (
-            <Badge
-              label={item.required ? 'Bắt buộc' : 'Tuỳ chọn'}
-              cls={item.required ? 'bg-[#3E7CA8]/12 text-[#3E7CA8]' : 'bg-ink/[0.07] text-ink/45'}
-            />
-          )}
-          {item.type === 'quiz' && (
-            <Badge label={`${item.points} điểm`} cls="bg-gold/15 text-gold" />
-          )}
-          <Badge label={meta.label} cls={meta.cls} />
-        </div>
-      </div>
-
-      {item.type === 'text' && (
-        <p className="mt-1 text-xs text-ink/45">{item.placeholder || 'Chưa có gợi ý nhập liệu'}</p>
-      )}
-
-      {item.type === 'quiz' && (
-        <div className="mt-3 grid gap-2">
-          {item.options.map((option, optionIndex) => (
-            <div
-              key={`${item.id}-${optionIndex}`}
-              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                optionIndex === item.correctOption
-                  ? 'border-gold/40 bg-gold/10 text-ink'
-                  : 'border-stone bg-white text-ink/55'
-              }`}
-            >
-              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                optionIndex === item.correctOption ? 'bg-gold text-white' : 'bg-paper text-ink/40'
-              }`}>
-                {String.fromCharCode(65 + optionIndex)}
-              </span>
-              <span>{option || 'Chưa nhập lựa chọn'}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {item.type === 'attachment' && (
-        <>
-          <p className="mt-1 text-xs text-ink/45">
-            {item.allowedTypes || 'Mọi định dạng'} · tối đa {item.maxSizeMb} MB mỗi file
-          </p>
-          {item.note && (
-            <p className="mt-2 text-sm leading-6 text-ink/70">{item.note}</p>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
 function StationFlowOverview({ station }) {
   const policyMeta = CHECKIN_POLICY_META[station.checkinPolicy] ?? CHECKIN_POLICY_META.staff_scan
   const scoringMeta = SCORING_MODE_META[station.scoringMode] ?? SCORING_MODE_META.score_only
 
   return (
-    <div className="px-4 pb-4">
+    <div>
       <SectionTitle title="Vận hành check-in" />
       <div className="grid gap-3 sm:grid-cols-2">
         <div className={`${CARD} px-4 py-3`}>
@@ -1873,7 +1773,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
       <DraftNotice draft={draft} label="nội dung trạm đang soạn" />
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="sm:col-span-2">
+        <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
             Tên trạm
           </label>
@@ -1885,7 +1785,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           />
         </div>
 
-        <div className="sm:col-span-2">
+        <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
             Địa điểm
           </label>
@@ -2229,210 +2129,6 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   )
 }
 
-function StationDrawer({
-  station,
-  phase,
-  phaseLabel,
-  phaseBadgeCls,
-  selectedEvent,
-  eventName,
-  eventType,
-  onClose,
-  onToggleActive,
-  onSave,
-  onDelete,
-}) {
-  const [editing, setEditing] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  if (!station) return null
-  const status = STATUS[station.active ? 'active' : 'inactive']
-  const eventMeta = SUB_EVENT_TYPE_META[eventType] ?? SUB_EVENT_TYPE_META.custom
-  const totalScore = sumStationScore(station)
-
-  const handleSave = async (form) => {
-    // Trả kết quả về cho StationForm để nó biết có nên xoá bản nháp hay không;
-    // đóng chế độ sửa như cũ dù lưu thành công hay không.
-    const result = await onSave(station.id, form)
-    setEditing(false)
-    return result
-  }
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[560px] flex-col border-l border-stone bg-paper shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="font-mono text-xs font-semibold text-ink/40">{station.id}</span>
-              <Badge {...status} />
-              <Badge label={phaseLabel} cls={phaseBadgeCls} />
-              {eventName && <Badge label={eventName} cls={eventMeta.cls} />}
-            </div>
-            <h2 className="mt-1 truncate font-display text-xl font-bold text-ink">{station.name}</h2>
-            {station.location && (
-              <div className="mt-0.5 flex items-start gap-1 text-sm text-ink/50">
-                <Icon name="pin" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{station.location}</span>
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink"
-          >
-            <Icon name="close" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {editing ? (
-            <div className="space-y-5 py-4">
-              <StationForm
-                initial={station}
-                onSave={handleSave}
-                onCancel={() => setEditing(false)}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-3 gap-2 px-4 py-4">
-                <div className={`${CARD} px-3 py-2.5`}>
-                  <p className="font-mono text-lg font-bold leading-none text-gold">{station.teamsHere.length}</p>
-                  <p className="mt-1 text-[11px] text-ink/40">Đang ở đây</p>
-                </div>
-                <div className={`${CARD} px-3 py-2.5`}>
-                  <p className="font-mono text-lg font-bold leading-none text-trail">{station.teamsDone.length}</p>
-                  <p className="mt-1 text-[11px] text-ink/40">Đã hoàn thành</p>
-                </div>
-                <div className={`${CARD} px-3 py-2.5`}>
-                  <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
-                  <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
-                </div>
-              </div>
-
-              <StationFlowOverview station={station} />
-
-              <div className="px-4 pb-4">
-                <StationAssignmentsPanel
-                  phase={phase}
-                  selectedEvent={selectedEvent}
-                  stations={[station]}
-                  selectedStation={station}
-                  embedded
-                />
-              </div>
-
-              <StationSubmissionOverview submission={station.submission} />
-
-              <div className="px-4 pb-4">
-                <SectionTitle title={`Đang ở đây · ${station.teamsHere.length} đội`} />
-                <div className={`${CARD} overflow-hidden divide-y divide-stone/50`}>
-                  {station.teamsHere.length > 0 ? station.teamsHere.map(team => (
-                    <div key={team.id} className="flex items-center justify-between px-4 py-2.5">
-                      <div>
-                        <p className="text-sm font-medium text-ink">{team.name}</p>
-                        <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
-                      </div>
-                      <span className="font-mono text-xs text-gold">{team.arrivedAt}</span>
-                    </div>
-                  )) : (
-                    <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="px-4 pb-5">
-                <SectionTitle title={`Đã hoàn thành · ${station.teamsDone.length} đội`} />
-                <div className={`${CARD} overflow-hidden divide-y divide-stone/50`}>
-                  {station.teamsDone.length > 0 ? station.teamsDone.map(team => (
-                    <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-ink">{team.name}</p>
-                        <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
-                        <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
-                      </div>
-                    </div>
-                  )) : (
-                    <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {!editing && (
-          <div className="border-t border-stone bg-white">
-            {confirmDelete ? (
-              <div className="space-y-3 px-4 py-4">
-                <p className="text-sm text-ink">
-                  Xoá trạm <span className="font-semibold">{station.name}</span>?
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDelete(false)}
-                    className="flex-1 rounded-lg border border-stone bg-white py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
-                  >
-                    Hủy
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onDelete(station.id)
-                      setConfirmDelete(false)
-                    }}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-clay py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]"
-                  >
-                    <Icon name="trash" className="h-4 w-4" />
-                    Xác nhận xoá
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex gap-2 px-4 py-4">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(true)}
-                  className="rounded-lg border border-stone p-2.5 text-ink/35 transition hover:border-clay/30 hover:text-clay"
-                  title="Xoá trạm"
-                >
-                  <Icon name="trash" className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onToggleActive(station.id)}
-                  className={`flex-1 rounded-lg border py-2.5 text-sm font-semibold transition ${
-                    station.active
-                      ? 'border-ink/15 bg-white text-ink/60 hover:bg-paper'
-                      : 'border-trail/30 bg-trail/[0.06] text-trail hover:bg-trail/10'
-                  }`}
-                >
-                  {station.active ? 'Tạm ngưng trạm' : 'Kích hoạt trạm'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditing(true)}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
-                >
-                  Chỉnh sửa
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </aside>
-    </div>
-  )
-}
-
 function resolveAttachmentUrl(url) {
   if (!url) return null
   return url.startsWith('/') ? `${API_BASE_URL}${url}` : url
@@ -2692,43 +2388,232 @@ function StationSubmissionsDrawer({ stationId, stationName, onClose }) {
   )
 }
 
-function StationCreateDrawer({ phaseInfo, phaseMeta, selectedEvent, draftKey, onSave, onClose }) {
-  if (!selectedEvent) return null
-  const eventMeta = SUB_EVENT_TYPE_META[selectedEvent.type] ?? SUB_EVENT_TYPE_META.custom
+function StationBackLink({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink"
+    >
+      <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
+      Danh sách trạm
+    </button>
+  )
+}
+
+function StationErrorBanner({ message }) {
+  if (!message) return null
+  return (
+    <div className="rounded-xl border border-clay/20 bg-clay/[0.05] px-4 py-3 text-sm text-clay">
+      {message}
+    </div>
+  )
+}
+
+/** Cột phải của trang sửa trạm: số liệu vận hành, phân công CTV, đội đang ở/đã xong. */
+function StationOpsColumn({ station, phase, selectedEvent }) {
+  const totalScore = sumStationScore(station)
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[560px] flex-col border-l border-stone bg-paper shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
-          <div className="min-w-0">
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Thêm trạm mới</p>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
-              <Badge label={selectedEvent.name} cls={eventMeta.cls} />
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-2">
+        <div className={`${CARD} px-3 py-2.5`}>
+          <p className="font-mono text-lg font-bold leading-none text-gold">{station.teamsHere.length}</p>
+          <p className="mt-1 text-[11px] text-ink/40">Đang ở đây</p>
+        </div>
+        <div className={`${CARD} px-3 py-2.5`}>
+          <p className="font-mono text-lg font-bold leading-none text-trail">{station.teamsDone.length}</p>
+          <p className="mt-1 text-[11px] text-ink/40">Đã hoàn thành</p>
+        </div>
+        <div className={`${CARD} px-3 py-2.5`}>
+          <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
+          <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
+        </div>
+      </div>
+
+      <StationFlowOverview station={station} />
+
+      <StationAssignmentsPanel
+        phase={phase}
+        selectedEvent={selectedEvent}
+        stations={[station]}
+        selectedStation={station}
+        embedded
+      />
+
+      <div>
+        <SectionTitle title={`Đang ở đây · ${station.teamsHere.length} đội`} />
+        <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
+          {station.teamsHere.length > 0 ? station.teamsHere.map(team => (
+            <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">{team.name}</p>
+                <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
+              </div>
+              <span className="shrink-0 font-mono text-xs text-gold">{team.arrivedAt}</span>
             </div>
+          )) : (
+            <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <SectionTitle title={`Đã hoàn thành · ${station.teamsDone.length} đội`} />
+        <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
+          {station.teamsDone.length > 0 ? station.teamsDone.map(team => (
+            <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">{team.name}</p>
+                <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
+                <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
+              </div>
+            </div>
+          )) : (
+            <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StationEditView({
+  station,
+  phase,
+  phaseInfo,
+  phaseMeta,
+  selectedEvent,
+  error,
+  onSave,
+  onDelete,
+  onToggleActive,
+  onBack,
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const status = STATUS[station.active ? 'active' : 'inactive']
+  const eventMeta = SUB_EVENT_TYPE_META[selectedEvent?.type] ?? SUB_EVENT_TYPE_META.custom
+
+  const handleSave = async (form) => onSave(station.id, form)
+
+  return (
+    <div className="space-y-4">
+      <StationErrorBanner message={error} />
+
+      <div className={`${CARD} px-5 py-4`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <StationBackLink onClick={onBack} />
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-xs font-semibold text-ink/40">{station.id}</span>
+              <Badge {...status} />
+              <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
+              {selectedEvent && <Badge label={selectedEvent.name} cls={eventMeta.cls} />}
+            </div>
+            <h2 className="mt-1.5 truncate font-display text-2xl font-bold text-ink">{station.name}</h2>
+            {station.location && (
+              <div className="mt-0.5 flex items-start gap-1 text-sm text-ink/50">
+                <Icon name="pin" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{station.location}</span>
+              </div>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink"
-          >
-            <Icon name="close" />
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {confirmDelete ? (
+              <>
+                <span className="text-sm text-ink/55">Xoá trạm này?</span>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg border border-stone bg-white px-4 py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDelete(station.id)
+                    setConfirmDelete(false)
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-clay px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]"
+                >
+                  <Icon name="trash" className="h-4 w-4" />
+                  Xác nhận xoá
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  title="Xoá trạm"
+                  className="rounded-lg border border-stone p-2.5 text-ink/35 transition hover:border-clay/30 hover:text-clay"
+                >
+                  <Icon name="trash" className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleActive(station.id)}
+                  className={`rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${
+                    station.active
+                      ? 'border-ink/15 bg-white text-ink/60 hover:bg-paper'
+                      : 'border-trail/30 bg-trail/[0.06] text-trail hover:bg-trail/10'
+                  }`}
+                >
+                  {station.active ? 'Tạm ngưng trạm' : 'Kích hoạt trạm'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)]">
+        <div className={`${CARD} overflow-hidden`}>
+          <div className="border-b border-stone px-5 py-3">
+            <p className="font-display font-semibold text-ink">Cấu hình trạm</p>
+          </div>
+          <StationForm initial={station} onSave={handleSave} onCancel={onBack} />
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          <div className="space-y-5 py-4">
-            <StationForm
-              initial={createBlankStation()}
-              onSave={onSave}
-              onCancel={onClose}
-              allowInitialAssignment
-              draftKey={draftKey}
-            />
-          </div>
+        <StationOpsColumn station={station} phase={phase} selectedEvent={selectedEvent} />
+      </div>
+    </div>
+  )
+}
+
+function StationCreateView({ phaseInfo, phaseMeta, selectedEvent, error, draftKey, onSave, onBack }) {
+  const eventMeta = SUB_EVENT_TYPE_META[selectedEvent?.type] ?? SUB_EVENT_TYPE_META.custom
+
+  return (
+    <div className="space-y-4">
+      <StationErrorBanner message={error} />
+
+      <div className={`${CARD} px-5 py-4`}>
+        <StationBackLink onClick={onBack} />
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Badge label={phaseInfo.label} cls={phaseMeta.badgeCls} />
+          <Badge label={selectedEvent.name} cls={eventMeta.cls} />
         </div>
-      </aside>
+        <h2 className="mt-1.5 font-display text-2xl font-bold text-ink">Thêm trạm mới</h2>
+      </div>
+
+      <div className={`${CARD} overflow-hidden`}>
+        <div className="border-b border-stone px-5 py-3">
+          <p className="font-display font-semibold text-ink">Thông tin trạm</p>
+        </div>
+        <StationForm
+          initial={createBlankStation()}
+          onSave={onSave}
+          onCancel={onBack}
+          allowInitialAssignment
+          draftKey={draftKey}
+        />
+      </div>
     </div>
   )
 }
@@ -3010,6 +2895,42 @@ function StationsPage({
     }
   }
 
+  // Sửa/thêm trạm là trang riêng thay vì drawer: form dài cần không gian,
+  // URL vẫn là query string (?station=/?new=1) nên reload + back hoạt động như cũ.
+  if (adding && selectedEvent) {
+    return (
+      <StationCreateView
+        phaseInfo={phaseInfo}
+        phaseMeta={phaseMeta}
+        selectedEvent={selectedEvent}
+        error={apiError}
+        // Trạm mới chưa có id — khoá nháp theo phase/event đang chọn để hai
+        // event khác nhau không lỡ trộn nháp "thêm trạm" của nhau.
+        draftKey={`station:new:${phase}:${selectedEventId}`}
+        onSave={addStation}
+        onBack={() => setAdding(false)}
+      />
+    )
+  }
+
+  if (selectedId && selected) {
+    return (
+      <StationEditView
+        key={selected.id}
+        station={selected}
+        phase={phase}
+        phaseInfo={phaseInfo}
+        phaseMeta={phaseMeta}
+        selectedEvent={selectedEvent}
+        error={apiError}
+        onSave={saveStation}
+        onDelete={deleteStation}
+        onToggleActive={toggleActive}
+        onBack={() => setSelectedId(null)}
+      />
+    )
+  }
+
   return (
     <div className="space-y-4">
       {apiError && (
@@ -3180,34 +3101,6 @@ function StationsPage({
           </div>
         </div>
       ) : null}
-
-      {adding && (
-        <StationCreateDrawer
-          phaseInfo={phaseInfo}
-          phaseMeta={phaseMeta}
-          selectedEvent={selectedEvent}
-          // Trạm mới chưa có id — khoá nháp theo phase/event đang chọn để hai
-          // event khác nhau không lỡ trộn nháp "thêm trạm" của nhau.
-          draftKey={`station:new:${phase}:${selectedEventId}`}
-          onSave={addStation}
-          onClose={() => setAdding(false)}
-        />
-      )}
-
-      <StationDrawer
-        key={selectedId}
-        station={selected}
-        phase={phase}
-        phaseLabel={phaseInfo.label}
-        phaseBadgeCls={phaseMeta.badgeCls}
-        selectedEvent={selectedEvent}
-        eventName={selectedEvent?.name}
-        eventType={selectedEvent?.type}
-        onClose={() => setSelectedId(null)}
-        onToggleActive={toggleActive}
-        onSave={saveStation}
-        onDelete={deleteStation}
-      />
 
       <StationSubmissionsDrawer
         stationId={submissionsStationId}
