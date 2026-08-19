@@ -33,8 +33,9 @@ function LoginPage() {
   // đó sẽ đóng băng closure của render đầu — lúc antibot chưa tải về và token
   // còn rỗng — nên click Google luôn POST thiếu turnstile_token. Ủy quyền qua
   // ref để mỗi lần GSI gọi, ta chạy được handler với state mới nhất.
-  const googleCredentialRef = useRef(handleGoogleCredential)
-  googleCredentialRef.current = handleGoogleCredential
+  // Ref khởi bằng null và chỉ được gán sau khi handleGoogleCredential khai báo
+  // ở dưới — đọc một const trước chỗ khai báo là TDZ ReferenceError, trắng trang.
+  const googleCredentialRef = useRef(null)
 
   const antibotEnabled = Boolean(antibot?.enabled)
   // Payload gửi kèm mỗi POST công khai khi chống bot bật — token Turnstile +
@@ -261,6 +262,8 @@ function LoginPage() {
       setApiError(err.message?.includes('fetch') ? 'Không thể kết nối tới server.' : `Lỗi: ${err.message}`)
     } finally { setIsLoading(false) }
   }, [handleApiError, persistAndRedirect, antibotEnabled, turnstileToken])
+  // Gán sau khi handler khai báo xong — xem note ở googleCredentialRef trên.
+  googleCredentialRef.current = handleGoogleCredential
 
   useEffect(() => {
     if (googleInitialized.current) return
