@@ -82,7 +82,8 @@ services:
     environment:
       DJANGO_ENV: production
       DJANGO_AUTOSTART: "0"
-      RUN_DISCORD_BOT: "1"
+      RUN_DISCORD_BOT: ${RUN_DISCORD_BOT:-0}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
       DB_HOST: postgres
       DB_PORT: "5432"
       FFMPEG_EXE: ffmpeg
