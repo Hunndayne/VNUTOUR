@@ -1,4 +1,4 @@
-# VNUTour 2025
+# VNUTour 2026
 
 Hệ thống quản lý sự kiện tour cho sinh viên ĐHQG (VNU), gồm backend (Discord bot + API) và frontend (web quét QR điểm danh) trong một thư mục thống nhất.
 
