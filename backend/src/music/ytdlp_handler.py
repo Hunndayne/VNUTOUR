@@ -25,6 +25,12 @@ YTDLP_OPTS = {
     "default_search": "ytsearch1",
     "skip_download": True,
     "source_address": "0.0.0.0",
+    # The web client's stream URLs need a JS runtime to decipher (none is
+    # installed in the container), which YouTube now enforces with a 403.
+    # android/ios clients skip that step entirely.
+    "extractor_args": {
+        "youtube": {"player_client": ["android", "ios", "web"]},
+    },
 }
 
 
