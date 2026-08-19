@@ -89,9 +89,19 @@ const EMPTY_PROFILE = {
   extra: {},
 }
 
+// Schema fields outside the first-class Participant columns (e.g. "gender")
+// round-trip through `extra`. `schemaValue()` falls back to `data.extra[key]`
+// for display, but the save payload is sent flat — so anything left only in
+// `extra` reads as filled in the UI yet vanishes (and fails required-field
+// validation) the moment the form is resubmitted without being re-touched.
+// Flattening on load keeps the top-level key authoritative from then on.
+function withFlatExtra(data) {
+  return { ...(data?.extra || {}), ...data }
+}
+
 function normalizeProfile(authMe, profilePayload) {
   const profile = profilePayload?.profile || null
-  return {
+  return withFlatExtra({
     full_name: profile?.full_name || authMe?.full_name || '',
     mssv: profile?.mssv || authMe?.mssv || '',
     email: profile?.email || authMe?.email || '',
@@ -102,7 +112,7 @@ function normalizeProfile(authMe, profilePayload) {
     cccd: profile?.cccd || '',
     date_of_birth: profile?.date_of_birth || '',
     extra: profile?.extra || {},
-  }
+  })
 }
 
 function normalizeTeam(teamPayload, teamDetail = null) {
@@ -1450,11 +1460,11 @@ function ParticipantDashboard() {
     : ''
 
   const memberBaseline = () => (
-    memberDialog?.index == null ? blankMember() : { ...members[memberDialog.index] }
+    memberDialog?.index == null ? blankMember() : withFlatExtra(members[memberDialog.index])
   )
 
   const openMemberDialog = (index = null) => {
-    const base = index === null ? blankMember() : members[index]
+    const base = index === null ? blankMember() : withFlatExtra(members[index])
     const stored = readDraft(`participant:member:${index === null ? 'new' : base.mssv || 'new'}`)
     setMemberDialog({ index })
     // The stored draft wins field by field, but anything the server has since
