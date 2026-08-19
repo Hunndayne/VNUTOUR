@@ -339,7 +339,7 @@ export default function RegisterPage() {
     <Shell>
       {/* Hero */}
       <header className="mb-10">
-        <p className="font-mono text-xs uppercase tracking-[0.3em] text-trail">VNU Tour 2025 · Ghi danh</p>
+        <p className="font-mono text-xs uppercase tracking-[0.3em] text-trail">VNU Tour 2026 · Ghi danh</p>
         <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] text-ink sm:text-5xl">
           Lên đường khám phá<br />khu đô thị ĐHQG-HCM
         </h1>

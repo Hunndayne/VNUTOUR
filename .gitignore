@@ -35,3 +35,4 @@ __pycache__/
 *.pyd
 
 plan/coop-page-plan.md
+.zcode/

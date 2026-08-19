@@ -29,6 +29,12 @@ function LoginPage() {
   const [turnstileReset, setTurnstileReset] = useState(0)
   const { honeypot, setHoneypot, signals, resetClock } = useFormSignals()
   const googleInitialized = useRef(false)
+  // GSI giữ nguyên callback đăng ký lúc initialize. Truyền thẳng handler vào
+  // đó sẽ đóng băng closure của render đầu — lúc antibot chưa tải về và token
+  // còn rỗng — nên click Google luôn POST thiếu turnstile_token. Ủy quyền qua
+  // ref để mỗi lần GSI gọi, ta chạy được handler với state mới nhất.
+  const googleCredentialRef = useRef(handleGoogleCredential)
+  googleCredentialRef.current = handleGoogleCredential
 
   const antibotEnabled = Boolean(antibot?.enabled)
   // Payload gửi kèm mỗi POST công khai khi chống bot bật — token Turnstile +
@@ -263,12 +269,18 @@ function LoginPage() {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
     if (!clientId) return
 
+    const initialize = () => {
+      if (!window.google?.accounts) return
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response) => googleCredentialRef.current?.(response),
+      })
+      setGoogleReady(true)
+    }
+
     const scriptId = 'google-gis-script'
     if (document.getElementById(scriptId)) {
-      if (window.google?.accounts) {
-        window.google.accounts.id.initialize({ client_id: clientId, callback: handleGoogleCredential })
-        setGoogleReady(true)
-      }
+      initialize()
       return
     }
 
@@ -277,14 +289,9 @@ function LoginPage() {
     script.src = 'https://accounts.google.com/gsi/client'
     script.async = true
     script.defer = true
-    script.onload = () => {
-      if (window.google?.accounts) {
-        window.google.accounts.id.initialize({ client_id: clientId, callback: handleGoogleCredential })
-        setGoogleReady(true)
-      }
-    }
+    script.onload = initialize
     document.head.appendChild(script)
-  }, [handleGoogleCredential])
+  }, [])
 
   const renderGoogleButton = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
