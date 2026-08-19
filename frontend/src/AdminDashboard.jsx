@@ -10,6 +10,7 @@ import ScoreManagementPage from './ScoreManagementPage.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import SiteSettingsPage from './SiteSettingsPage.jsx'
 import FramesAdminPanel from './FramesAdminPanel.jsx'
+import LinksAdminPanel from './LinksAdminPanel.jsx'
 import OperationsPage from './OperationsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, isMasterAdmin, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
@@ -77,6 +78,7 @@ const NAV_GROUPS = [
       { key: 'teams', label: 'Đội thi', icon: 'users' },
       { key: 'scores', label: 'Điểm & suất đi tiếp', icon: 'check' },
       { key: 'frames', label: 'Khung ảnh', icon: 'image' },
+      { key: 'links', label: 'Rút gọn link', icon: 'link' },
     ],
   },
   {
@@ -1117,6 +1119,8 @@ function AdminDashboard() {
               />
             ) : activeTab === 'frames' ? (
               <FramesAdminPanel />
+            ) : activeTab === 'links' ? (
+              <LinksAdminPanel />
             ) : activeTab === 'discord' ? (
               <DiscordPage />
             ) : activeTab === 'accounts' ? (

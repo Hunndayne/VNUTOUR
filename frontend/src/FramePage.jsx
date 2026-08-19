@@ -15,6 +15,8 @@ import logoImage from './assets/vnutour-logo.png'
 import { Icon } from './ui.jsx'
 import { frameImageUrl, listPublicFrames, logFrameDownload } from './frameApi.js'
 import { navigate } from './router.js'
+import { TurnstileWidget } from './antibot.jsx'
+import { apiRequest } from './api.js'
 
 const PREVIEW_MAX_DIM = 1400 // internal preview canvas cap, in device pixels
 const PHOTO_MAX_DIM = 4096 // downsample huge uploads before they ever hit the canvas
@@ -228,6 +230,18 @@ function FramePage() {
 
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState('')
+
+  // Chống bot cho đếm lượt tải (bật từ Cài đặt hệ thống).
+  const [antibot, setAntibot] = useState(null)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileReset, setTurnstileReset] = useState(0)
+  const antibotEnabled = Boolean(antibot?.enabled)
+
+  useEffect(() => {
+    apiRequest('/public/site-config', { auth: false })
+      .then((cfg) => { if (cfg?.antibot?.enabled) setAntibot(cfg.antibot) })
+      .catch(() => {})
+  }, [])
 
   const canvasRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -455,6 +469,11 @@ function FramePage() {
 
   const handleDownload = async () => {
     if (!photoSource || !frameImg || !frameSize.width || !frameSize.height || downloading) return
+    if (antibotEnabled && !turnstileToken) {
+      setDownloadError('Vui lòng hoàn thành bước xác minh chống bot trước khi tải xuống.')
+      setTurnstileReset((n) => n + 1)
+      return
+    }
     setDownloading(true)
     setDownloadError('')
     try {
@@ -487,7 +506,9 @@ function FramePage() {
       link.remove()
       setTimeout(() => URL.revokeObjectURL(url), 2000)
 
-      logFrameDownload(selectedFrame.id)
+      logFrameDownload(selectedFrame.id, { turnstileToken })
+      // Token một lần dùng — chuẩn bị token mới cho lượt tải kế tiếp.
+      if (antibotEnabled) setTurnstileReset((n) => n + 1)
     } catch (err) {
       const isSecurity = err?.name === 'SecurityError' || /tainted|security/i.test(String(err?.message || ''))
       setDownloadError(
@@ -652,7 +673,17 @@ function FramePage() {
                     </>
                   )}
 
-                  <div className="mt-1 border-t border-stone pt-5">
+                  <div className="mt-1 space-y-3 border-t border-stone pt-5">
+                    {antibotEnabled && (
+                      <div className="flex justify-center">
+                        <TurnstileWidget
+                          siteKey={antibot.site_key}
+                          onToken={setTurnstileToken}
+                          onError={() => setDownloadError('Không tải được công cụ xác minh. Kiểm tra kết nối rồi thử lại.')}
+                          resetSignal={turnstileReset}
+                        />
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={handleDownload}
@@ -662,7 +693,7 @@ function FramePage() {
                       {downloading ? 'Đang tạo ảnh…' : 'Tải xuống'}
                     </button>
                     {downloadError && (
-                      <p className="mt-2 text-sm font-semibold text-clay">{downloadError}</p>
+                      <p className="text-sm font-semibold text-clay">{downloadError}</p>
                     )}
                   </div>
                 </div>

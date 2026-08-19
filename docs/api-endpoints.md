@@ -29,6 +29,22 @@ Roles (`Account.role`): `admin`, `collab`, `member`. **"Đội trưởng" = mộ
 
 \* gated bởi System Settings `registration_open`.
 
+### Chống bot (Turnstile)
+
+Khi switch **Chống bot** bật (Cài đặt hệ thống) và đủ `TURNSTILE_SITE_KEY`/`TURNSTILE_SECRET_KEY`
+trong env, các POST công khai sau yêu cầu thêm `turnstile_token` trong body (token từ widget
+Cloudflare Turnstile — frontend đọc `site_key` qua `GET /api/public/site-config`):
+
+`/api/auth/login`, `/api/auth/signup`, `/api/auth/register`, `/api/auth/google`,
+`/api/register/individual`, `/api/register/team`, `/api/register/lookup`,
+`/api/public/frames/<id>/download`.
+
+- Thiếu token → `400 turnstile_required`; sai/hết hạn → `403 turnstile_invalid`;
+  Cloudflare không phản hồi → `403 turnstile_unreachable` (fail-closed).
+- Các form HTML của hệ thống còn gửi kèm honeypot `company` + `elapsed_ms`:
+  honeypot có giá trị → `400 bot_detected`; nộp dưới 3 giây → `400 too_fast`.
+- Tắt switch → mọi endpoint chấp nhận payload như cũ, không cần token.
+
 ## Đội trưởng (captain) — quản lý đội của mình
 
 | Method | Path | Quyền | Ghi chú |

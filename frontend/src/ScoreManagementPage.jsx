@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest, formatDateTime, logoutAndRedirect } from './api.js'
 import { Badge, CARD, Icon } from './ui.jsx'
-import { SUB_EVENT_TYPE_META, getPhaseInfo } from './adminProgram.js'
+import { SUB_EVENT_TYPE_META } from './adminProgram.js'
 import { DraftNotice, useDraftState } from './drafts.jsx'
 
 const ENTRY_KIND_META = {
@@ -36,26 +36,6 @@ function explainApiError(error) {
     not_found: 'Không tìm thấy dòng điểm cần thao tác.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu điểm.'
-}
-
-function MetricCard({ value, label, note, accent = 'default' }) {
-  const valueClass = accent === 'trail'
-    ? 'text-trail'
-    : accent === 'gold'
-      ? 'text-gold'
-      : accent === 'sky'
-        ? 'text-[#3E7CA8]'
-        : accent === 'clay'
-          ? 'text-clay'
-          : 'text-ink'
-
-  return (
-    <div className={`${CARD} px-4 py-3`}>
-      <p className={`font-mono text-2xl font-bold leading-none ${valueClass}`}>{value}</p>
-      <p className="mt-1.5 text-sm font-medium text-ink/70">{label}</p>
-      {note && <p className="mt-1 text-xs leading-5 text-ink/40">{note}</p>}
-    </div>
-  )
 }
 
 function EventBadge({ type }) {
@@ -277,7 +257,6 @@ function ScoreManagementView({
     setManualSelection((current) => nextManualSelection(scoreboard.leaderboard, Math.max(0, ruleForm.slots), current))
   }, [loading, ruleForm.mode, ruleForm.slots, scoreboard.leaderboard, setManualSelection])
 
-  const phaseInfo = getPhaseInfo(phase)
   const schedule = phaseSchedule[phase]
 
   const entriesByEvent = useMemo(() => {
@@ -495,19 +474,8 @@ function ScoreManagementView({
         </div>
       )}
 
-      <section className={`${CARD} px-5 py-5`}>
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge label={phaseInfo.label} cls="bg-trail/12 text-trail" />
-              {schedule && <Badge label={`${schedule.startDate || '--'} -> ${schedule.endDate || '--'}`} cls="bg-ink/[0.07] text-ink/55" />}
-              {scoreboard.usesPhaseRoster && <Badge label="Dùng roster phase" cls="bg-gold/15 text-gold" />}
-              {isSummaryView && <Badge label={`Tổng hợp từ ${sourcePhaseLabel}`} cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
-              {scoreboard.resultsLocked && <Badge label="Đã khóa kết quả" cls="bg-clay/12 text-clay" />}
-            </div>
-            <h2 className="mt-3 font-display text-2xl font-semibold text-ink">Tổng hợp điểm theo phase</h2>
-          </div>
-
+      <div className={`${CARD} space-y-3 px-5 py-4`}>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap gap-2 rounded-xl border border-stone bg-white p-1">
             {phaseOptions.map((option) => {
               const active = option.key === phase
@@ -525,19 +493,23 @@ function ScoreManagementView({
               )
             })}
           </div>
-        </div>
-      </section>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard value={String(scoreEvents.length)} label={isSummaryView ? 'Event tổng kết' : 'Event trong phase'} note={isSummaryView ? `Từ ${sourcePhaseLabel}.` : 'Lấy từ Quản lý sự kiện.'} accent="sky" />
-        <MetricCard value={String(totalStationPoints)} label="Tổng điểm trạm" note="Auto từ station session đã đóng." accent="trail" />
-        <MetricCard value={String(totalManualPoints)} label="Cộng trừ thủ công" note="Bonus, penalty và điều chỉnh." accent="gold" />
-        <MetricCard value={String(scoreboard.roster.length)} label="Đội trong roster" note={scoreboard.usesPhaseRoster ? 'Roster đã khóa theo phase' : 'Đang lấy từ đội đã duyệt'} accent="clay" />
+          <div className="flex flex-wrap items-center gap-2">
+            {scoreboard.usesPhaseRoster && <Badge label="Dùng roster phase" cls="bg-gold/15 text-gold" />}
+            {isSummaryView && <Badge label={`Tổng hợp từ ${sourcePhaseLabel}`} cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+            {scoreboard.resultsLocked && <Badge label="Đã khóa kết quả" cls="bg-clay/12 text-clay" />}
+          </div>
+        </div>
+
+        <p className="border-t border-stone pt-3 font-mono text-xs leading-5 text-ink/45">
+          {scoreEvents.length} event · {totalStationPoints} điểm trạm · {totalManualPoints} cộng trừ tay · {scoreboard.roster.length} đội roster
+          {schedule ? ` · ${schedule.startDate || '--'} → ${schedule.endDate || '--'}` : ''}
+        </p>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.35fr_minmax(320px,0.95fr)]">
-        <section className={`${CARD} px-5 py-4`}>
-          <div className="flex items-start justify-between gap-3">
+        <section className={`${CARD} overflow-hidden`}>
+          <div className="flex items-start justify-between gap-3 border-b border-stone px-5 py-4">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Tổng hợp event</p>
               <h3 className="mt-1 font-display text-xl font-semibold text-ink">Điểm của từng event con</h3>
@@ -545,41 +517,44 @@ function ScoreManagementView({
             <Badge label={`${scoreEvents.length} event`} cls="bg-ink/[0.07] text-ink/55" />
           </div>
 
-          <div className="mt-4 space-y-3">
-            {eventSummaries.length > 0 ? eventSummaries.map((eventItem) => (
-              <div key={eventItem.id} className="rounded-xl border border-stone bg-white px-4 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <EventBadge type={eventItem.type} />
-                      {eventItem.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
-                    </div>
-                    <h4 className="mt-2 text-sm font-semibold text-ink">{eventItem.name}</h4>
-                    {eventItem.note && <p className="mt-2 text-sm leading-6 text-ink/50">{eventItem.note}</p>}
-                  </div>
-                  <span className="font-mono text-lg font-bold text-ink">{eventItem.totalPoints}</span>
-                </div>
-
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <div className="rounded-lg border border-stone bg-paper px-3 py-2">
-                    <p className="font-mono text-lg font-bold text-ink">{eventItem.stationPoints}</p>
-                    <p className="mt-1 text-[11px] text-ink/40">Điểm trạm</p>
-                  </div>
-                  <div className="rounded-lg border border-stone bg-paper px-3 py-2">
-                    <p className="font-mono text-lg font-bold text-ink">{eventItem.extraPoints}</p>
-                    <p className="mt-1 text-[11px] text-ink/40">Cộng trừ khác</p>
-                  </div>
-                  <div className="rounded-lg border border-stone bg-paper px-3 py-2">
-                    <p className="font-mono text-lg font-bold text-ink">{eventItem.touchedTeams}</p>
-                    <p className="mt-1 text-[11px] text-ink/40">Đội đã chấm điểm</p>
-                  </div>
-                </div>
-              </div>
-            )) : (
-              <div className="rounded-xl border border-dashed border-stone bg-paper px-4 py-10 text-sm text-ink/35">
-                Phase này chưa có event nào. Hãy tạo event ở tab Quản lý sự kiện trước.
-              </div>
-            )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left">
+              <thead>
+                <tr className="border-b border-stone font-mono text-[10px] uppercase tracking-wider text-ink/35">
+                  <th className="px-5 py-3 font-medium">Event</th>
+                  <th className="px-4 py-3 text-right font-medium">Điểm trạm</th>
+                  <th className="px-4 py-3 text-right font-medium">Cộng trừ khác</th>
+                  <th className="px-4 py-3 text-center font-medium">Đội chấm</th>
+                  <th className="px-5 py-3 text-right font-medium">Tổng</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone/60">
+                {eventSummaries.length > 0 ? eventSummaries.map((eventItem) => (
+                  <tr key={eventItem.id}>
+                    <td className="px-5 py-3.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <EventBadge type={eventItem.type} />
+                        {eventItem.usesStations && <Badge label="Có trạm" cls="bg-[#3E7CA8]/12 text-[#3E7CA8]" />}
+                      </div>
+                      <p className="mt-1.5 text-sm font-medium text-ink">{eventItem.name}</p>
+                      {eventItem.note && (
+                        <p className="mt-0.5 max-w-[380px] truncate text-xs text-ink/40" title={eventItem.note}>{eventItem.note}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3.5 text-right font-mono text-sm font-semibold text-[#3E7CA8]">{eventItem.stationPoints}</td>
+                    <td className="px-4 py-3.5 text-right font-mono text-sm font-semibold text-gold">{eventItem.extraPoints}</td>
+                    <td className="px-4 py-3.5 text-center font-mono text-sm text-ink/60">{eventItem.touchedTeams}</td>
+                    <td className="px-5 py-3.5 text-right font-mono text-base font-bold text-ink">{eventItem.totalPoints}</td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-14 text-center text-sm text-ink/35">
+                      Phase này chưa có event nào. Hãy tạo event ở tab Quản lý sự kiện trước.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -711,9 +686,6 @@ function ScoreManagementView({
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Leaderboard</p>
               <h3 className="mt-1 font-display text-xl font-semibold text-ink">Bảng xếp hạng của phase</h3>
             </div>
-            <p className="text-sm text-ink/45">
-              Tổng điểm được tính trực tiếp từ ledger score entries của backend.
-            </p>
           </div>
 
           <div className="overflow-x-auto">

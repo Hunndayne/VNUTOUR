@@ -25,7 +25,7 @@ from api.models import Account, Participant
 from .views_shared import (
     _json_body, _extract_token, _auth_or_401,
     _set_auth_cookie, _clear_auth_cookie,
-    _consume_rate_limit, AUTH_COOKIE_NAME,
+    _consume_rate_limit, _require_antibot, AUTH_COOKIE_NAME,
 )
 
 import secrets
@@ -61,6 +61,9 @@ def login_view(request: HttpRequest):
     )
     if limited:
         return limited
+    blocked = _require_antibot(request, data, form_signals=True)
+    if blocked:
+        return blocked
 
     acc, err = authenticate(username, password)
     if err:
@@ -439,6 +442,9 @@ def register_view(request: HttpRequest):
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
+    blocked = _require_antibot(request, data)
+    if blocked:
+        return blocked
 
     username = str((data.get("username") or "").strip())
     password = str((data.get("password") or "").strip())
@@ -495,6 +501,9 @@ def signup_view(request: HttpRequest):
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
+    blocked = _require_antibot(request, data, form_signals=True)
+    if blocked:
+        return blocked
 
     username = str((data.get("username") or "").strip())
     password = str((data.get("password") or "").strip())
@@ -566,6 +575,17 @@ def google_login_view(request: HttpRequest):
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
+    # Google login có thể tạo tài khoản participant khi đăng ký đang mở —
+    # trước đây endpoint này hoàn toàn không có rate limit.
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="google-login",
+        limit=settings.AUTH_GOOGLE_RATE_LIMIT,
+        window_seconds=settings.AUTH_GOOGLE_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
+
     data = _json_body(request)
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
@@ -573,6 +593,10 @@ def google_login_view(request: HttpRequest):
     credential = str((data.get("credential") or "").strip())
     if not credential:
         return JsonResponse({"error": "missing_credential"}, status=400)
+
+    blocked = _require_antibot(request, data)
+    if blocked:
+        return blocked
 
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     if not client_id:

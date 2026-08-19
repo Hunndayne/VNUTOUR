@@ -21,6 +21,7 @@ from api.services import team_merge_service
 from api.services.registration_service import normalize_gender, get_schema, save_schema
 from api.services.submission_storage_service import proof_file_response
 from api.services.payment_service import get_payment_config, save_payment_config
+from api.services.antibot_service import antibot_config, set_antibot_enabled
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 
 
@@ -428,25 +429,42 @@ def admin_payment_config_view(request: HttpRequest):
 
 @csrf_exempt
 def admin_site_config_view(request: HttpRequest):
-    """GET/PUT the registration switch (the public `allow_signup` flag)."""
+    """GET/PUT site switches: registration + anti-bot (Turnstile)."""
     acc, err = _require_role(request, Account.ROLE_ADMIN)
     if err:
         return err
 
     if request.method == "GET":
-        return JsonResponse({"registration_open": registration_is_open()})
+        return JsonResponse({
+            "registration_open": registration_is_open(),
+            "antibot": antibot_config(),
+        })
 
     if request.method == "PUT":
         data = _json_body(request)
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
-        raw = data.get("registration_open")
-        # Parse tolerantly the same way registration_is_open() reads strings.
-        if isinstance(raw, str):
-            value = raw.strip().lower() in {"1", "true", "yes", "on"}
-        else:
-            value = bool(raw)
-        return JsonResponse({"registration_open": set_registration_open(value)})
+        response = {}
+        if "registration_open" in data:
+            raw = data.get("registration_open")
+            # Parse tolerantly the same way registration_is_open() reads strings.
+            if isinstance(raw, str):
+                value = raw.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                value = bool(raw)
+            response["registration_open"] = set_registration_open(value)
+        if "antibot_enabled" in data:
+            raw = data.get("antibot_enabled")
+            if isinstance(raw, str):
+                value = raw.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                value = bool(raw)
+            response["antibot"] = set_antibot_enabled(value)
+        if not response:
+            return JsonResponse({"error": "missing_fields"}, status=400)
+        response.setdefault("registration_open", registration_is_open())
+        response.setdefault("antibot", antibot_config())
+        return JsonResponse(response)
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 

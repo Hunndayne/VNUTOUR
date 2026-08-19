@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiRequest } from './api.js'
 import { Icon } from './ui.jsx'
+import { TurnstileWidget, HoneypotField } from './antibot.jsx'
+import { useFormSignals, ANTIBOT_ERROR_TEXT, ANTIBOT_ERROR_CODES } from './antibot.js'
 
 // ── Program timeline (from the 2025 brief). Shown as trail waypoints. ──────────
 const STAGES = [
@@ -207,6 +209,20 @@ export default function RegisterPage() {
   const [openMember, setOpenMember] = useState(0) // 0 = captain
   const [teamMemberCount, setTeamMemberCount] = useState(1)
 
+  // Chống bot (bật từ Cài đặt hệ thống): Turnstile + honeypot/time-trap.
+  const [antibot, setAntibot] = useState(null)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileReset, setTurnstileReset] = useState(0)
+  const { honeypot, setHoneypot, signals } = useFormSignals()
+  const antibotEnabled = Boolean(antibot?.enabled)
+  const antibotPayload = () => (antibotEnabled ? { turnstile_token: turnstileToken, ...signals() } : {})
+
+  useEffect(() => {
+    apiRequest('/public/site-config', { auth: false })
+      .then((cfg) => { if (cfg?.antibot?.enabled) setAntibot(cfg.antibot) })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     apiRequest('/register/schema', { auth: false })
       .then((s) => {
@@ -288,20 +304,32 @@ export default function RegisterPage() {
 
   async function submit() {
     setError('')
+    if (antibotEnabled && !turnstileToken) {
+      setError(ANTIBOT_ERROR_TEXT.turnstile_required)
+      // Token có thể đã hết hạn — kick widget chạy lại challenge.
+      setTurnstileReset((n) => n + 1)
+      return
+    }
     setSubmitting(true)
     try {
       if (mode === 'individual') {
-        const payload = await apiRequest('/register/individual', { auth: false, method: 'POST', body: individual })
+        const payload = await apiRequest('/register/individual', { auth: false, method: 'POST', body: { ...individual, ...antibotPayload() } })
         setDone(payload)
       } else {
         const payload = await apiRequest('/register/team', {
           auth: false, method: 'POST',
-          body: { team_name: showTeamName ? teamName : '', payment_proof: paymentProof, captain, members },
+          body: { team_name: showTeamName ? teamName : '', payment_proof: paymentProof, captain, members, ...antibotPayload() },
         })
         setDone(payload)
       }
     } catch (e) {
-      setError(explain(e.message, schema))
+      // Mã chống bot có sẵn câu tiếng Việt riêng; lỗi khác theo explain() như cũ.
+      if (ANTIBOT_ERROR_CODES.has(String(e.message))) {
+        setError(ANTIBOT_ERROR_TEXT[e.message])
+        setTurnstileReset((n) => n + 1)
+      } else {
+        setError(explain(e.message, schema))
+      }
     } finally {
       setSubmitting(false)
     }
@@ -439,6 +467,19 @@ export default function RegisterPage() {
           {error && (
             <p className="mt-5 rounded-lg border border-clay/30 bg-clay/[0.05] px-4 py-3 text-sm text-clay">{error}</p>
           )}
+
+          {antibotEnabled && (
+            <div className="mt-5 flex justify-center">
+              <TurnstileWidget
+                siteKey={antibot.site_key}
+                onToken={setTurnstileToken}
+                onError={() => setError(ANTIBOT_ERROR_TEXT.turnstile_script_failed)}
+                resetSignal={turnstileReset}
+              />
+            </div>
+          )}
+
+          <HoneypotField value={honeypot} onChange={setHoneypot} />
 
           <div className="mt-6 flex items-center justify-end gap-3">
             <button
