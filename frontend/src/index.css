@@ -7,109 +7,432 @@ html, body, #root {
 }
 
 body {
-  @apply bg-gradient-to-br from-indigo-500 via-purple-600 to-purple-800 text-slate-900 antialiased;
+  @apply bg-[#e6f7ff] text-slate-900 antialiased;
 }
 
-/* Landing palette 2026. These selectors are scoped to LandingPage so the
-   administration and participant surfaces keep their existing field-map theme. */
-.landing-page,
+/* Custom variables for Ocean theme */
+:root {
+  --brand-teal: #0f9e9e;
+  --fade-hero-start: var(--brand-teal);
+  --fade-hero-end: #3fc0bc;
+  --fade-organizers-end: #4fc7c2;
+  --fade-about-end: #f5fdff;
+  --fade-tour-mid: #e8faff;
+  --fade-tour-end: #d9f5ff;
+  --sky-light: #e6f7ff;
+  --cyan-bright: #00b6f1;
+  --cyan-light: #39d5f4;
+  --teal-green: #18c2a3;
+  --ocean-blue: #1478d4;
+  --gold-yellow: #ffd54d;
+  --orange-accent: #ff8a00;
+  --green-accent: #7bc043;
+  --text-navy: #0c1d33;
+  --border-light: #e2e8f0;
+  
+  --ocean-deep: #e6f7ff;
+}
+
+/* Scoped variables for landing page */
+.landing-page {
+  font-family: 'Be Vietnam Pro', 'Inter', system-ui, sans-serif;
+  background-color: #ffffff;
+  color: var(--text-navy);
+  overflow-x: hidden;
+}
+
+/* Fonts configurations */
+.landing-page h1,
+.landing-page h2,
+.landing-page h3,
+.landing-page h4 {
+  font-family: 'Be Vietnam Pro', sans-serif;
+  font-weight: 700;
+  color: var(--text-navy);
+}
+
+/* Redefine landing page theme selectors */
 .landing-panel {
-  background-color: #061a2b;
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 182, 241, 0.15);
+  border-radius: 1rem;
+  box-shadow: 0 4px 12px rgba(0, 182, 241, 0.06);
 }
 
 .landing-tour-section {
-  background-color: #0c5e22;
+  background: linear-gradient(180deg, var(--fade-about-end) 0%, var(--fade-tour-mid) 42%, var(--fade-tour-end) 100%);
 }
 
-.landing-faq-section,
-.landing-mobile-menu {
-  background-color: #083348;
+.landing-flow-hero {
+  background: linear-gradient(180deg, var(--fade-hero-start) 0%, var(--fade-hero-end) 100%);
+}
+
+.landing-flow-tour::before {
+  position: absolute;
+  z-index: 0;
+  top: -6rem;
+  right: 8%;
+  left: 8%;
+  height: 12rem;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-about-end) 72%, var(--fade-tour-mid)) 0%, transparent 72%);
+  filter: blur(38px);
+  content: '';
+  pointer-events: none;
+}
+
+.landing-faq-section {
+  background: linear-gradient(180deg, #2a7180 0%, #0e3f52 52%, #083348 100%);
+}
+
+.landing-faq-section h2,
+.landing-faq-section summary {
+  color: #ffffff;
+}
+
+.landing-faq-section .faq-answer {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .landing-mobile-menu {
-  border-color: rgb(36 180 255 / 0.25);
+  background-color: #ffffff;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: var(--cyan-bright);
+  box-shadow: 0 10px 30px rgba(0, 182, 241, 0.1);
 }
 
 .landing-color-strip {
   background: linear-gradient(
     90deg,
-    #3c84f0 0 32%,
-    #24b4ff 32% 54%,
-    #f57e2f 54% 76%,
-    #168f12 76% 100%
+    var(--cyan-bright) 0%,
+    var(--teal-green) 35%,
+    var(--gold-yellow) 70%,
+    var(--orange-accent) 100%
   );
 }
 
 .landing-hero-overlay {
-  background-color: rgb(4 18 31 / 0.65);
+  background: transparent;
 }
 
 .landing-accent {
-  color: #24b4ff;
+  color: var(--cyan-bright);
 }
 
 .landing-accent-soft {
-  color: #8cf6ff;
+  color: var(--ocean-blue);
 }
 
 .landing-accent-neon {
-  color: #05ffee;
+  color: var(--orange-accent);
 }
 
 .landing-accent-grid {
-  background-color: rgb(36 180 255 / 0.25);
+  background-color: rgba(0, 182, 241, 0.05);
 }
 
 .landing-border-soft {
-  border-color: rgb(36 180 255 / 0.3);
+  border-color: rgba(0, 182, 241, 0.1);
 }
 
 .landing-border-mid {
-  border-color: rgb(36 180 255 / 0.35);
+  border-color: rgba(0, 182, 241, 0.15);
 }
 
 .landing-border-faint {
-  border-color: rgb(36 180 255 / 0.25);
+  border-color: rgba(0, 182, 241, 0.08);
 }
 
+.landing-organizers-section {
+  background: linear-gradient(180deg, var(--fade-hero-end) 0%, var(--fade-organizers-end) 100%);
+}
+
+.landing-organizers-section::before {
+  position: absolute;
+  z-index: 0;
+  top: -7rem;
+  right: 8%;
+  left: 8%;
+  height: 13rem;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-hero-end) 82%, var(--fade-organizers-end)) 0%, transparent 72%);
+  filter: blur(40px);
+  content: '';
+  pointer-events: none;
+}
+
+.landing-organizers-section::after {
+  position: absolute;
+  z-index: 0;
+  right: 4%;
+  bottom: -9rem;
+  left: 4%;
+  height: 19rem;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-organizers-end) 78%, var(--fade-about-end)) 0%, color-mix(in srgb, var(--fade-organizers-end) 42%, transparent) 42%, transparent 74%);
+  filter: blur(42px);
+  content: '';
+  pointer-events: none;
+}
+
+.landing-about-section {
+  background: linear-gradient(180deg, var(--fade-organizers-end) 0%, var(--fade-about-end) 100%);
+}
+
+.landing-about-section::before {
+  position: absolute;
+  z-index: 0;
+  top: -8rem;
+  right: 10%;
+  left: 10%;
+  height: 17rem;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-organizers-end) 76%, var(--fade-about-end)) 0%, color-mix(in srgb, var(--fade-organizers-end) 38%, transparent) 38%, transparent 74%);
+  filter: blur(48px);
+  content: '';
+  pointer-events: none;
+}
+
+/* Buttons style redesign */
 .landing-primary-cta {
-  background-color: #f57e2f;
-  color: #061a2b;
+  background: linear-gradient(135deg, var(--orange-accent) 0%, #ff6a00 100%);
+  color: #ffffff !important;
+  font-weight: 700;
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px rgba(255, 138, 0, 0.25);
+  transition: all 0.2s ease;
+  border: none;
 }
 
 .landing-primary-cta:hover {
-  background-color: #f5cc2f;
+  background: linear-gradient(135deg, #ff9e3b 0%, var(--orange-accent) 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 138, 0, 0.35);
+}
+
+.landing-primary-cta:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(255, 138, 0, 0.25);
 }
 
 .landing-secondary-cta {
-  border-color: rgb(140 246 255 / 0.7);
-  color: #ffffff;
+  border: 2px solid var(--cyan-bright);
+  color: var(--cyan-bright) !important;
+  background: #ffffff;
+  font-weight: 700;
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px rgba(0, 182, 241, 0.15);
+  transition: all 0.2s ease;
 }
 
-.landing-secondary-cta:hover,
-.landing-login-button:hover {
-  border-color: #24b4ff;
-  background-color: #24b4ff;
-  color: #061a2b;
+.landing-secondary-cta:hover {
+  background: rgba(0, 182, 241, 0.05);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 182, 241, 0.25);
+}
+
+.landing-secondary-cta:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 182, 241, 0.15);
 }
 
 .landing-login-button {
-  border-color: rgb(255 255 255 / 0.7);
-  color: #ffffff;
+  border: 2px solid var(--cyan-bright);
+  color: var(--cyan-bright) !important;
+  background: #ffffff;
+  font-weight: 600;
+  border-radius: 9999px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 182, 241, 0.1);
+}
+
+.landing-login-button:hover {
+  background: var(--cyan-bright);
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(0, 182, 241, 0.25);
+  transform: translateY(-2px);
 }
 
 .landing-focus:focus-visible {
-  outline: 2px solid #24b4ff;
+  outline: 2px solid var(--cyan-bright);
   outline-offset: 4px;
+}
+
+.landing-footer {
+  border-top: 2px solid transparent;
+  border-image: linear-gradient(90deg, transparent, var(--cyan-light), transparent) 1;
+}
+
+.landing-footer nav a {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.landing-footer nav a:hover {
+  color: var(--cyan-light);
+}
+
+.cta-heading-glow::before {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: 72%;
+  height: 130%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(57, 213, 244, 0.18), transparent 70%);
+  transform: translate(-50%, -50%);
+  animation: cta-glow-pulse 4s ease-in-out infinite;
+  content: '';
+  pointer-events: none;
+}
+
+.cta-pop {
+  animation: cta-pop 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes cta-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+}
+
+@keyframes cta-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cta-heading-glow::before,
+  .cta-pop {
+    animation: none;
+  }
+}
+
+/* Animations */
+@keyframes wave-drift {
+  0% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-4px) rotate(0.5deg); }
+  100% { transform: translateY(0px) rotate(0deg); }
+}
+
+@keyframes cloud-move {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(12px); }
+  100% { transform: translateX(0); }
+}
+
+.animate-wave-float {
+  animation: wave-drift 6s ease-in-out infinite;
+}
+
+.animate-cloud {
+  animation: cloud-move 12s ease-in-out infinite;
+}
+
+/* Ocean Wave Background - Minimal and Vibrant */
+.ocean-waves-background {
+  background-image: url('/src/assets/ocean-waves-bg.svg');
+  background-size: cover;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  position: relative;
+}
+
+/* Hero section with ocean waves */
+.ocean-wave-hero {
+  position: relative;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #E6F7FF 0%, #B3E5FC 50%, #39D5F4 100%);
+  overflow: hidden;
+}
+
+.ocean-wave-hero::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 60%;
+  background-image: url('/src/assets/ocean-waves-bg.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+}
+
+/* Wave animation for depth */
+@keyframes wave-bob {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.wave-animated {
+  animation: wave-bob 4s ease-in-out infinite;
+}
+
+/* Ensure text appears above waves */
+.content-above-waves {
+  position: relative;
+  z-index: 10;
+}
+
+/* Card styles - bright vector */
+.ocean-glass-card {
+  background: #ffffff;
+  border: 2px solid rgba(0, 182, 241, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 182, 241, 0.06);
+  border-radius: 1.25rem;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.ocean-glass-card:hover {
+  border-color: var(--cyan-bright);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 30px rgba(0, 182, 241, 0.12);
+}
+
+/* Sandy Beach layout card */
+.sandy-beige-theme {
+  background: #fffbef;
+  color: var(--text-navy);
+}
+
+/* Custom dashed route marker path animation */
+.route-path-draw {
+  stroke-dasharray: 6;
+  animation: route-dash 25s linear infinite;
+}
+
+@keyframes route-dash {
+  to {
+    stroke-dashoffset: -500;
+  }
 }
 
 /* Field-map token fallbacks for the admin surfaces.
    These mirror tailwind.config.js so an already-running Vite server still
    paints the admin correctly even before Tailwind reloads its config. */
-.font-display { font-family: "Space Grotesk", system-ui, sans-serif; }
-.font-sans { font-family: Inter, system-ui, sans-serif; }
-.font-mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.font-display {
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+}
 
+.font-sans {
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
 .bg-paper { background-color: rgb(243 244 241 / var(--tw-bg-opacity, 1)); }
 .bg-paper\/50 { background-color: rgb(243 244 241 / 0.5); }
 .bg-paper\/60 { background-color: rgb(243 244 241 / 0.6); }
@@ -189,5 +512,34 @@ body {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+/* Logo floating animation */
+@keyframes logo-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  25% {
+    transform: translateY(-5px) rotate(0.3deg);
+  }
+
+  50% {
+    transform: translateY(-11px) rotate(-0.3deg);
+  }
+
+  75% {
+    transform: translateY(-5px) rotate(0.2deg);
+  }
+}
+
+.logo-float {
+  animation: logo-float 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-float {
+    animation: none;
   }
 }
