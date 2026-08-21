@@ -1,0 +1,43 @@
+name: "✨ Đề xuất tính năng (Feature request)"
+description: Đề xuất một tính năng mới hoặc cải tiến.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cảm ơn đề xuất của bạn! Mô tả rõ vấn đề bạn muốn giải quyết sẽ giúp
+        đề xuất dễ được cân nhắc hơn.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Vấn đề / nhu cầu
+      description: Tính năng này giải quyết vấn đề gì? Ai được lợi?
+      placeholder: Là admin, tôi muốn xuất bảng điểm ra Excel để...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Giải pháp mong muốn
+      description: Bạn hình dung tính năng hoạt động như thế nào?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Giải pháp thay thế đã cân nhắc
+      description: Có cách nào khác không? Vì sao cách này tốt hơn?
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Bối cảnh thêm
+      description: Ảnh mockup, link tham khảo, hoặc ghi chú khác.
+    validations:
+      required: false

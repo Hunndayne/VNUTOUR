@@ -1,0 +1,61 @@
+name: "🐞 Báo lỗi (Bug report)"
+description: Báo cáo một lỗi hoặc hành vi không đúng trong hệ thống.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cảm ơn bạn đã dành thời gian báo lỗi! Vui lòng điền đầy đủ các mục bên dưới
+        để maintainer tái hiện và xử lý nhanh hơn.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Mô tả lỗi
+      description: Chuyện gì đã xảy ra? Bạn mong đợi điều gì thay vì thế?
+      placeholder: Khi quét QR ở điểm danh thì trang báo lỗi 500 thay vì check-in thành công...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện
+      description: Liệt kê từng bước để tái hiện lỗi.
+      placeholder: |
+        1. Đăng nhập với vai trò collab
+        2. Mở /coop và quét mã QR của đội X
+        3. Thấy lỗi ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Khu vực bị ảnh hưởng
+      options:
+        - Frontend (web quét QR / dashboard)
+        - Backend API (Django)
+        - Discord bot
+        - Triển khai / hạ tầng (k8s, CI/CD)
+        - Khác / chưa rõ
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Môi trường
+      description: Trình duyệt, thiết bị, môi trường (dev/prod)... nếu liên quan.
+      placeholder: Chrome trên Android, môi trường production
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log / ảnh chụp màn hình
+      description: Dán log liên quan hoặc đính kèm ảnh. **Đừng dán token, mật khẩu hay dữ liệu cá nhân thật.**
+    validations:
+      required: false
