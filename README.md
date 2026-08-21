@@ -39,3 +39,13 @@ npm run dev
 ```
 
 Cấu hình `frontend/.env` → `VITE_API_BASE_URL` trỏ tới địa chỉ API của backend.
+
+## Đóng góp
+
+Rất hoan nghênh issue và pull request! Khi mở issue, chọn mẫu **Báo lỗi** hoặc
+**Đề xuất tính năng**. Với pull request, vui lòng chạy test/lint tương ứng trước khi gửi
+(backend: `pytest`; frontend: `npm run lint && npm run build`).
+
+## Giấy phép
+
+Phát hành theo giấy phép [MIT](LICENSE).
