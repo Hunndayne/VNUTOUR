@@ -1,0 +1,54 @@
+# Staging entrypoint — same shape as k8s/10.ingress.yaml but a single host, in
+# the vnutour-staging namespace. Everything enters through the frontend pod:
+# its Nginx already proxies /api/ and /media/ to the backend and serves the
+# React bundle for everything else.
+#
+# Requires ingress-nginx (same as prod).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vnutour
+  namespace: vnutour-staging
+  annotations:
+    # Matches client_max_body_size in frontend/nginx.conf. Backup restores and
+    # station submissions carry large files, and the smaller of the two limits
+    # is the one that applies.
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+
+    # Cloudflare is in front (proxied DNS) with SSL/TLS mode "Full (strict)": it
+    # reaches this origin over HTTPS on 443 and validates the certificate in the
+    # vnutour-tls secret. ssl-redirect stays off: Cloudflare's "Always Use
+    # HTTPS" already forces https at the edge, and forcing it again at the
+    # origin would loop while any request still arrives over http.
+    # use-forwarded-headers=true on the controller keeps the X-Forwarded-Proto:
+    # https that Cloudflare sends, so Django sees the request as secure.
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+
+spec:
+  ingressClassName: nginx
+
+  # TLS to the origin. The secret holds the same Cloudflare Origin Certificate
+  # as prod (its SANs cover this host), copied across namespaces because
+  # secrets are namespace-scoped:
+  #   kubectl -n vnutour get secret vnutour-tls -o yaml \
+  #     | sed 's/namespace: vnutour/namespace: vnutour-staging/' | kubectl apply -f -
+  tls:
+    - hosts:
+        - vnutour.hunn.io.vn
+      secretName: vnutour-tls
+
+  # The hostname must also appear in DJANGO_ALLOWED_HOSTS in 01.configmap.yaml
+  # in this directory, or Django rejects the forwarded Host header with a 400.
+  rules:
+    - host: vnutour.hunn.io.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

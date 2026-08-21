@@ -1,0 +1,28 @@
+# Staging PVCs. Smaller than prod and no backup volume (staging is disposable).
+# local-path (k3s default) is node-local, so the pods mounting these must be
+# pinned to the storage node via nodeSelector — same as prod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: vnutour-staging
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: media-data
+  namespace: vnutour-staging
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
