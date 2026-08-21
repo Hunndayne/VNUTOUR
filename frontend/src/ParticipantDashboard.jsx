@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
@@ -9,7 +9,7 @@ import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
 import { compressImage } from './imageCompress.js'
-import { useEnumSearchParam } from './router.js'
+import { navigate, useEnumSearchParam } from './router.js'
 import {
   BANK_DEEPLINK_OPTIONS,
   buildBankDeeplink,
@@ -1450,6 +1450,22 @@ function ParticipantDashboard() {
   const [stepParam, setStepParam] = useEnumSearchParam('step', STEP_KEYS, currentStepKey)
   const activeStep = stepUnlocked(stepParam) ? stepParam : currentStepKey
   const gotoStep = (key) => { if (stepUnlocked(key)) setStepParam(key) }
+
+  // `useEnumSearchParam`'s fallback is `currentStepKey`, recomputed on every
+  // render — so while `?step=` is absent from the URL, the "active" step
+  // silently tracks live form state instead of the last explicit
+  // Next/gotoStep click. That let filling in the last missing required field
+  // (e.g. Facebook link) flip `profileComplete` mid-keystroke and jump the
+  // wizard straight to "Thành viên" before Lưu was ever pressed. Pin the step
+  // into the URL once it is first known so later field edits can no longer
+  // change the fallback under it — only an explicit gotoStep() can move on.
+  const stepPinned = useRef(false)
+  useEffect(() => {
+    if (stepPinned.current || !currentStepKey) return
+    stepPinned.current = true
+    if (new URLSearchParams(window.location.search).get('step')) return
+    navigate(`${window.location.pathname}?step=${currentStepKey}${window.location.hash}`, { replace: true })
+  }, [currentStepKey])
 
   // Adding a member means typing MSSV, email and whatever the schema asks for,
   // five times over. The dialog is not a `useDraftState` because the parent
