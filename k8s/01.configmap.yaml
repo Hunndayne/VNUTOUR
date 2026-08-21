@@ -15,7 +15,7 @@ data:
   # original Host header to Django unchanged. A host that is routed but not
   # listed here gets a bare 400 from Django. Keep in sync with 10.ingress.yaml.
   # localhost and 127.0.0.1 are for the kubelet probes, which dial the pod IP.
-  DJANGO_ALLOWED_HOSTS: "vnutour.hunn.io.vn,vnutour.suctremmt.com,localhost,127.0.0.1"
+  DJANGO_ALLOWED_HOSTS: "vnutour.suctremmt.com,localhost,127.0.0.1"
 
   # TLS terminates upstream, so every request reaches Django over plain HTTP.
   # Without this, SECURE_SSL_REDIRECT sees an insecure request and answers with

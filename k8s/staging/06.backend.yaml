@@ -1,0 +1,121 @@
+# Staging backend — trimmed vs prod: no backup volume (staging is disposable)
+# and no prometheus annotations (staging has no monitoring stack).
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: vnutour-staging
+spec:
+  selector:
+    app: backend
+
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: vnutour-staging
+spec:
+  replicas: 1
+
+  # Same reason as prod: this pod mounts a ReadWriteOnce local-path volume
+  # (media-data), so a surging second pod can only be scheduled on the node
+  # holding it — anywhere else the rollout stops with the new pod Pending.
+  # A few seconds of downtime beats a wedged deploy.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      # Same as prod: the media-data claim is local-path, so this pod has to
+      # stay on the node that is never powered off.
+      nodeSelector:
+        vnutour/storage: "true"
+
+      containers:
+        - name: backend
+          image: ghcr.io/hunndayne/vnutour-backend:staging
+
+          ports:
+            - name: http
+              containerPort: 8000
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Scaled down from prod — staging carries a tester or two, and the
+          # CPU limit stays under one core so a burst cannot starve the staging
+          # postgres on the same node.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          volumeMounts:
+            - name: media
+              mountPath: /app/webapi/media
+
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
