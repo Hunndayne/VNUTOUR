@@ -31,7 +31,7 @@ data:
   FFMPEG_EXE: "ffmpeg"
 
   # Base URL the bot puts into the links it posts in Discord.
-  WEB_BASE_URL: "https://vnutour.hunn.io.vn"
+  WEB_BASE_URL: "https://vnutour.suctremmt.com"
 
   # Discord "Connect" OAuth2 (web button, non-secret parts). CLIENT_SECRET lives
   # in backend-secret. Redirect URIs are an allowlist and must match the ones
@@ -39,5 +39,5 @@ data:
   # /participant. The membership check also needs DISCORD_TOKEN and
   # DISCORD_GUILD_ID (backend-secret) — the backend pod already loads both.
   DISCORD_CLIENT_ID: ""
-  DISCORD_OAUTH_REDIRECT_URIS: "https://vnutour.hunn.io.vn/participant"
+  DISCORD_OAUTH_REDIRECT_URIS: "https://vnutour.suctremmt.com/participant"
   DISCORD_INVITE_URL: ""
