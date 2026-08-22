@@ -38,6 +38,58 @@ const PUBLIC_ROUTES = {
 }
 const PUBLIC_PATHS = new Set(Object.keys(PUBLIC_ROUTES))
 
+// Prod and staging share one frontend image, so the environment can't be baked
+// in at build time — it's decided at runtime from the host the browser is on.
+// Staging is the only deployment served at vnutour.hunn.io.vn (prod is
+// vnutour.suctremmt.com); anything else (incl. localhost) is treated as non-staging.
+const IS_STAGING =
+  typeof window !== 'undefined' && window.location.hostname === 'vnutour.hunn.io.vn'
+
+/**
+ * A fixed corner ribbon marking the staging site, so it can't be mistaken for
+ * prod at a glance. Renders nothing anywhere else. `pointer-events: none` keeps
+ * it from swallowing clicks on whatever sits underneath.
+ */
+function StagingBadge() {
+  if (!IS_STAGING) return null
+  return (
+    <div
+      aria-hidden="true"
+      title="Môi trường STAGING — dữ liệu có thể bị xoá bất cứ lúc nào"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        zIndex: 2147483647,
+        pointerEvents: 'none',
+        width: 150,
+        height: 150,
+        overflow: 'hidden',
+      }}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: 28,
+          left: -40,
+          width: 180,
+          transform: 'rotate(-45deg)',
+          textAlign: 'center',
+          background: '#d97706',
+          color: '#fff',
+          fontSize: 12,
+          fontWeight: 700,
+          letterSpacing: 2,
+          lineHeight: '22px',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+        }}
+      >
+        STAGING
+      </span>
+    </div>
+  )
+}
+
 /** `/admin/teams` still belongs to the `/admin` route — the rest is its tab. */
 function routeRoot(path) {
   const [first] = path.split('/').filter(Boolean)
@@ -85,13 +137,36 @@ function App() {
     if (redirect) navigate(redirect, { replace: true })
   }, [redirect])
 
-  if (redirect) return null
-  if (location.path === '/login') return <LoginPage />
-  const PublicRoute = PUBLIC_ROUTES[routeRoot(location.path)]
-  if (PublicRoute) return <PublicRoute />
+  // Keep the browser tab prefixed on staging so it's obvious even from the tab
+  // strip. Runs after the page's own effects (children flush first), so it wins
+  // over whatever title the current screen just set.
+  useEffect(() => {
+    if (IS_STAGING && !document.title.startsWith('[STAGING]')) {
+      document.title = `[STAGING] ${document.title}`
+    }
+  })
 
-  const route = ROUTES[routeRoot(location.path)]
-  return route ? route.render() : <LandingPage />
+  if (redirect) return null
+
+  let page
+  if (location.path === '/login') {
+    page = <LoginPage />
+  } else {
+    const PublicRoute = PUBLIC_ROUTES[routeRoot(location.path)]
+    if (PublicRoute) {
+      page = <PublicRoute />
+    } else {
+      const route = ROUTES[routeRoot(location.path)]
+      page = route ? route.render() : <LandingPage />
+    }
+  }
+
+  return (
+    <>
+      <StagingBadge />
+      {page}
+    </>
+  )
 }
 
 export default App
