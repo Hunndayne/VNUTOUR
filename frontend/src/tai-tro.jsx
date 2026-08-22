@@ -214,10 +214,10 @@ function TierCard({ tier }) {
       <p className="mt-1 text-center text-xs font-bold uppercase tracking-[0.08em] text-[#0c1d33]/50">
         ({tier.note})
       </p>
-      <p className="mt-2 text-center text-sm leading-6 text-[#0c1d33]/65">{tier.tagline}</p>
+      <p className="mb-6 mt-2 text-center text-sm leading-6 text-[#0c1d33]/65">{tier.tagline}</p>
       <a
         href="#lien-he"
-        className={`mt-6 inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded-full px-5 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px ${
+        className={`mt-auto inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded-full px-5 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px ${
           tier.highlight
             ? "border-2 border-[#1478D4] bg-[#1478D4] text-white hover:border-[#0c1d33] hover:bg-[#0c1d33]"
             : "border-2 border-[#00B6F1] bg-white/85 text-[#00B6F1] hover:bg-[#00B6F1] hover:text-white"
