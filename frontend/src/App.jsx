@@ -6,6 +6,7 @@ import ParticipantDashboard from './ParticipantDashboard.jsx'
 import FormResponses from './FormResponses.jsx'
 import CoopDashboard from './CoopDashboard.jsx'
 import FramePage from './FramePage.jsx'
+import TaiTro from './tai-tro.jsx'
 import { getStoredAuthToken, getStoredUser, isAdminRole, roleHomePath } from './api.js'
 import { navigate, useLocation } from './router.js'
 
@@ -31,7 +32,11 @@ const LEGACY_PATHS = {
 // Routes that render for everyone — guest or signed-in, any role — and never
 // redirect a signed-in visitor away the way `/` and `/login` do. The public
 // photo-frame editor lives here: it has nothing to do with a VNUTour account.
-const PUBLIC_PATHS = new Set(['/frame'])
+const PUBLIC_ROUTES = {
+  '/frame': FramePage,
+  '/tai-tro': TaiTro,
+}
+const PUBLIC_PATHS = new Set(Object.keys(PUBLIC_ROUTES))
 
 /** `/admin/teams` still belongs to the `/admin` route — the rest is its tab. */
 function routeRoot(path) {
@@ -82,7 +87,8 @@ function App() {
 
   if (redirect) return null
   if (location.path === '/login') return <LoginPage />
-  if (PUBLIC_PATHS.has(routeRoot(location.path))) return <FramePage />
+  const PublicRoute = PUBLIC_ROUTES[routeRoot(location.path)]
+  if (PublicRoute) return <PublicRoute />
 
   const route = ROUTES[routeRoot(location.path)]
   return route ? route.render() : <LandingPage />
