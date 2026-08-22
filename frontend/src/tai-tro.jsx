@@ -72,11 +72,11 @@ const BENEFITS = [
   { label: "Bài viết tri ân nhà tài trợ (sau chương trình)", tiers: "all" },
   {
     label: "Logo trên Standee, Backdrop",
-    values: { gold: "Vị trí ưu tiên", silver: "✔", bronze: "✔", companion: null },
+    values: { gold: "Vị trí ưu tiên", silver: "✔", bronze: "✔", companion: "✔" },
   },
   {
     label: "Logo trên Video giới thiệu",
-    values: { gold: "Xuyên suốt", silver: "5s đầu – 5s cuối", bronze: "5s đầu", companion: null },
+    values: { gold: "Xuyên suốt", silver: "5s đầu – 5s cuối", bronze: "5s đầu", companion: "✔" },
   },
   {
     label: "Logo trên bài đăng truyền thông",
