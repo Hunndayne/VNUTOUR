@@ -1,5 +1,6 @@
 // tai-tro.jsx
-// Trang Nhà Tài Trợ — mô phỏng theo cấu trúc trang tài trợ AISC'26 (httt.uit.edu.vn/aisc/tai-tro)
+// Trang Nhà Tài Trợ — đồng bộ theme với LandingPage (nền trắng, navy #0c1d33,
+// accent #1478D4 / #00B6F1, vàng #FFD54D, block tối #083348 / #062A3B).
 
 import React from "react";
 
@@ -14,8 +15,7 @@ const EVENT = {
   email: "vnutour@suctremmt.com",
   phone: "028 3725 2002 (Ext: 119)",
   phoneHref: "tel:+842837252002",
-  fanpage: "[facebook.com](https://www.facebook.com/VNUTour",
-//   messenger: "[m.me](https://m.me/Cuocthihocthuat.AISC)",
+  fanpage: "https://www.facebook.com/VNUTour",
 };
 
 const STATS = [
@@ -32,7 +32,6 @@ const TIERS = [
     price: "30.000.000đ+",
     icon: "💎",
     highlight: true,
-    color: "from-cyan-500 to-blue-600",
     tagline: "Đối tác chiến lược, độc quyền ngành hàng",
   },
   {
@@ -41,7 +40,6 @@ const TIERS = [
     price: "20.000.000đ+",
     icon: "🥇",
     highlight: false,
-    color: "from-amber-400 to-yellow-600",
     tagline: "Hiện diện nổi bật xuyên suốt cuộc thi",
   },
   {
@@ -50,7 +48,6 @@ const TIERS = [
     price: "10.000.000đ+",
     icon: "🥈",
     highlight: false,
-    color: "from-slate-400 to-slate-600",
     tagline: "Quảng bá thương hiệu hiệu quả",
   },
   {
@@ -59,7 +56,6 @@ const TIERS = [
     price: "5.000.000đ+",
     icon: "🥉",
     highlight: false,
-    color: "from-orange-400 to-orange-700",
     tagline: "Đồng hành cùng sinh viên",
   },
 ];
@@ -92,59 +88,63 @@ const SPONSORS = {
 
 function SectionHeading({ eyebrow, title, desc }) {
   return (
-    <div className="text-center max-w-2xl mx-auto mb-12">
+    <div className="mx-auto mb-12 max-w-2xl text-center">
       {eyebrow && (
-        <p className="text-sm font-semibold uppercase tracking-widest text-blue-600 mb-2">
+        <p className="mb-2 text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">
           {eyebrow}
         </p>
       )}
-      <h2 className="text-3xl md:text-4xl font-bold text-slate-900">{title}</h2>
-      {desc && <p className="mt-3 text-slate-600">{desc}</p>}
+      <h2 className="text-3xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] md:text-4xl">
+        {title}
+      </h2>
+      {desc && <p className="mt-3 text-base leading-7 text-[#0c1d33]/65">{desc}</p>}
     </div>
   );
 }
 
 function TierCard({ tier }) {
   return (
-    <div
-      className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm transition hover:shadow-lg ${
-        tier.highlight ? "border-blue-500 ring-2 ring-blue-500/30 scale-[1.02]" : "border-slate-200"
+    <article
+      className={`relative flex flex-col rounded-xl border p-7 transition-all duration-200 hover:-translate-y-1 ${
+        tier.highlight
+          ? "border-[#1478D4] bg-gradient-to-br from-[#D9F5FF] to-[#E8FAFF] shadow-[0_12px_35px_rgba(20,120,212,0.15)]"
+          : "border-[#00B6F1]/20 bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] hover:border-[#00B6F1]/50"
       }`}
     >
       {tier.highlight && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#1478D4] px-3 py-1 text-xs font-bold uppercase tracking-[0.06em] text-white">
           Cao cấp nhất
         </span>
       )}
-      <div
-        className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br ${tier.color} text-3xl shadow`}
-      >
+      <p className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl shadow-[0_5px_14px_rgba(12,29,51,0.08)]">
         {tier.icon}
-      </div>
-      <h3 className="mt-4 text-center text-xl font-bold text-slate-900">
+      </p>
+      <h3 className="mt-4 text-center text-xl font-bold uppercase tracking-[-0.02em] text-[#0c1d33]">
         Nhà Tài Trợ {tier.name}
       </h3>
-      <p className="mt-1 text-center text-2xl font-extrabold text-blue-600">{tier.price}</p>
-      <p className="mt-2 text-center text-sm text-slate-500">{tier.tagline}</p>
+      <p className="mt-1 text-center text-2xl font-bold uppercase tracking-[-0.04em] text-[#1478D4]">
+        {tier.price}
+      </p>
+      <p className="mt-2 text-center text-sm leading-6 text-[#0c1d33]/65">{tier.tagline}</p>
       <a
         href="#lien-he"
-        className={`mt-6 rounded-xl px-4 py-2.5 text-center text-sm font-semibold transition ${
+        className={`mt-6 inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded-full px-5 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px ${
           tier.highlight
-            ? "bg-blue-600 text-white hover:bg-blue-700"
-            : "border border-slate-300 text-slate-700 hover:border-blue-500 hover:text-blue-600"
+            ? "border-2 border-[#1478D4] bg-[#1478D4] text-white hover:border-[#0c1d33] hover:bg-[#0c1d33]"
+            : "border-2 border-[#00B6F1] bg-white/85 text-[#00B6F1] hover:bg-[#00B6F1] hover:text-white"
         }`}
       >
         Liên hệ tài trợ
       </a>
-    </div>
+    </article>
   );
 }
 
 function Check({ active }) {
   return active ? (
-    <span className="font-bold text-emerald-600">✓</span>
+    <span className="font-bold text-[#1478D4]">✓</span>
   ) : (
-    <span className="text-slate-300">—</span>
+    <span className="text-[#0c1d33]/25">—</span>
   );
 }
 
@@ -154,49 +154,51 @@ function Check({ active }) {
 
 export default function TaiTro() {
   return (
-    <main className="bg-slate-50 text-slate-800">
+    <main className="min-h-[100dvh] bg-white font-display text-[#0c1d33]">
       {/* ===== HERO ===== */}
-      <section className="bg-gradient-to-br from-blue-700 via-blue-800 to-indigo-900 px-4 py-20 text-center text-white">
-        <p className="text-sm font-semibold uppercase tracking-widest text-blue-200">
-          {EVENT.fullName}
-        </p>
-        <h1 className="mx-auto mt-3 max-w-3xl text-4xl font-extrabold leading-tight md:text-5xl">
-          Đồng Hành Cùng {EVENT.name}
-        </h1>
-        <p className="mx-auto mt-4 max-w-2xl text-blue-100">
-          Trở thành nhà tài trợ của {EVENT.name} — kết nối thương hiệu của bạn với cộng đồng
-          sinh viên công nghệ năng động nhất, do {EVENT.organizer} tổ chức.
-        </p>
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <a
-            href="#goi-tai-tro"
-            className="rounded-xl bg-white px-6 py-3 font-semibold text-blue-700 shadow transition hover:bg-blue-50"
-          >
-            Xem các gói tài trợ
-          </a>
-          <a
-            href="#lien-he"
-            className="rounded-xl border border-white/40 px-6 py-3 font-semibold text-white transition hover:bg-white/10"
-          >
-            Liên hệ ngay
-          </a>
+      <section className="relative overflow-hidden bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF] px-5 py-20 text-center md:py-28 xl:py-36">
+        <div className="mx-auto w-full max-w-[1400px]">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#1478D4] md:text-sm">
+            {EVENT.fullName}
+          </p>
+          <h1 className="mx-auto mt-3 max-w-3xl text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] sm:text-5xl lg:text-7xl">
+            Đồng Hành Cùng <span className="text-[#1478D4]">{EVENT.name}</span>
+          </h1>
+          <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-[#0c1d33]/65 md:text-lg">
+            Trở thành nhà tài trợ của {EVENT.name} — kết nối thương hiệu của bạn với cộng đồng
+            sinh viên công nghệ năng động nhất, do {EVENT.organizer} tổ chức.
+          </p>
+          <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+            <a
+              href="#goi-tai-tro"
+              className="inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full border-2 border-[#1478D4] bg-[#1478D4] px-7 py-4 text-sm font-bold uppercase tracking-[0.06em] text-white transition-all duration-200 hover:-translate-y-1 hover:border-[#0c1d33] hover:bg-[#0c1d33] active:translate-y-px"
+            >
+              Xem các gói tài trợ
+            </a>
+            <a
+              href="#lien-he"
+              className="inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full border-2 border-[#00B6F1] bg-white/70 px-7 py-4 text-sm font-bold uppercase tracking-[0.06em] text-[#00B6F1] transition-all duration-200 hover:-translate-y-1 hover:bg-[#00B6F1] hover:text-white active:translate-y-px"
+            >
+              Liên hệ ngay
+            </a>
+          </div>
         </div>
       </section>
 
       {/* ===== THỐNG KÊ ===== */}
-      <section className="mx-auto -mt-10 max-w-5xl px-4">
-        <div className="grid grid-cols-2 gap-4 rounded-2xl bg-white p-6 shadow-lg md:grid-cols-4">
+      <section className="mx-auto w-full max-w-[1200px] px-5 md:px-8 xl:px-0">
+        <div className="-mt-10 grid grid-cols-2 gap-4 rounded-2xl border border-[#00B6F1]/20 bg-white p-6 shadow-[0_12px_35px_rgba(12,29,51,0.08)] md:grid-cols-4">
           {STATS.map((s) => (
             <div key={s.label} className="text-center">
-              <p className="text-3xl font-extrabold text-blue-600">{s.value}</p>
-              <p className="mt-1 text-sm text-slate-500">{s.label}</p>
+              <p className="text-3xl font-bold uppercase tracking-[-0.04em] text-[#1478D4]">{s.value}</p>
+              <p className="mt-1 text-sm leading-6 text-[#0c1d33]/65">{s.label}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* ===== GÓI TÀI TRỢ ===== */}
-      <section id="goi-tai-tro" className="mx-auto max-w-6xl px-4 py-20">
+      <section id="goi-tai-tro" className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
         <SectionHeading
           eyebrow="Hạng mục tài trợ"
           title="Các Gói Tài Trợ"
@@ -207,26 +209,26 @@ export default function TaiTro() {
             <TierCard key={tier.id} tier={tier} />
           ))}
         </div>
-        <p className="mt-6 text-center text-sm text-slate-500">
+        <p className="mt-6 text-center text-sm text-[#0c1d33]/60">
           * Ban Tổ chức cũng chào đón các hình thức tài trợ hiện vật, dịch vụ và truyền thông.
         </p>
       </section>
 
       {/* ===== BẢNG QUYỀN LỢI ===== */}
-      <section className="bg-white px-4 py-20">
-        <div className="mx-auto max-w-6xl">
+      <section className="bg-gradient-to-b from-[#E8F8FF] to-white px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
+        <div className="mx-auto w-full max-w-[1400px]">
           <SectionHeading
             eyebrow="Win – Win"
             title="Quyền Lợi Nhà Tài Trợ"
             desc="Bảng so sánh chi tiết quyền lợi giữa các hạng mục tài trợ."
           />
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
-            <table className="w-full min-w-[640px] text-sm">
+          <div className="overflow-x-auto rounded-xl border border-[#00B6F1]/20 shadow-[0_12px_35px_rgba(12,29,51,0.06)]">
+            <table className="w-full min-w-[640px] bg-white text-sm">
               <thead>
-                <tr className="bg-slate-100 text-slate-700">
-                  <th className="px-4 py-3 text-left font-semibold">Quyền lợi</th>
+                <tr className="bg-[#D9F5FF] text-[#0c1d33]">
+                  <th className="px-4 py-3 text-left font-bold uppercase tracking-[0.08em]">Quyền lợi</th>
                   {TIERS.map((t) => (
-                    <th key={t.id} className="px-4 py-3 text-center font-semibold">
+                    <th key={t.id} className="px-4 py-3 text-center font-bold uppercase tracking-[0.08em]">
                       {t.icon} {t.name}
                     </th>
                   ))}
@@ -234,8 +236,8 @@ export default function TaiTro() {
               </thead>
               <tbody>
                 {BENEFITS.map((b, i) => (
-                  <tr key={b.label} className={i % 2 ? "bg-slate-50" : "bg-white"}>
-                    <td className="px-4 py-3">{b.label}</td>
+                  <tr key={b.label} className={`border-t border-[#00B6F1]/15 ${i % 2 ? "bg-[#F0FAFF]" : "bg-white"}`}>
+                    <td className="px-4 py-3 leading-6 text-[#0c1d33]/80">{b.label}</td>
                     {TIERS.map((t) => (
                       <td key={t.id} className="px-4 py-3 text-center">
                         <Check active={b.tiers.includes(t.id)} />
@@ -250,7 +252,7 @@ export default function TaiTro() {
       </section>
 
       {/* ===== NHÀ TÀI TRỢ HIỆN TẠI ===== */}
-      <section className="mx-auto max-w-6xl px-4 py-20">
+      <section className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
         <SectionHeading
           eyebrow="Đồng hành cùng chúng tôi"
           title="Đơn Vị Tài Trợ & Đồng Hành"
@@ -259,11 +261,13 @@ export default function TaiTro() {
           {Object.entries(SPONSORS).map(([group, logos]) => (
             <div
               key={group}
-              className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center"
+              className="rounded-xl border border-dashed border-[#00B6F1]/35 bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] p-8 text-center"
             >
-              <h3 className="text-lg font-bold text-slate-900">{group}</h3>
+              <h3 className="text-lg font-bold uppercase tracking-[-0.02em] text-[#0c1d33]">{group}</h3>
               {logos.length === 0 ? (
-                <p className="mt-4 text-slate-400">⏳ Coming Soon</p>
+                <p className="mt-4 font-mono text-sm font-bold text-[#FFD54D] drop-shadow-[0_1px_2px_rgba(12,29,51,0.4)]">
+                  ⏳ Coming Soon
+                </p>
               ) : (
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-6">
                   {logos.map((logo) => (
@@ -282,38 +286,40 @@ export default function TaiTro() {
       </section>
 
       {/* ===== LIÊN HỆ / CTA ===== */}
-      <section
-        id="lien-he"
-        className="bg-gradient-to-br from-indigo-900 via-blue-800 to-blue-700 px-4 py-20 text-center text-white"
-      >
-        <h2 className="text-3xl font-bold md:text-4xl">Sẵn Sàng Đồng Hành Cùng {EVENT.name}?</h2>
-        <p className="mx-auto mt-3 max-w-xl text-blue-100">
-          Liên hệ Ban Tổ chức để nhận hồ sơ tài trợ chi tiết và trao đổi về gói hợp tác
-          phù hợp nhất với doanh nghiệp của bạn.
-        </p>
-        <div className="mx-auto mt-8 flex max-w-3xl flex-wrap justify-center gap-4">
-          <a
-            href={`mailto:${EVENT.email}`}
-            className="rounded-xl bg-white px-6 py-3 font-semibold text-blue-700 shadow transition hover:bg-blue-50"
-          >
-            ✉️ {EVENT.email}
-          </a>
-          <a
-            href={EVENT.phoneHref}
-            className="rounded-xl border border-white/40 px-6 py-3 font-semibold transition hover:bg-white/10"
-          >
-            📞 {EVENT.phone}
-          </a>
-          <a
-            href={EVENT.messenger}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-xl border border-white/40 px-6 py-3 font-semibold transition hover:bg-white/10"
-          >
-            💬 Nhắn tin Fanpage
-          </a>
+      <section id="lien-he" className="relative overflow-hidden bg-[#083348] px-5 py-20 text-center md:px-8 md:py-28 xl:px-0 xl:py-36">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-0 h-40 bg-gradient-to-b from-[#2A7180]/35 to-transparent md:h-56" />
+        <div className="relative z-10 mx-auto w-full max-w-[1400px]">
+          <h2 className="mx-auto max-w-3xl text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-white sm:text-5xl lg:text-6xl">
+            Sẵn Sàng Đồng Hành Cùng <span className="text-[#FFD54D]">{EVENT.name}</span>?
+          </h2>
+          <p className="mx-auto mt-6 max-w-xl text-base leading-7 text-white/65">
+            Liên hệ Ban Tổ chức để nhận hồ sơ tài trợ chi tiết và trao đổi về gói hợp tác
+            phù hợp nhất với doanh nghiệp của bạn.
+          </p>
+          <div className="mx-auto mt-8 flex max-w-3xl flex-col items-center justify-center gap-4 sm:flex-row sm:flex-wrap">
+            <a
+              href={`mailto:${EVENT.email}`}
+              className="inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full border-2 border-[#00B6F1] bg-[#00B6F1] px-7 py-4 text-sm font-bold uppercase tracking-[0.06em] text-white transition-all duration-200 hover:-translate-y-1 hover:border-[#39D5F4] hover:bg-[#39D5F4] active:translate-y-px"
+            >
+              ✉️ {EVENT.email}
+            </a>
+            <a
+              href={EVENT.phoneHref}
+              className="inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full border-2 border-white/40 px-7 py-4 text-sm font-bold uppercase tracking-[0.06em] text-white transition-all duration-200 hover:-translate-y-1 hover:bg-white/10 active:translate-y-px"
+            >
+              📞 {EVENT.phone}
+            </a>
+            <a
+              href={EVENT.fanpage}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full border-2 border-white/40 px-7 py-4 text-sm font-bold uppercase tracking-[0.06em] text-white transition-all duration-200 hover:-translate-y-1 hover:bg-white/10 active:translate-y-px"
+            >
+              💬 Nhắn tin Fanpage
+            </a>
+          </div>
+          <p className="mt-8 text-xs uppercase tracking-[0.08em] text-white/75">{EVENT.organizer}</p>
         </div>
-        <p className="mt-8 text-sm text-blue-200">{EVENT.organizer}</p>
       </section>
     </main>
   );
