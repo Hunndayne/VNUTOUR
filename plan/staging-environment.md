@@ -76,6 +76,48 @@ feature/*  ──PR──►  staging  ──auto-deploy──►  vnutour.hunn.
    ```
    Có `DNS:vnutour.hunn.io.vn` → dùng chung cert (tạo secret `vnutour-tls` giống hệt trong ns staging). Không có → tạo Origin Cert mới ở Cloudflare phủ hunn.io.vn/`*.hunn.io.vn`.
 
+## Bước thủ công trên cluster (KHÔNG nằm trong repo)
+Chạy trên node cp, theo thứ tự:
+
+```bash
+# 1. Namespace + copy Origin Cert (SAN đã phủ *.hunn.io.vn)
+kubectl create namespace vnutour-staging
+kubectl -n vnutour get secret vnutour-tls -o yaml \
+  | sed 's/namespace: vnutour/namespace: vnutour-staging/' | kubectl apply -f -
+
+# 2. QUAN TRỌNG: copy imagePullSecret `ghcr` (package GHCR là PRIVATE, pull ẩn danh bị 401)
+kubectl -n vnutour get secret ghcr -o yaml \
+  | grep -vE '^\s*(namespace|resourceVersion|uid|creationTimestamp|ownerReferences):' \
+  | sed 's/^  namespace:.*/  namespace: vnutour-staging/' \
+  | kubectl -n vnutour-staging apply -f -
+kubectl -n vnutour-staging patch serviceaccount default \
+  -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
+
+# 3. Secret backend riêng (khác prod)
+kubectl -n vnutour-staging create secret generic backend-secret \
+  --from-literal=DB_NAME=vnutour_staging \
+  --from-literal=DB_USER=vnutour_staging \
+  --from-literal=DB_PASSWORD="$(openssl rand -hex 24)" \
+  --from-literal=DJANGO_SECRET_KEY="$(openssl rand -hex 32)"
+
+# 4. Apply manifest staging
+kubectl apply -f k8s/staging/
+
+# 5. Migrate + seed (lần đầu — hoặc để deploy-staging workflow lo).
+#    Nhanh nhất: exec thẳng vào pod backend (đã có envFrom đúng):
+kubectl -n vnutour-staging exec deploy/backend -c backend -- python webapi/manage.py migrate --noinput
+kubectl -n vnutour-staging exec deploy/backend -c backend -- python webapi/manage.py seed_phases
+
+# 6. Gỡ hunn.io.vn khỏi prod
+kubectl apply -f k8s/01.configmap.yaml -f k8s/10.ingress.yaml
+kubectl -n vnutour rollout restart deploy/backend
+```
+
+**Cạm bẫy đã gặp:**
+- Package GHCR private → phải copy secret `ghcr` + patch default SA của ns staging (bước 2). Không có bước này: ImagePullBackOff `401 Unauthorized`.
+- Có HAI workflow tên gần giống: **"Deploy staging to k3s"** (ns staging) vs **"Deploy to k3s"** (prod). Re-run đúng cái staging.
+- `imagePullSecrets` gắn ở default SA chỉ áp dụng cho pod TẠO MỚI → sau khi patch phải `delete pod --all` để tạo lại.
+
 ## Thứ tự triển khai đề xuất
 1. Xác nhận 4 điểm rủi ro ở trên (đặc biệt RAM + Origin Cert + Discord).
 2. Manifest `k8s/staging/` + gỡ hunn.io.vn khỏi prod ingress/configmap.
