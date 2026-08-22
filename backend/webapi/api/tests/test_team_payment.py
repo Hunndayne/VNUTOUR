@@ -30,6 +30,7 @@ from api.services.payment_service import (
     save_payment_config,
     strip_accents_upper,
 )
+from api.services.registration_service import default_schema
 
 # A tiny valid-looking PNG payload — content doesn't need to be a real image,
 # the endpoints under test never decode it.
@@ -116,13 +117,14 @@ class PaymentServiceTests(TestCase):
 
         self.assertFalse(info["has_proof"])
 
-    def test_build_payment_info_has_proof_true_from_legacy_field(self):
+    def test_build_payment_info_has_proof_false_from_legacy_link_field(self):
+        """The legacy pasted link no longer counts — only an uploaded file does."""
         self.team.payment_proof = "https://example.com/proof.png"
         self.team.save(update_fields=["payment_proof"])
 
         info = build_payment_info(self.team)
 
-        self.assertTrue(info["has_proof"])
+        self.assertFalse(info["has_proof"])
 
 
 class PaymentConfigServiceTests(TestCase):
@@ -406,7 +408,7 @@ class SubmitPaymentGateTests(PaymentApiTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("payment_proof", response.json()["error"])
 
-    def test_submit_after_uploading_proof_no_longer_hits_the_payment_gate(self):
+    def test_submit_after_uploading_proof_succeeds(self):
         with override_settings(MEDIA_ROOT=self.media_root):
             upload = self.client.post(
                 "/api/my-team/payment-proof",
@@ -418,24 +420,52 @@ class SubmitPaymentGateTests(PaymentApiTestBase):
         response = self._submit()
 
         # The captain profile in setUp is complete against the default schema,
-        # so this should succeed outright — but the specific behaviour this
-        # test pins down is that the payment_proof gate no longer fires.
-        if response.status_code != 200:
-            self.assertNotEqual(response.json().get("error"), "missing:team:payment_proof")
-        else:
-            self.assertEqual(response.json()["approval_status"], Team.APPROVAL_PENDING)
+        # so an uploaded proof is the last missing piece — the team lands in
+        # pending approval.
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["approval_status"], Team.APPROVAL_PENDING)
 
-    def test_submit_passes_the_payment_gate_via_legacy_payment_proof_field(self):
-        """The legacy pasted-link field also satisfies the gate."""
+    def test_submit_with_legacy_payment_proof_link_is_still_rejected(self):
+        """Only an uploaded file passes the gate — the pasted link does not."""
         self.team.payment_proof = "https://example.com/proof.png"
         self.team.save(update_fields=["payment_proof"])
 
         response = self._submit()
 
-        if response.status_code != 200:
-            self.assertNotEqual(response.json().get("error"), "missing:team:payment_proof")
-        else:
-            self.assertEqual(response.json()["approval_status"], Team.APPROVAL_PENDING)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "missing:team:payment_proof")
+
+    def test_submit_gate_applies_even_when_schema_disables_payment_proof(self):
+        """The upload requirement is unconditional — the admin schema's
+        enabled/required flags on the payment_proof team field no longer opt
+        a team out of it."""
+        schema = default_schema()
+        for field in schema["team_fields"]:
+            if field["key"] == "payment_proof":
+                field["enabled"] = False
+                field["required"] = False
+        SystemSetting.objects.update_or_create(
+            key="registration_form_schema", defaults={"value": schema},
+        )
+
+        response = self._submit()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "missing:team:payment_proof")
+
+    def test_my_team_has_payment_proof_reflects_uploaded_file_only(self):
+        """/api/my-team gates the FE submit button, so its flag must match the
+        submit gate: the legacy pasted link alone reads as false."""
+        self.team.payment_proof = "https://example.com/proof.png"
+        self.team.save(update_fields=["payment_proof"])
+
+        response = self.client.get(
+            "/api/my-team",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["team"]["has_payment_proof"])
 
 
 class AdminPaymentConfigViewTests(TestCase):

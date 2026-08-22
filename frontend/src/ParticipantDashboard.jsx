@@ -160,6 +160,9 @@ const FIELD_LABELS = {
 
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
+  if (code === 'missing:team:payment_proof') {
+    return 'Bạn cần upload ảnh minh chứng chuyển tiền ở bước Thanh toán trước khi gửi duyệt.'
+  }
   if (code?.startsWith('missing:')) {
     const [, who, field] = code.split(':')
     const whoLabel = who === 'team'

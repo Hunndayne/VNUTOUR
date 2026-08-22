@@ -119,7 +119,10 @@ def build_payment_info(team) -> dict:
     fee = int(config["fee_per_person"])
     amount = fee * max(member_count, 1)
     content = f'{config["prefix"]} {code} - {captain_mssv} - {strip_accents_upper(captain_name)}'
-    has_proof = bool(team.payment_proof_file) or bool(team.payment_proof)
+    # File-only: `has_proof` decides whether the dashboard shows the receipt and
+    # lets the team move on to submit, so it must match the submit gate (which
+    # requires an uploaded file, not the legacy pasted link).
+    has_proof = bool(team.payment_proof_file)
 
     return {
         "amount": amount,

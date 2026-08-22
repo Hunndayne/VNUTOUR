@@ -460,7 +460,10 @@ def my_team_view(request: HttpRequest):
                 "approval_note": team.approval_note,
                 "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
                 "payment_proof": team.payment_proof,
-                "has_payment_proof": bool(team.payment_proof_file) or bool(team.payment_proof),
+                # File-only: the legacy pasted link no longer unlocks the
+                # submit step, so the flag the FE gates on must agree with the
+                # submit gate in `my_team_submit_view`.
+                "has_payment_proof": bool(team.payment_proof_file),
                 "is_late_registration": team.is_late_registration,
             },
             "members": get_team_members(team, visibility="self", requester=acc),
@@ -665,10 +668,12 @@ def my_team_submit_view(request: HttpRequest):
             status=409,
         )
 
-    for field in schema.get("team_fields", []):
-        if field.get("enabled", True) and field.get("required") and field.get("key") == "payment_proof":
-            if not team.payment_proof_file and not team.payment_proof:
-                return JsonResponse({"error": "missing:team:payment_proof"}, status=400)
+    # The uploaded transfer receipt is mandatory for every submission: the
+    # captain must upload the proof image at the payment step first. The legacy
+    # pasted-link `payment_proof` no longer satisfies the gate, and the schema's
+    # enabled/required flags no longer opt out of it.
+    if not team.payment_proof_file:
+        return JsonResponse({"error": "missing:team:payment_proof"}, status=400)
 
     for index, member in enumerate(members, start=1):
         payload = {**member, **(member.get("extra") or {})}
