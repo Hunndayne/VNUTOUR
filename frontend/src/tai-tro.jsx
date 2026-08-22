@@ -8,14 +8,14 @@ import React from "react";
    ========================================================================== */
 
 const EVENT = {
-  name: "AISC'26",
-  fullName: "Advanced Information Systems Contest 2026",
-  organizer: "Khoa Hệ thống Thông tin — Trường ĐH Công nghệ Thông tin, ĐHQG-HCM",
-  email: "aisc.httt@uit.edu.vn",
+  name: "VNUTOUR 2026",
+  fullName: "Khám phá khu đô thị ĐHQG-HCM",
+  organizer: "Khoa Mạng máy tính và Truyền thông — Trường ĐH Công nghệ Thông tin, ĐHQG-HCM",
+  email: "vnutour@suctremmt.com",
   phone: "028 3725 2002 (Ext: 119)",
   phoneHref: "tel:+842837252002",
-  fanpage: "[facebook.com](https://www.facebook.com/Cuocthihocthuat.AISC)",
-  messenger: "[m.me](https://m.me/Cuocthihocthuat.AISC)",
+  fanpage: "[facebook.com](https://www.facebook.com/VNUTour",
+//   messenger: "[m.me](https://m.me/Cuocthihocthuat.AISC)",
 };
 
 const STATS = [
