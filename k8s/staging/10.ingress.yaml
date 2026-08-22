@@ -36,13 +36,13 @@ spec:
   #     | sed 's/namespace: vnutour/namespace: vnutour-staging/' | kubectl apply -f -
   tls:
     - hosts:
-        - vnutour.hunn.io.vn
+        - staging.vnutour.hunn.io.vn
       secretName: vnutour-tls
 
   # The hostname must also appear in DJANGO_ALLOWED_HOSTS in 01.configmap.yaml
   # in this directory, or Django rejects the forwarded Host header with a 400.
   rules:
-    - host: vnutour.hunn.io.vn
+    - host: staging.vnutour.hunn.io.vn
       http:
         paths:
           - path: /

@@ -1,5 +1,5 @@
 # Staging config — mirrors k8s/01.configmap.yaml but scoped to vnutour-staging and
-# the vnutour.hunn.io.vn host. Discord fields are intentionally blank: the bot is
+# the staging.vnutour.hunn.io.vn host. Discord fields are intentionally blank: the bot is
 # not deployed to staging.
 apiVersion: v1
 kind: ConfigMap
@@ -12,7 +12,7 @@ data:
 
   # Only the staging host (plus loopback for kubelet probes). Keep in sync with
   # 10.ingress.yaml in this directory.
-  DJANGO_ALLOWED_HOSTS: "vnutour.hunn.io.vn,localhost,127.0.0.1"
+  DJANGO_ALLOWED_HOSTS: "staging.vnutour.hunn.io.vn,localhost,127.0.0.1"
 
   TRUST_PROXY_HEADERS: "1"
 
@@ -22,7 +22,7 @@ data:
   FFMPEG_EXE: "ffmpeg"
 
   # Links the app builds point back at staging.
-  WEB_BASE_URL: "https://vnutour.hunn.io.vn"
+  WEB_BASE_URL: "https://staging.vnutour.hunn.io.vn"
 
   # No Discord bot on staging.
   DISCORD_CLIENT_ID: ""
