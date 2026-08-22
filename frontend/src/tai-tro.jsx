@@ -70,10 +70,7 @@ const BENEFITS = [
   { label: "Gian hàng / booth quảng bá tại Vòng Chung kết", tiers: ["diamond", "gold"] },
   { label: "Đại diện phát biểu và trao giải tại Vòng Chung kết", tiers: ["diamond", "gold"] },
   { label: "Bài đăng giới thiệu riêng về doanh nghiệp trên Fanpage", tiers: ["diamond", "gold"] },
-  { label: "Đề xuất báo cáo viên cho chuyên đề seminar Vòng Chung kết", tiers: ["diamond"] },
-  { label: "Tham gia thiết kế hoạt động chương trình", tiers: ["diamond"] },
   { label: "Danh xưng 'Nhà tài trợ Kim Cương' độc quyền ngành hàng", tiers: ["diamond"] },
-  { label: "Tiếp cận hồ sơ đội thi xuất sắc (tuyển dụng / thực tập)", tiers: ["diamond"] },
 ];
 
 // Logo nhà tài trợ đã xác nhận — để mảng rỗng sẽ hiện "Coming soon"
