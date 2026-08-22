@@ -13,8 +13,8 @@ const EVENT = {
   fullName: "Khám phá khu đô thị ĐHQG-HCM",
   organizer: "Khoa Mạng máy tính và Truyền thông — Trường ĐH Công nghệ Thông tin, ĐHQG-HCM",
   email: "vnutour@suctremmt.com",
-  phone: "028 3725 2002 (Ext: 119)",
-  phoneHref: "tel:+842837252002",
+  phone: "0123456789",
+  phoneHref: "tel:+84123456789",
   fanpage: "https://www.facebook.com/VNUTour",
 };
 
@@ -156,7 +156,9 @@ export default function TaiTro() {
   return (
     <main className="min-h-[100dvh] bg-white font-display text-[#0c1d33]">
       {/* ===== HERO ===== */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF] px-5 py-20 text-center md:py-28 xl:py-36">
+      {/* pb chừa sẵn khoảng cho card thống kê kéo lên -mt-10 bên dưới,
+          tránh đè lên chữ khi tên đơn vị tổ chức xuống nhiều dòng. */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF] px-5 pb-32 pt-20 text-center md:pb-40 md:pt-28 xl:pb-44 xl:pt-36">
         <div className="mx-auto w-full max-w-[1400px]">
           <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#1478D4] md:text-sm">
             {EVENT.fullName}
@@ -186,7 +188,7 @@ export default function TaiTro() {
       </section>
 
       {/* ===== THỐNG KÊ ===== */}
-      <section className="mx-auto w-full max-w-[1200px] px-5 md:px-8 xl:px-0">
+      <section className="relative z-10 mx-auto w-full max-w-[1200px] px-5 md:px-8 xl:px-0">
         <div className="-mt-10 grid grid-cols-2 gap-4 rounded-2xl border border-[#00B6F1]/20 bg-white p-6 shadow-[0_12px_35px_rgba(12,29,51,0.08)] md:grid-cols-4">
           {STATS.map((s) => (
             <div key={s.label} className="text-center">
