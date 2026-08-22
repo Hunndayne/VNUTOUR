@@ -4,6 +4,9 @@
 // vàng #FFD54D, block tối #083348).
 
 import React from "react";
+import universityLogo from "./assets/organizer-university.webp";
+import youthUnionLogo from "./assets/organizer-youth-union.webp";
+import facultyLogo from "./assets/organizer-faculty.webp";
 
 /* ==========================================================================
    DỮ LIỆU — theo Hồ sơ tài trợ VNU Tour 2026
@@ -13,8 +16,17 @@ const EVENT = {
   name: "VNU Tour 2026",
   fullName: "Hành trình khám phá khu đô thị ĐHQG-HCM",
   organizer: "Đoàn khoa Mạng máy tính và Truyền thông — Trường ĐH Công nghệ Thông tin, ĐHQG-HCM",
+  email: "vnutour@suctremmt.com",
+  emblem: "https://storage.hiseku.net/BieuTrung.png?v=2026",
   fanpage: "https://www.facebook.com/VNUTour",
 };
+
+// Logo các đơn vị tổ chức — thứ tự hiển thị từ trái sang phải
+const ORGANIZER_LOGOS = [
+  { src: universityLogo, alt: "Trường Đại học Công nghệ Thông tin" },
+  { src: youthUnionLogo, alt: "Đoàn Thanh niên Cộng sản Hồ Chí Minh" },
+  { src: facultyLogo, alt: "Khoa Mạng máy tính và Truyền thông" },
+];
 
 const STATS = [
   { value: "14", label: "Mùa giải liên tiếp" },
@@ -139,33 +151,6 @@ const TIMELINE = [
   },
 ];
 
-const CONTACTS = [
-  {
-    name: "Nguyễn Đình Khang",
-    role: "Bí thư Đoàn khoa MMT&TT — Trưởng Ban Tổ chức",
-    email: "khangnd@suctremmt.com",
-    phone: "0967 414 607",
-  },
-  {
-    name: "Trần Đức Thịnh",
-    role: "Phó Bí thư Đoàn khoa — Phó Trưởng BTC, Trưởng Ban Đối ngoại",
-    email: "thinhtd@suctremmt.com",
-    phone: "032 639 0349",
-  },
-  {
-    name: "La Hoàng Nhật",
-    role: "Ủy viên BCH Đoàn khoa — Phó Trưởng Ban Tổ chức",
-    email: "nhatlh@suctremmt.com",
-    phone: "0903 967 517",
-  },
-  {
-    name: "Trần Thị Trà Mi",
-    role: "Ủy viên BCH Đoàn khoa — Phó Trưởng Ban Tổ chức",
-    email: "mittt@suctremmt.com",
-    phone: "0969 768 675",
-  },
-];
-
 const SPONSOR_GROUPS = ["Đơn Vị Tài Trợ", "Đơn Vị Đồng Hành"];
 
 /* ==========================================================================
@@ -247,12 +232,30 @@ export default function TaiTro() {
       {/* ===== HERO ===== */}
       <section className="relative overflow-hidden bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF] px-5 pb-32 pt-20 text-center md:pb-40 md:pt-28 xl:pb-44 xl:pt-36">
         <div className="mx-auto w-full max-w-[1400px]">
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#1478D4] md:text-sm">
+          {/* Logo các đơn vị tổ chức */}
+          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-8 md:gap-14">
+            {ORGANIZER_LOGOS.map((logo) => (
+              <img
+                key={logo.alt}
+                src={logo.src}
+                alt={logo.alt}
+                className="h-14 object-contain md:h-20"
+              />
+            ))}
+          </div>
+          <p className="mt-10 text-xs font-bold uppercase tracking-[0.24em] text-[#1478D4] md:text-sm">
             Hồ sơ tài trợ · {EVENT.fullName}
           </p>
-          <h1 className="mx-auto mt-3 max-w-3xl text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] sm:text-5xl lg:text-7xl">
-            Đồng hành cùng <span className="text-[#1478D4]">{EVENT.name}</span>
-          </h1>
+          <div className="mt-3 flex flex-col items-center justify-center gap-6 lg:flex-row">
+            <img
+              src={EVENT.emblem}
+              alt={`Biểu trưng ${EVENT.name}`}
+              className="h-32 w-auto object-contain drop-shadow-[0_10px_25px_rgba(0,80,150,0.25)] md:h-44"
+            />
+            <h1 className="max-w-3xl text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] sm:text-5xl lg:text-left lg:text-7xl">
+              Đồng hành cùng <span className="text-[#1478D4]">{EVENT.name}</span>
+            </h1>
+          </div>
           <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-[#0c1d33]/65 md:text-lg">
             Chương trình thường niên dành cho tân sinh viên, một trong những hoạt động truyền thống
             của Trường ĐH Công nghệ Thông tin với sức lan tỏa mạnh mẽ trong khối ĐHQG-HCM — do{" "}
@@ -404,28 +407,12 @@ export default function TaiTro() {
             phù hợp nhất với doanh nghiệp của bạn.
           </p>
 
-          <div className="mx-auto mt-12 grid max-w-4xl gap-4 text-left sm:grid-cols-2">
-            {CONTACTS.map((c) => (
-              <div key={c.email} className="rounded-xl border border-white/15 bg-white/5 p-5">
-                <p className="text-base font-bold tracking-[-0.01em] text-white">{c.name}</p>
-                <p className="mt-1 text-xs leading-5 text-white/60">{c.role}</p>
-                <div className="mt-3 flex flex-col gap-1 text-sm">
-                  <a
-                    href={`mailto:${c.email}`}
-                    className="font-semibold text-[#39D5F4] transition-opacity hover:opacity-75"
-                  >
-                    ✉️ {c.email}
-                  </a>
-                  <a
-                    href={`tel:${c.phone.replace(/\s/g, "")}`}
-                    className="font-semibold text-white/85 transition-opacity hover:opacity-75"
-                  >
-                    📞 {c.phone}
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
+          <a
+            href={`mailto:${EVENT.email}`}
+            className="mt-10 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full border-2 border-[#00B6F1] bg-[#00B6F1] px-7 py-4 text-sm font-bold uppercase tracking-[0.06em] text-white transition-all duration-200 hover:-translate-y-1 hover:border-[#39D5F4] hover:bg-[#39D5F4] active:translate-y-px"
+          >
+            ✉️ {EVENT.email}
+          </a>
 
           <a
             href={EVENT.fanpage}
