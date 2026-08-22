@@ -31,7 +31,7 @@ const ORGANIZER_LOGOS = [
 const STATS = [
   { value: "14", label: "Mùa giải liên tiếp" },
   { value: "10+", label: "Năm tổ chức truyền thống" },
-  { value: "Hàng ngàn", label: "Lượt sinh viên quan tâm mỗi mùa" },
+  { value: "500+", label: "Lượt sinh viên quan tâm mỗi mùa" },
   { value: "6", label: "Trường thành viên khối ĐHQG-HCM" },
 ];
 
