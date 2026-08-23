@@ -145,7 +145,10 @@ def merge_team_group(team_codes: list[str]) -> tuple[Team | None, str | None, li
 
     target.name = target.code
     target.owner_account = None
-    target.save(update_fields=["name", "owner_account", "updated_at"])
+    # The merge reshapes the roster and opens a ballot; the payment-confirm
+    # lock described a team shape that no longer exists.
+    target.roster_locked_at = None
+    target.save(update_fields=["name", "owner_account", "roster_locked_at", "updated_at"])
     target.refresh_from_db()
     target.merged_from_codes = source_codes
     target.merge_before = before
@@ -176,7 +179,10 @@ def merge_teams(source: Team, target: Team) -> Team:
     # name either half chose belonged to a team that no longer exists.
     target.name = target.code
     target.owner_account = None
-    target.save(update_fields=["name", "owner_account", "updated_at"])
+    # The merge reshapes the roster and opens a ballot; the payment-confirm
+    # lock described a team shape that no longer exists.
+    target.roster_locked_at = None
+    target.save(update_fields=["name", "owner_account", "roster_locked_at", "updated_at"])
     target.refresh_from_db()
     target.merged_from_code = source_code  # transient, for the caller's audit line
     return target

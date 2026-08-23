@@ -223,6 +223,31 @@ def add_member(
         if already_on_team or (owner_mssv and owner_mssv == mssv):
             return None, "already_in_team"
 
+        # Email identifies a person for the later verified-email auto-sync, so it
+        # must be unique across the whole system — no two participants (any team)
+        # may share it, and neither may an account belonging to someone else. The
+        # MSSV dedup above misses this because the clashing rows carry different
+        # MSSVs. Captain adds are the owner's own creation step and are exempt.
+        normalized_email = (email or "").strip().lower()
+        if normalized_email:
+            # Every Participant carries a distinct MSSV, so a different MSSV using
+            # this email is genuinely another person. An Account is only a clash
+            # once it holds a concrete, different MSSV — an account with no MSSV
+            # yet is unclaimed and may be this very member signing up early
+            # (it auto-links by verified email later), so it must not block.
+            clash = (
+                Participant.objects.filter(email__iexact=normalized_email)
+                .exclude(mssv=mssv)
+                .exists()
+                or Account.objects.filter(email__iexact=normalized_email)
+                .exclude(mssv__isnull=True)
+                .exclude(mssv="")
+                .exclude(mssv=mssv)
+                .exists()
+            )
+            if clash:
+                return None, "email_in_team"
+
     # A profile claimed by another account is self-managed: create the membership
     # but never overwrite its registration fields with caller-supplied values.
     existing_participant = Participant.objects.filter(mssv=mssv).first()
@@ -359,8 +384,12 @@ def reject_team(team: Team, reviewer: Account, note: str | None = None) -> Team:
     team.approval_note = note
     team.reviewed_by = reviewer
     team.reviewed_at = now
+    # Rejecting is the organisers asking for changes, and the roster may be
+    # part of those changes — the payment-confirm lock has to give way.
+    team.roster_locked_at = None
     team.save(update_fields=[
-        "approval_status", "approval_note", "reviewed_by", "reviewed_at", "updated_at",
+        "approval_status", "approval_note", "reviewed_by", "reviewed_at",
+        "roster_locked_at", "updated_at",
     ])
     return team
 

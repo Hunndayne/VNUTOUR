@@ -189,3 +189,126 @@ class AddMemberDuplicateTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(participant.mssv, "23520000")
         self.assertEqual(TeamMembership.objects.filter(team=team).count(), 2)
+
+    def test_adding_member_with_captain_email_is_rejected(self):
+        # Different MSSV but the captain's email: the MSSV dedup lets it through,
+        # so the email guard must catch the duplicated identity.
+        captain, team = self._captain_team()
+
+        participant, error = add_member(
+            team, "23520000", full_name="Impersonator",
+            email="23521234@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertEqual(error, "email_in_team")
+        self.assertIsNone(participant)
+        self.assertEqual(TeamMembership.objects.filter(team=team).count(), 1)
+
+    def test_adding_member_with_another_members_email_is_rejected(self):
+        captain, team = self._captain_team()
+        add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        _, error = add_member(
+            team, "23520001", full_name="Second Member",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertEqual(error, "email_in_team")
+        self.assertEqual(TeamMembership.objects.filter(team=team).count(), 2)
+
+    def test_email_match_is_case_insensitive(self):
+        captain, team = self._captain_team()
+
+        _, error = add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23521234@GM.UIT.EDU.VN", actor=captain,
+        )
+
+        self.assertEqual(error, "email_in_team")
+
+    def test_email_used_in_another_team_is_rejected(self):
+        # Global uniqueness: an email already belonging to a participant on a
+        # different team must be blocked, not just one on the same roster.
+        captain, team = self._captain_team()
+        add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        other_captain = Account.objects.create(
+            username="cap-other",
+            email="23528888@gm.uit.edu.vn",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="23528888",
+            full_name="Other Captain",
+        )
+        other_team, _ = create_team("PH-OTHER", owner_account=other_captain)
+        add_member(
+            other_team, "23528888", full_name="Other Captain",
+            email="23528888@gm.uit.edu.vn", is_captain=True, actor=other_captain,
+        )
+
+        _, error = add_member(
+            other_team, "23527777", full_name="Reuser",
+            email="23520000@gm.uit.edu.vn", actor=other_captain,
+        )
+
+        self.assertEqual(error, "email_in_team")
+
+    def test_unclaimed_account_email_does_not_block_same_person(self):
+        # Reverse order: the member signed up via Google first (account holds the
+        # email but no MSSV yet), then the captain adds them by MSSV + same email.
+        # This is the same person and must be allowed — it auto-links on next login.
+        captain, team = self._captain_team()
+        Account.objects.create(
+            username="early",
+            email="early@gm.uit.edu.vn",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv=None,
+            full_name="Early Bird",
+        )
+
+        participant, error = add_member(
+            team, "23520000", full_name="Early Bird",
+            email="early@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(participant.mssv, "23520000")
+
+    def test_email_owned_by_another_account_is_rejected(self):
+        # An account (even one without a team yet) reserves its email too.
+        captain, team = self._captain_team()
+        Account.objects.create(
+            username="lone",
+            email="lone@gm.uit.edu.vn",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="23526666",
+            full_name="Lone Account",
+        )
+
+        _, error = add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="lone@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertEqual(error, "email_in_team")
+
+    def test_same_member_can_be_re_added_with_own_email(self):
+        # Guard must not misfire on the member's own email when the MSSV is new;
+        # only a *different* MSSV reusing an existing email is blocked.
+        captain, team = self._captain_team()
+
+        participant, error = add_member(
+            team, "23520000", full_name="Quang Nguyen Tai",
+            email="23520000@gm.uit.edu.vn", actor=captain,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(participant.mssv, "23520000")

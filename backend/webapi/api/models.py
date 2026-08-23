@@ -134,6 +134,12 @@ class Team(models.Model):
     # Uploaded payment proof file metadata: {name,size,type,key,storage,url?} (R2/local).
     # Kept alongside the legacy `payment_proof` (pasted link) field, which stays as-is.
     payment_proof_file = models.JSONField(null=True, blank=True)
+    # Set the moment the captain confirms the roster on the payment confirm
+    # dialog. Member add/edit/remove and renames are refused afterwards so the
+    # transfer amount (fee x member count) and memo stay what was confirmed.
+    # Cleared when the organisers reject the team — asked-for fixes must stay
+    # possible — and by a merge, which reshapes the roster anyway.
+    roster_locked_at = models.DateTimeField(null=True, blank=True)
     provision_state = models.CharField(
         max_length=10, choices=PROVISION_CHOICES, default=PROVISION_NONE,
     )
