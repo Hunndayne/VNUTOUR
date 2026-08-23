@@ -27,6 +27,11 @@ const LEGACY_PATHS = {
   '/paticipant': '/participant',
   '/checkin': '/coop',
   '/landing': '/',
+  // Public sign-up moved into the login screen (/login?mode=signup). The old
+  // standalone /register page is kept in the codebase but is no longer reachable
+  // by anyone — visiting the path just lands on the main page. `RegisterPage.jsx`
+  // stays around in case we bring a public registration flow back.
+  '/register': '/',
 }
 
 // Routes that render for everyone — guest or signed-in, any role — and never

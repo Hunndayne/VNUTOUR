@@ -4,8 +4,8 @@ Confirming the team for payment locks its roster: the transfer amount is
 fee x member count, so any member/name change after the confirm dialog would
 leave the paid sum and the expected sum disagreeing. Covered here:
   - PATCH {roster_locked: true} locks, and only on a roster the submit gate
-    would accept (complete members, size in range) — a locked roster must be
-    submittable as-is, never a dead end
+    would accept — a full team (size == max) or a solo entry (size == 1),
+    with complete members — never a partial 2..max-1 roster
   - add/edit/remove member and rename are refused while locked
   - GET /api/my-team reports the flag the dashboard locks its steps on
   - rejecting the team (BTC asking for changes) unlocks it again
@@ -66,6 +66,13 @@ class RosterLockTestBase(TestCase):
         TeamMembership.objects.create(team=self.team, participant=participant, is_captain=False)
         return participant
 
+    def _fill_to_full(self, **last_member_overrides):
+        # Bring the roster to the full 5 (captain + 4). Overrides apply to the
+        # last added member so a test can make exactly one member incomplete.
+        for index in range(2, 6):
+            overrides = last_member_overrides if index == 5 else {}
+            self._add_member(f"SV{index:03d}", **overrides)
+
     def _auth(self, token=None):
         return {"HTTP_AUTHORIZATION": f"Bearer {token or self.token}"}
 
@@ -79,8 +86,8 @@ class RosterLockTestBase(TestCase):
 
 
 class RosterLockTests(RosterLockTestBase):
-    def test_confirm_locks_roster_and_reports_the_flag(self):
-        self._add_member("SV002")
+    def test_confirm_locks_a_full_roster_and_reports_the_flag(self):
+        self._fill_to_full()
 
         response = self._patch({"team_name": "Đội Cửu Long", "roster_locked": True})
 
@@ -94,8 +101,18 @@ class RosterLockTests(RosterLockTestBase):
         overview = self.client.get("/api/my-team", **self._auth()).json()
         self.assertTrue(overview["team"]["roster_locked"])
 
+    def test_solo_roster_locks_without_a_name(self):
+        # A one-person (individual) registration is final on its own; it keeps
+        # the server placeholder name, so the lock carries no team_name.
+        response = self._patch({"roster_locked": True})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["roster_locked"])
+        self.team.refresh_from_db()
+        self.assertIsNotNone(self.team.roster_locked_at)
+
     def test_lock_is_idempotent_and_keeps_the_unchanged_name_writable(self):
-        self._add_member("SV002")
+        self._fill_to_full()
         self._patch({"team_name": "Đội A", "roster_locked": True})
 
         # Re-confirming (dialog reopened, page reloaded) and resending the
@@ -106,28 +123,42 @@ class RosterLockTests(RosterLockTestBase):
         self.assertTrue(response.json()["roster_locked"])
 
     def test_lock_refuses_an_incomplete_member(self):
-        self._add_member("SV002", facebook="")
+        # Full roster (size ok), but one member is missing a required field, so
+        # the per-member validation — which runs after the size gate — refuses it.
+        self._fill_to_full(facebook="")
 
         response = self._patch({"roster_locked": True})
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"], "missing:member_2:facebook")
+        self.assertEqual(response.json()["error"], "missing:member_5:facebook")
         self.team.refresh_from_db()
         self.assertIsNone(self.team.roster_locked_at)
 
-    def test_lock_refuses_an_out_of_range_roster(self):
-        for index in range(2, 7):
+    def test_lock_refuses_a_partial_roster(self):
+        # 3 of 5 — neither solo nor full.
+        self._add_member("SV002")
+        self._add_member("SV003")
+
+        response = self._patch({"roster_locked": True})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_size_not_final:5")
+        self.team.refresh_from_db()
+        self.assertIsNone(self.team.roster_locked_at)
+
+    def test_lock_refuses_an_over_full_roster(self):
+        for index in range(2, 7):  # SV002..SV006 → 6 members with the captain
             self._add_member(f"SV{index:03d}")
 
         response = self._patch({"roster_locked": True})
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["error"], "team_size_out_of_range:1-5")
+        self.assertEqual(response.json()["error"], "team_size_not_final:5")
         self.team.refresh_from_db()
         self.assertIsNone(self.team.roster_locked_at)
 
     def test_locked_roster_refuses_member_and_name_changes(self):
-        self._add_member("SV002")
+        self._fill_to_full()
         self._patch({"team_name": "Đội A", "roster_locked": True})
 
         added = self.client.post(
@@ -157,7 +188,7 @@ class RosterLockTests(RosterLockTestBase):
         self.assertEqual(renamed.json()["error"], "roster_locked")
 
     def test_rejection_unlocks_the_roster(self):
-        self._add_member("SV002")
+        self._fill_to_full()
         self._patch({"roster_locked": True})
 
         reviewer = Account.objects.create(

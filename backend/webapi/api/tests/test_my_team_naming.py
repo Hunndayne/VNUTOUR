@@ -4,8 +4,9 @@ The dashboard flow is: enter members first, then name the team on the team
 step, then pay. That means:
   - a team carries a stand-in name until its captain names it, and GET
     /api/my-team says which of the two it is carrying (`name_is_placeholder`)
-  - the captain may name the team at any roster size — an under-strength team
-    no longer has to wait until it is full (a merge resets the name anyway)
+  - manual naming is reserved for a FULL team (member count == team_size_max);
+    a solo entry (1) keeps the server placeholder, and a partial team
+    (2..max-1) cannot name at all
   - naming stays captain-only
 """
 
@@ -57,6 +58,17 @@ class MyTeamNamingTestBase(TestCase):
         TeamMembership.objects.create(team=self.team, participant=participant, is_captain=False)
         return generate_session(account)
 
+    def _fill_to_full(self):
+        # Bring the roster up to the full 5 (captain + 4 members).
+        for index in range(2, 6):
+            mssv = f"SV{index:03d}"
+            participant = Participant.objects.create(
+                mssv=mssv, full_name=f"TV {mssv}", email=f"{mssv.lower()}@example.com",
+            )
+            TeamMembership.objects.create(
+                team=self.team, participant=participant, is_captain=False,
+            )
+
 
 class MyTeamNamePlaceholderFlagTests(MyTeamNamingTestBase):
     def test_creation_placeholder_is_flagged(self):
@@ -94,7 +106,9 @@ class MyTeamNamePlaceholderFlagTests(MyTeamNamingTestBase):
 
 
 class MyTeamRenameTests(MyTeamNamingTestBase):
-    def test_captain_renames_an_under_strength_team(self):
+    def test_captain_renames_a_full_team(self):
+        self._fill_to_full()
+
         response = self.client.patch(
             "/api/my-team",
             data={"team_name": "Đội Buôn Ký"},
@@ -106,6 +120,39 @@ class MyTeamRenameTests(MyTeamNamingTestBase):
         self.assertEqual(response.json()["name"], "Đội Buôn Ký")
         self.team.refresh_from_db()
         self.assertEqual(self.team.name, "Đội Buôn Ký")
+
+    def test_rename_refuses_a_solo_team(self):
+        # A one-person entry keeps the server placeholder — it cannot be named.
+        response = self.client.patch(
+            "/api/my-team",
+            data={"team_name": "Đội Một Mình"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_name_requires_full_team:5")
+
+    def test_rename_refuses_a_partial_team(self):
+        # 3 of 5 — neither solo nor full, so naming is refused.
+        for index in range(2, 4):
+            mssv = f"SV{index:03d}"
+            participant = Participant.objects.create(
+                mssv=mssv, full_name=f"TV {mssv}", email=f"{mssv.lower()}@example.com",
+            )
+            TeamMembership.objects.create(
+                team=self.team, participant=participant, is_captain=False,
+            )
+
+        response = self.client.patch(
+            "/api/my-team",
+            data={"team_name": "Đội Nửa Vời"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_name_requires_full_team:5")
 
     def test_rename_still_requires_the_captain(self):
         response = self.client.patch(

@@ -192,6 +192,10 @@ function explainApiError(error) {
     const size = code.split(':')[1] || MAX_MEMBERS
     return `Chỉ đội đủ ${size} thành viên mới được đặt tên. Đội chưa đủ mang tên tạm và sẽ được BTC ghép với đội khác.`
   }
+  if (code?.startsWith('team_size_not_final')) {
+    const size = code.split(':')[1] || MAX_MEMBERS
+    return `Đội cần đủ ${size} người, hoặc đúng 1 người (đăng ký cá nhân), mới có thể đặt tên, thanh toán hoặc gửi duyệt.`
+  }
   if (code === 'registration_mismatch') {
     const teamCode = error?.data?.detail?.team_code
     const where = teamCode ? `đội ${teamCode}` : 'một đội'
@@ -435,7 +439,7 @@ function getStepState(step, profile, team, members, fields) {
   const status = team?.approval_status
   const done = {
     profile: isProfileComplete(profile, fields),
-    team: isTeamNamed(team),
+    team: Boolean(team?.roster_size_final) && (team?.can_name ? isTeamNamed(team) : true),
     members: members.length > 0,
     payment: Boolean(team?.has_payment_proof),
     submit: status === 'pending_approval' || status === 'approved',
@@ -479,7 +483,7 @@ function getNextAction(profile, team, members, fields, editable = true) {
       kind: 'add-member',
     }
   }
-  if (team && editable && !isTeamNamed(team)) {
+  if (team && editable && team.can_name && !isTeamNamed(team)) {
     return {
       title: 'Đặt tên cho đội',
       body: 'Đội đã có thành viên — đặt tên chính thức ở bước Đội rồi mới sang thanh toán.',
@@ -1532,14 +1536,20 @@ function ParticipantDashboard() {
   // optimistically allow it.
   const hasElectedCaptain = Boolean(captainVote?.captain_mssv)
   const captainMayRename = captainVote ? captainVote.can_rename_team !== false : true
-  const canRenameTeam = captainMayRename
+  const rosterSizeFinal = Boolean(team?.roster_size_final)
+  const teamIsFull = Boolean(team?.can_name)
+  const canRenameTeam = captainMayRename && teamIsFull
   // Rejecting a team is the organisers asking for changes, and that ask can
   // land after registration closes. The backend allows the edit in that case,
   // so the editor has to stay reachable — creating a team stays registration-only.
   const teamEditingOpen = registrationOpen || team?.approval_status === 'rejected'
-  const teamNameHint = hasElectedCaptain
-    ? 'Chỉ đội trưởng mới đổi được tên đội. Nhờ đội trưởng đặt tên giúp nhé.'
-    : 'Đội chưa có đội trưởng nên chưa ai đổi được tên. Bầu xong đội trưởng thì người đó sẽ đặt tên chính thức.'
+  const teamNameHint = teamIsFull
+    ? (hasElectedCaptain
+      ? 'Chỉ đội trưởng mới đổi được tên đội. Nhờ đội trưởng đặt tên giúp nhé.'
+      : 'Đội chưa có đội trưởng nên chưa ai đổi được tên. Bầu xong đội trưởng thì người đó sẽ đặt tên chính thức.')
+    : team?.member_count === 1
+      ? 'Đăng ký cá nhân — hệ thống tự đặt tên tạm để nhận biết. Bạn có thể sang bước Thanh toán.'
+      : `Đội cần đủ ${maxMembers} người mới đặt được tên và sang bước Thanh toán, hoặc để lại 1 người (đăng ký cá nhân). Hiện ${team?.member_count ?? '—'}/${maxMembers}.`
   // A merged team is left named after its code until the new captain renames it.
   const teamNameIsCode = Boolean(team && team.team_name && team.team_name === team.team_id)
   const captainShouldNameTeam = hasElectedCaptain && canRenameTeam && teamNameIsCode
@@ -2188,10 +2198,24 @@ function ParticipantDashboard() {
                         onNext={openPaymentConfirm}
                         nextLabel="Xác nhận & tiếp tục"
                         // A team that already paid (legacy flow) must not get
-                        // stuck here just because it still carries a
-                        // placeholder name — advancing stays open then.
-                        nextDisabled={(!teamNameDraft.trim() && !stepUnlocked('payment')) || Boolean(busyAction)}
-                        hint={!teamNameDraft.trim() && !stepUnlocked('payment') ? 'Nhập tên đội để sang bước Thanh toán.' : undefined}
+                        // stuck here just because size/name doesn't line up —
+                        // advancing stays open then.
+                        nextDisabled={
+                          Boolean(busyAction)
+                          || (!stepUnlocked('payment') && (
+                              !rosterSizeFinal
+                              || (teamIsFull && !teamNameDraft.trim())
+                          ))
+                        }
+                        hint={
+                          stepUnlocked('payment')
+                            ? undefined
+                            : !rosterSizeFinal
+                              ? `Đội cần đủ ${maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới sang được bước Thanh toán.`
+                              : (teamIsFull && !teamNameDraft.trim())
+                                ? 'Nhập tên đội để sang bước Thanh toán.'
+                                : undefined
+                        }
                       />
                     </div>
                   </div>
@@ -2255,13 +2279,18 @@ function ParticipantDashboard() {
                       <button
                         type="button"
                         onClick={submitTeam}
-                        disabled={!editable || !profileComplete || members.length === 0 || !team.has_payment_proof || team.approval_status === 'pending_approval' || Boolean(busyAction)}
+                        disabled={!editable || !profileComplete || members.length === 0 || !team.has_payment_proof || !rosterSizeFinal || team.approval_status === 'pending_approval' || Boolean(busyAction)}
                         className={TRAIL_BUTTON}
                       >
                         <Icon name="checkPlain" className="h-4 w-4" />
                         {busyAction === 'submit-team' ? 'Đang gửi...' : 'Gửi duyệt'}
                       </button>
                     </div>
+                    {editable && !rosterSizeFinal && (
+                      <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
+                        Đội cần đủ {maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
+                      </p>
+                    )}
                     {editable && !team.has_payment_proof && (
                       <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
                         Cần upload minh chứng thanh toán ở bước Thanh toán trước khi gửi duyệt.
@@ -2361,7 +2390,7 @@ function ParticipantDashboard() {
                   <button
                     type="button"
                     onClick={submitTeam}
-                    disabled={!editable || !profileComplete || members.length === 0 || !team.has_payment_proof || team.approval_status === 'pending_approval' || Boolean(busyAction)}
+                    disabled={!editable || !profileComplete || members.length === 0 || !team.has_payment_proof || !rosterSizeFinal || team.approval_status === 'pending_approval' || Boolean(busyAction)}
                     className={TRAIL_BUTTON}
                   >
                     <Icon name="checkPlain" className="h-4 w-4" />
@@ -2381,6 +2410,11 @@ function ParticipantDashboard() {
                     </button>
                   )}
                 </div>
+                {editable && !rosterSizeFinal && (
+                  <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
+                    Đội cần đủ {maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
+                  </p>
+                )}
                 {editable && !team.has_payment_proof && (
                   <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
                     Cần upload minh chứng thanh toán ở bước Thanh toán trước khi gửi duyệt.
