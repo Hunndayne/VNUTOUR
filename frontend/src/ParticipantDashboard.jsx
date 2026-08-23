@@ -581,7 +581,7 @@ function StepNav({ onBack, onNext, nextLabel = 'Tiếp tục', nextDisabled = fa
   )
 }
 
-function MemberModal({ form, fields, editing, saving, draft, onChange, onClose, onSave }) {
+function MemberModal({ form, fields, editing, saving, draft, error, onChange, onClose, onSave }) {
   const [resolveKey, setResolveKey] = useState('')
   const [resolveError, setResolveError] = useState('')
 
@@ -687,7 +687,13 @@ function MemberModal({ form, fields, editing, saving, draft, onChange, onClose, 
           />
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-[#DCD8CC] bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+        <div className="flex flex-col gap-3 border-t border-[#DCD8CC] bg-white px-5 py-4 sm:px-6">
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" onClick={onClose} disabled={saving} className={SECONDARY_BUTTON}>
             Huỷ
           </button>
@@ -699,6 +705,7 @@ function MemberModal({ form, fields, editing, saving, draft, onChange, onClose, 
             <Icon name="checkPlain" className="h-4 w-4" />
             {saving ? 'Đang lưu...' : 'Lưu thành viên'}
           </button>
+          </div>
         </div>
       </form>
     </div>
@@ -1639,6 +1646,9 @@ function ParticipantDashboard() {
   )
 
   const openMemberDialog = (index = null) => {
+    // Clear any error left over from a prior action so the modal opens clean —
+    // its warning box only shows problems from this add/edit attempt.
+    setApiError('')
     const base = index === null ? blankMember() : withFlatExtra(members[index])
     const stored = readDraft(`participant:member:${index === null ? 'new' : base.mssv || 'new'}`)
     setMemberDialog({ index })
@@ -1650,6 +1660,8 @@ function ParticipantDashboard() {
 
   const closeMemberDialog = () => {
     // Closing is not discarding — the draft stays so reopening picks it up.
+    // Drop the modal's error so it never leaks onto the page behind.
+    setApiError('')
     setMemberDialog(null)
     setMemberForm(null)
     setMemberDraftSavedAt(null)
@@ -2595,6 +2607,7 @@ function ParticipantDashboard() {
         editing={memberDialog?.index !== null}
         saving={busyAction === 'save-member'}
         draft={memberDraft}
+        error={apiError}
         onChange={setMemberForm}
         onClose={closeMemberDialog}
         onSave={saveMember}
