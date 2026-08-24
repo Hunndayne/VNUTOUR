@@ -128,6 +128,13 @@ function normalizeTeam(teamPayload, teamDetail = null) {
     submitted_at: teamDetail?.submitted_at || teamPayload.team.submitted_at || null,
     payment_proof: teamDetail?.payment_proof || teamPayload.team.payment_proof || '',
     has_payment_proof: Boolean(teamDetail?.has_payment_proof ?? teamPayload?.team?.has_payment_proof),
+    // These roster gates come from `/my-team` (see views_participant); without
+    // them the team step reads `undefined` as "not final" and blocks a solo (1)
+    // or full team from ever reaching Thanh toán, showing "—/max".
+    member_count: teamDetail?.member_count ?? teamPayload?.team?.member_count,
+    max_members: teamDetail?.max_members ?? teamPayload?.team?.max_members,
+    roster_size_final: Boolean(teamDetail?.roster_size_final ?? teamPayload?.team?.roster_size_final),
+    can_name: Boolean(teamDetail?.can_name ?? teamPayload?.team?.can_name),
   }
 }
 
@@ -2151,6 +2158,12 @@ function ParticipantDashboard() {
                       <div>
                         <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Bước 3</p>
                         <h2 className="mt-1 font-display text-xl font-bold text-ink">Tên đội</h2>
+                        {team.team_id && (
+                          <p className="mt-1 text-xs leading-5 text-ink/45">
+                            Mã đội: <span className="font-mono font-semibold text-ink/70">{team.team_id}</span>
+                            <span className="text-ink/40"> — dùng mã này khi cần BTC hỗ trợ.</span>
+                          </p>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Badge label={status.label} cls={status.cls} />

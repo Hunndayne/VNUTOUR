@@ -54,8 +54,28 @@ function LoginPage() {
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setForm(prev => ({ ...prev, [name]: value }))
-    if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }))
+    setForm(prev => {
+      const next = { ...prev, [name]: value }
+      // Kiểm tra điều kiện cơ bản ngay khi gõ (không đợi bấm submit) cho các
+      // trường mật khẩu — cả login lẫn signup — để phản hồi sớm cho người dùng.
+      setErrors(prevErr => {
+        const err = { ...prevErr }
+        if (name === 'password' || name === 'confirmPassword') {
+          if (mode === 'signup') {
+            err.password = next.password && next.password.length < 8
+              ? 'Mật khẩu phải có ít nhất 8 ký tự' : ''
+            err.confirmPassword = next.confirmPassword && next.confirmPassword !== next.password
+              ? 'Mật khẩu xác nhận không khớp' : ''
+          } else if (name === 'password') {
+            err.password = ''
+          }
+        } else if (err[name]) {
+          err[name] = ''
+        }
+        return err
+      })
+      return next
+    })
   }
 
   // Pull the school dropdown options from the registration schema so signup and
