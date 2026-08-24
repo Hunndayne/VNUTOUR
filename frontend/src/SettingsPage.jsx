@@ -21,7 +21,7 @@ function explainApiError(error) {
     mssv_taken: 'MSSV này đã được sử dụng bởi tài khoản khác.',
     registration_mismatch: 'MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại.',
     missing_fields: 'Vui lòng điền đầy đủ các trường bắt buộc.',
-    password_too_short: 'Mật khẩu mới phải có ít nhất 6 ký tự.',
+    password_too_short: 'Mật khẩu mới phải có ít nhất 8 ký tự.',
     invalid_current_password: 'Mật khẩu hiện tại không đúng.',
     google_account_no_password: 'Tài khoản Google không có mật khẩu riêng. Hãy dùng Google để đăng nhập.',
     already_linked: 'Tài khoản đã được liên kết Google.',
@@ -234,8 +234,8 @@ function PasswordSection({ hasGoogle, onPasswordChange, busy }) {
       setLocalError('Vui lòng điền đầy đủ các trường.')
       return
     }
-    if (next.length < 6) {
-      setLocalError('Mật khẩu mới phải có ít nhất 6 ký tự.')
+    if (next.length < 8) {
+      setLocalError('Mật khẩu mới phải có ít nhất 8 ký tự.')
       return
     }
     if (next !== confirm) {

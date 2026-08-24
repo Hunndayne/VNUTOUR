@@ -469,6 +469,8 @@ def my_team_view(request: HttpRequest):
 
         team = membership.team
         ensure_default_phase_roster_for_team(team)
+        _mc = len(get_team_members(team))
+        _max = int(get_schema().get("team_size_max") or get_schema().get("team_size") or 5)
         return JsonResponse({
             "team": {
                 "code": team.code,
@@ -486,6 +488,10 @@ def my_team_view(request: HttpRequest):
                 # submit gate in `my_team_submit_view`.
                 "has_payment_proof": bool(team.payment_proof_file),
                 "is_late_registration": team.is_late_registration,
+                "member_count": _mc,
+                "max_members": _max,
+                "roster_size_final": _mc == 1 or _mc == _max,
+                "can_name": _mc == _max,
             },
             "members": get_team_members(team, visibility="self", requester=acc),
             "editable": team_is_editable(team),
@@ -572,8 +578,19 @@ def my_team_view(request: HttpRequest):
         # The confirm dialog sends the final name together with the lock; once
         # locked, a *changing* name is refused while resending the unchanged
         # name stays fine.
+        schema = get_schema()
+        members = get_team_members(team)
+        max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
+
         if new_name and team.roster_locked_at and new_name != team.name:
             return _roster_locked_response()
+        # Manual naming is reserved for a full team; an individual (1) keeps the
+        # server placeholder, and a partial team (2..max-1) cannot name at all.
+        if new_name and new_name != team.name and len(members) != max_size:
+            return JsonResponse(
+                {"error": f"team_name_requires_full_team:{max_size}"},
+                status=409,
+            )
         if new_name:
             team.name = new_name
 
@@ -581,13 +598,9 @@ def my_team_view(request: HttpRequest):
             # A locked roster must be submittable as-is, or the captain is
             # stuck with a team they can neither edit nor send — so the lock
             # only lands after the same checks the submit gate runs.
-            schema = get_schema()
-            members = get_team_members(team)
-            min_size = int(schema.get("team_size_min") or 1)
-            max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
-            if len(members) < min_size or len(members) > max_size:
+            if not (len(members) == 1 or len(members) == max_size):
                 return JsonResponse(
-                    {"error": f"team_size_out_of_range:{min_size}-{max_size}"},
+                    {"error": f"team_size_not_final:{max_size}"},
                     status=409,
                 )
             for index, member in enumerate(members, start=1):
@@ -702,15 +715,12 @@ def my_team_submit_view(request: HttpRequest):
     team = membership.team
     schema = get_schema()
     members = get_team_members(team)
-    # An under-strength team may submit: this is a freshers' event, so people
-    # sign up before they know four others, and the organisers merge teams up to
-    # full size afterwards. Only the ceiling is enforced here, matching the range
-    # that public registration has always allowed in `register_team`.
-    min_size = int(schema.get("team_size_min") or 1)
     max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
-    if len(members) < min_size or len(members) > max_size:
+    # Registration is final only for a solo entry (1) or a full team (max);
+    # a partial team (2..max-1) must recruit to full or stay individual.
+    if not (len(members) == 1 or len(members) == max_size):
         return JsonResponse(
-            {"error": f"team_size_out_of_range:{min_size}-{max_size}"},
+            {"error": f"team_size_not_final:{max_size}"},
             status=409,
         )
 
