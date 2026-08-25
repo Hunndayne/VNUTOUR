@@ -454,6 +454,147 @@ function PaymentConfigSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// b2. Hũ Timo — auto-reconciliation of bank transfers for the shared BTC pot.
+// The share code / mật mã are hashed server-side on save and never returned,
+// so this form only ever knows "configured: true/false" — there's nothing to
+// pre-fill, only to overwrite.
+// ─────────────────────────────────────────────────────────────────────
+function TimoPotConfigSection() {
+  const [configured, setConfigured] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [shareCode, setShareCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [apiError, setApiError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    apiRequest('/admin/timo-pot-config')
+      .then((payload) => { if (!cancelled) setConfigured(Boolean(payload?.configured)) })
+      .catch((error) => {
+        if (cancelled) return
+        if (error?.status === 401) { logoutAndRedirect('/login'); return }
+        setApiError('Không tải được trạng thái cấu hình hũ Timo.')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleSave = async () => {
+    if (!shareCode.trim()) return
+    setSaving(true)
+    setApiError('')
+    setSuccessMsg('')
+    try {
+      const payload = await apiRequest('/admin/timo-pot-config', {
+        method: 'PUT',
+        body: { share_code: shareCode.trim(), password: password.trim() || null },
+      })
+      setConfigured(Boolean(payload?.configured))
+      setShareCode('')
+      setPassword('')
+      setSuccessMsg('Đã lưu cấu hình hũ Timo.')
+      setTimeout(() => setSuccessMsg(''), 3000)
+    } catch (error) {
+      if (error?.status === 401) { logoutAndRedirect('/login'); return }
+      setApiError('Không thể lưu cấu hình hũ Timo. Kiểm tra lại link/mã.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleClear = async () => {
+    setSaving(true)
+    setApiError('')
+    try {
+      await apiRequest('/admin/timo-pot-config', { method: 'DELETE' })
+      setConfigured(false)
+      setSuccessMsg('Đã tắt tự động xác nhận qua Timo.')
+      setTimeout(() => setSuccessMsg(''), 3000)
+    } catch (error) {
+      if (error?.status === 401) { logoutAndRedirect('/login'); return }
+      setApiError('Không tắt được cấu hình.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className={`${CARD} px-4 py-14 text-center text-sm text-ink/35`}>
+        Đang tải cấu hình hũ Timo...
+      </div>
+    )
+  }
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <h3 className="mb-1 font-mono text-[11px] uppercase tracking-[0.18em] text-ink/40">
+        Tự động xác nhận thanh toán — Hũ Timo
+      </h3>
+      <p className="mb-4 text-xs leading-5 text-ink/45">
+        Cấu hình MỘT hũ Timo chung của BTC. Khi đội trưởng bấm "Đã chuyển tiền", hệ thống quét
+        một lượt lịch sử giao dịch của hũ này (không tự quét định kỳ) để tìm khớp mã đội + số tiền.
+        Chưa cấu hình thì đội vẫn dùng được luồng upload minh chứng thủ công như cũ.
+      </p>
+
+      <div className="space-y-4">
+        <ErrorNote>{apiError}</ErrorNote>
+        <SuccessNote>{successMsg}</SuccessNote>
+
+        <div className="rounded-lg border border-stone bg-white px-3 py-2 text-sm">
+          Trạng thái:{' '}
+          <span className={configured ? 'font-semibold text-emerald-700' : 'font-semibold text-ink/45'}>
+            {configured ? 'Đã cấu hình' : 'Chưa cấu hình'}
+          </span>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className={LABEL_CLASS}>Link chia sẻ hũ (share.timo.vn/...) hoặc mã</label>
+            <input
+              value={shareCode}
+              onChange={(e) => setShareCode(e.target.value)}
+              placeholder="https://share.timo.vn/VN/transaction/xxxx"
+              className={FIELD_CLASS}
+            />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Mật mã bảo vệ hũ (nếu có)</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Để trống nếu hũ không đặt mật mã"
+              className={FIELD_CLASS}
+            />
+            <p className="mt-1 text-xs text-ink/40">Chỉ lưu ở dạng băm — không thể xem lại sau khi lưu.</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={handleSave} disabled={saving || !shareCode.trim()} className={PRIMARY_BTN}>
+            <Icon name="checkPlain" className="h-4 w-4" />
+            {saving ? 'Đang lưu...' : 'Lưu cấu hình'}
+          </button>
+          {configured && (
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={saving}
+              className="rounded-lg border border-stone bg-white px-4 py-2.5 text-sm font-semibold text-ink/60 transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Tắt tự động xác nhận
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // c. Schema form đăng ký — JSON editor for the registration schema
 // ─────────────────────────────────────────────────────────────────────
 function RegistrationSchemaSection() {
@@ -599,6 +740,7 @@ function SiteSettingsPage() {
       <RegistrationToggleSection />
       <AntibotToggleSection />
       <PaymentConfigSection />
+      <TimoPotConfigSection />
       <RegistrationSchemaSection />
     </div>
   )

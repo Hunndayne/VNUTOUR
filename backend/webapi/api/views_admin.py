@@ -21,6 +21,7 @@ from api.services import team_merge_service
 from api.services.registration_service import normalize_gender, get_schema, save_schema
 from api.services.submission_storage_service import proof_file_response
 from api.services.payment_service import get_payment_config, save_payment_config
+from api.services.timo_service import get_timo_config, save_timo_config, clear_timo_config, is_timo_configured
 from api.services.antibot_service import antibot_config, set_antibot_enabled
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 
@@ -423,6 +424,39 @@ def admin_payment_config_view(request: HttpRequest):
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
         return JsonResponse({"payment_config": saved})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def admin_timo_pot_config_view(request: HttpRequest):
+    """GET/PUT/DELETE the BTC's shared Timo money-pot config for auto payment
+    reconciliation. Only ever reports `configured: bool` — the share code and
+    mật mã are hashed on save and never stored or returned in plaintext."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    if request.method == "GET":
+        return JsonResponse({"configured": is_timo_configured()})
+
+    if request.method == "PUT":
+        data = _json_body(request)
+        if data is None:
+            return JsonResponse({"error": "invalid_json"}, status=400)
+        share_code = str(data.get("share_code") or data.get("share_url") or "").strip()
+        password = data.get("password")
+        if not share_code:
+            return JsonResponse({"error": "missing_share_code"}, status=400)
+        try:
+            result = save_timo_config(share_code, password)
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        return JsonResponse(result)
+
+    if request.method == "DELETE":
+        clear_timo_config()
+        return JsonResponse({"configured": False})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 

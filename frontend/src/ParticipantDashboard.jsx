@@ -385,7 +385,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
   )
 }
 
-function PersonSchemaFields({ fields, data, onPatch, disabled = false, lockMssv = false }) {
+function PersonSchemaFields({ fields, data, onPatch, disabled = false, lockMssv = false, lockEmail = false }) {
   const priority = { mssv: 0, email: 1 }
   const visible = fields
     .filter((field) => !isSchemaHidden(field, data))
@@ -393,16 +393,25 @@ function PersonSchemaFields({ fields, data, onPatch, disabled = false, lockMssv 
     .sort((a, b) => (priority[a.key] ?? 10) - (priority[b.key] ?? 10))
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {visible.map((field) => (
-        <div key={field.key} className={field.key === 'full_name' || field.help ? 'sm:col-span-2' : ''}>
-          <SchemaField
-            field={field}
-            value={schemaValue(data, field.key)}
-            disabled={disabled || (lockMssv && field.key === 'mssv')}
-            onChange={(value) => onPatch(buildSchemaPatch(fields, field.key, value))}
-          />
-        </div>
-      ))}
+      {visible.map((field) => {
+        // mssv/email are reconciliation references: once a member exists,
+        // they can't be edited here — remove the member and add a new one
+        // instead if they were entered wrong.
+        const locked = (lockMssv && field.key === 'mssv') || (lockEmail && field.key === 'email')
+        return (
+          <div key={field.key} className={field.key === 'full_name' || field.help ? 'sm:col-span-2' : ''}>
+            <SchemaField
+              field={field}
+              value={schemaValue(data, field.key)}
+              disabled={disabled || locked}
+              onChange={(value) => onPatch(buildSchemaPatch(fields, field.key, value))}
+            />
+            {locked && (
+              <p className="mt-1 text-xs text-ink/40">Không đổi được — muốn đổi phải xóa và thêm lại.</p>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -690,6 +699,7 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
             fields={visibleFields}
             data={form}
             lockMssv={editing}
+            lockEmail={editing}
             onPatch={(patch) => onChange({
               ...form,
               ...patch,
@@ -1126,7 +1136,7 @@ function formatVnd(amount) {
 // team's captain scans/opens a VietQR to pay, then uploads a screenshot as
 // proof. The backend already tracks the proof file on the team, so all this
 // card owns is the VietQR display, the bank-app deeplinks, and the upload.
-function PaymentSection({ team, editable, onProofChange }) {
+function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -1135,6 +1145,11 @@ function PaymentSection({ team, editable, onProofChange }) {
   const [copied, setCopied] = useState(false)
   const [hasProof, setHasProof] = useState(false)
   const [proofUrl, setProofUrl] = useState(null)
+  // Timo auto-confirm: only ever polled by the captain's explicit click —
+  // no background/cron polling here.
+  const [checkingPaid, setCheckingPaid] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [paidNotice, setPaidNotice] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -1257,6 +1272,38 @@ function PaymentSection({ team, editable, onProofChange }) {
     }
   }
 
+  const handleMarkPaid = async () => {
+    setCheckingPaid(true)
+    setError('')
+    setPaidNotice('')
+    try {
+      const result = await apiRequest('/my-team/payment/confirm-auto', { method: 'POST' })
+      setPaidNotice(result?.message || '')
+      if (result?.payment_confirmed) {
+        setInfo((current) => (current ? { ...current, payment_confirmed: true } : current))
+      }
+      await onProofChange?.()
+    } catch (err) {
+      setError(explainApiError(err))
+    } finally {
+      setCheckingPaid(false)
+    }
+  }
+
+  const handleCancelPayment = async () => {
+    setCancelling(true)
+    setError('')
+    try {
+      await apiRequest('/my-team/payment/cancel', { method: 'POST' })
+      setInfo((current) => (current ? { ...current, roster_locked: false } : current))
+      await onProofChange?.()
+    } catch (err) {
+      setError(explainApiError(err))
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className={`${PARTICIPANT_CARD} p-5 text-sm text-ink/45`}>
@@ -1275,8 +1322,8 @@ function PaymentSection({ team, editable, onProofChange }) {
           <h2 className="mt-1 font-display text-xl font-bold text-ink">Thanh toán lệ phí</h2>
         </div>
         <Badge
-          label={hasProof ? 'Đã upload minh chứng' : 'Chưa upload minh chứng'}
-          cls={hasProof ? 'bg-[#1F7A6B]/12 text-[#1F7A6B]' : 'bg-[#E0A23A]/15 text-[#9A6B12]'}
+          label={info?.payment_confirmed ? 'Đã xác nhận thanh toán' : hasProof ? 'Đã upload minh chứng' : 'Chưa upload minh chứng'}
+          cls={info?.payment_confirmed || hasProof ? 'bg-[#1F7A6B]/12 text-[#1F7A6B]' : 'bg-[#E0A23A]/15 text-[#9A6B12]'}
         />
       </div>
 
@@ -1291,6 +1338,28 @@ function PaymentSection({ team, editable, onProofChange }) {
           {info.member_count} người × {formatVnd(info.fee_per_person)} ={' '}
           <span className="font-semibold text-ink">{formatVnd(info.amount)}</span>
         </p>
+      )}
+
+      {isCaptain && info?.roster_locked && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/60 px-4 py-3">
+          {info?.timo_configured && !info?.payment_confirmed && (
+            <button type="button" onClick={handleMarkPaid} disabled={checkingPaid} className={SECONDARY_BUTTON}>
+              <Icon name="checkPlain" className="h-4 w-4" />
+              {checkingPaid ? 'Đang kiểm tra...' : 'Đã chuyển tiền'}
+            </button>
+          )}
+          {!info?.payment_confirmed && (
+            <button
+              type="button"
+              onClick={handleCancelPayment}
+              disabled={cancelling}
+              className="rounded-lg border border-[#D6492B]/25 bg-white px-3 py-1.5 text-xs font-semibold text-[#D6492B] transition hover:bg-[#D6492B]/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {cancelling ? 'Đang hủy...' : 'Hủy thanh toán'}
+            </button>
+          )}
+          {paidNotice && <p className="w-full text-xs leading-5 text-ink/55">{paidNotice}</p>}
+        </div>
       )}
 
       {!bankReady ? (
@@ -1573,6 +1642,11 @@ function ParticipantDashboard() {
   )
   const captainIndex = members.findIndex((member) => member.is_captain)
   const displayedMemberCount = captainIndex === -1 ? members.length + 1 : members.length
+  const myMssv = profile.mssv || user.mssv || ''
+  // Backend now lets a non-captain PATCH their own row too; mirror that here
+  // so the "Sửa" button shows for the row that belongs to the logged-in
+  // account, not only for the captain.
+  const amCaptain = Boolean(members.find((member) => member.mssv === myMssv)?.is_captain)
 
   // ── Wizard navigation ───────────────────────────────────────────────
   // Each step is its own screen, synced to ?step=. A step is reachable only
@@ -2246,7 +2320,7 @@ function ParticipantDashboard() {
                         </p>
                       </div>
                     )}
-                    <PaymentSection team={team} editable={editable} onProofChange={loadDashboard} />
+                    <PaymentSection team={team} editable={editable} isCaptain={amCaptain} onProofChange={loadDashboard} />
                     <div className={`${PARTICIPANT_CARD} p-5`}>
                       <StepNav
                         // The roster is locked from the confirm dialog on, so
@@ -2336,7 +2410,7 @@ function ParticipantDashboard() {
               </>
             ) : teamEditingOpen && team ? (
               <>
-              <PaymentSection team={team} editable={editable} onProofChange={loadDashboard} />
+              <PaymentSection team={team} editable={editable} isCaptain={amCaptain} onProofChange={loadDashboard} />
               <div id="team-editor" className={`${PARTICIPANT_CARD} p-5`}>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -2461,7 +2535,7 @@ function ParticipantDashboard() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-xs text-ink/40">{displayedMemberCount} người</span>
-                  {editable && !rosterLocked && (
+                  {editable && !rosterLocked && amCaptain && (
                     <button
                       type="button"
                       onClick={() => openMemberDialog()}
@@ -2554,7 +2628,7 @@ function ParticipantDashboard() {
                             </button>
                           ) : (
                             <>
-                              {member.email && (
+                              {member.email && (amCaptain || member.mssv === myMssv) && (
                                 <button
                                   type="button"
                                   onClick={() => openMemberDialog(index)}
@@ -2564,15 +2638,17 @@ function ParticipantDashboard() {
                                   Sửa
                                 </button>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => removeMember(index)}
-                                disabled={!editable || Boolean(busyAction)}
-                                className="rounded-md p-1.5 text-[#20312B]/25 transition hover:bg-[#D6492B]/10 hover:text-[#D6492B] disabled:cursor-not-allowed disabled:opacity-30"
-                                aria-label="Xóa thành viên"
-                              >
-                                <Icon name="trash" className="h-4 w-4" />
-                              </button>
+                              {amCaptain && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeMember(index)}
+                                  disabled={!editable || Boolean(busyAction)}
+                                  className="rounded-md p-1.5 text-[#20312B]/25 transition hover:bg-[#D6492B]/10 hover:text-[#D6492B] disabled:cursor-not-allowed disabled:opacity-30"
+                                  aria-label="Xóa thành viên"
+                                >
+                                  <Icon name="trash" className="h-4 w-4" />
+                                </button>
+                              )}
                             </>
                           )}
                         </div>

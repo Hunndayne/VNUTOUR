@@ -307,7 +307,12 @@ def update_member(
     date_of_birth=None,
     extra: dict | None = None,
 ) -> Tuple[Optional[Participant], Optional[str]]:
-    """Update a participant who belongs to `team`. Returns (participant, error)."""
+    """Update a participant who belongs to `team`. Returns (participant, error).
+
+    `mssv` and `email` are identity/reconciliation references and are never
+    overwritten here, even if the caller passes new values — remove the
+    member and add a new one instead if they must change.
+    """
     mssv = (mssv or "").strip()
     membership = TeamMembership.objects.filter(
         team=team, participant__mssv=mssv,
@@ -317,7 +322,7 @@ def update_member(
 
     p = membership.participant
     fields = {
-        "full_name": full_name, "email": email, "phone": phone,
+        "full_name": full_name, "phone": phone,
         "faculty": faculty, "school": school, "facebook": facebook,
         "cccd": cccd, "date_of_birth": date_of_birth, "extra": extra,
     }

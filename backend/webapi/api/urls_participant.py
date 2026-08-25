@@ -7,6 +7,7 @@ from api.views_participant import (
     my_team_qr_view, my_team_forms_view, my_team_form_submit_view, my_experience_view,
     my_team_captain_vote_view, my_team_stations_view, my_team_station_state_view,
     my_team_form_draft_view, my_team_payment_view, my_team_payment_proof_view,
+    my_team_payment_confirm_auto_view, my_team_payment_cancel_view,
 )
 
 urlpatterns = [
@@ -42,6 +43,10 @@ urlpatterns = [
     path("my-team/payment-proof/", my_team_payment_proof_view),
     path("my-team/payment-proof/file", my_team_payment_proof_view),
     path("my-team/payment-proof/file/", my_team_payment_proof_view),
+    path("my-team/payment/confirm-auto", my_team_payment_confirm_auto_view),
+    path("my-team/payment/confirm-auto/", my_team_payment_confirm_auto_view),
+    path("my-team/payment/cancel", my_team_payment_cancel_view),
+    path("my-team/payment/cancel/", my_team_payment_cancel_view),
     path("me/experience", my_experience_view),
     path("me/experience/", my_experience_view),
 ]

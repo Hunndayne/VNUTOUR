@@ -157,7 +157,7 @@ class RosterLockTests(RosterLockTestBase):
         self.team.refresh_from_db()
         self.assertIsNone(self.team.roster_locked_at)
 
-    def test_locked_roster_refuses_member_and_name_changes(self):
+    def test_locked_roster_refuses_add_remove_and_rename_but_allows_edit(self):
         self._fill_to_full()
         self._patch({"team_name": "Đội A", "roster_locked": True})
 
@@ -170,14 +170,17 @@ class RosterLockTests(RosterLockTestBase):
         self.assertEqual(added.status_code, 409)
         self.assertEqual(added.json()["error"], "roster_locked")
 
+        # A locked roster still shouldn't budge in size or in name — but
+        # editing a member's own non-reference details (name, phone, ...)
+        # must keep working, so a typo can be fixed while waiting on payment.
         edited = self.client.patch(
             "/api/my-team/members/SV002",
             data=json.dumps({"full_name": "Tên Khác"}),
             content_type="application/json",
             **self._auth(),
         )
-        self.assertEqual(edited.status_code, 409)
-        self.assertEqual(edited.json()["error"], "roster_locked")
+        self.assertEqual(edited.status_code, 200)
+        self.assertEqual(edited.json()["full_name"], "Tên Khác")
 
         removed = self.client.delete("/api/my-team/members/SV002", **self._auth())
         self.assertEqual(removed.status_code, 409)

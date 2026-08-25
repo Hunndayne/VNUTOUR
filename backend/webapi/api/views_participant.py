@@ -27,6 +27,7 @@ from api.services.submission_storage_service import (
     save_submission_files, save_payment_proof, proof_file_response,
 )
 from api.services.payment_service import build_payment_info
+from api.services.timo_service import confirm_team_payment_via_timo, is_timo_configured
 from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
     public_config as public_submission_config,
@@ -640,7 +641,68 @@ def my_team_payment_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    return JsonResponse(build_payment_info(membership.team))
+    team = membership.team
+    payload = build_payment_info(team)
+    payload["roster_locked"] = bool(team.roster_locked_at)
+    payload["payment_confirmed"] = bool(team.payment_confirmed_at)
+    payload["timo_configured"] = is_timo_configured()
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+def my_team_payment_confirm_auto_view(request: HttpRequest):
+    """POST: captain clicks "Đã chuyển tiền" — poll BTC's Timo pot ONCE and
+    try to match this team's payment_code + amount. No cron/background
+    polling: every call here is one explicit poll triggered by the button."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    team = membership.team
+    if not team.roster_locked_at:
+        return JsonResponse({"error": "roster_not_locked"}, status=409)
+
+    result = confirm_team_payment_via_timo(team)
+    return JsonResponse({
+        "status": result.status,
+        "message": result.message,
+        "payment_confirmed": bool(team.payment_confirmed_at),
+    })
+
+
+@csrf_exempt
+def my_team_payment_cancel_view(request: HttpRequest):
+    """POST: captain cancels payment — unlocks the roster so members can be
+    added/removed again. Refused once payment is confirmed (final)."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    team = membership.team
+    if team.payment_confirmed_at:
+        return JsonResponse({"error": "payment_already_confirmed"}, status=409)
+    if not team.roster_locked_at:
+        return JsonResponse({"status": "ok", "roster_locked": False})
+
+    team.roster_locked_at = None
+    team.save(update_fields=["roster_locked_at", "updated_at"])
+    return JsonResponse({"status": "ok", "roster_locked": False})
 
 
 PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
@@ -833,12 +895,17 @@ def my_team_members_view(request: HttpRequest):
 
 @csrf_exempt
 def my_team_member_detail_view(request: HttpRequest, mssv: str):
-    """PATCH/DELETE a member of own team."""
+    """PATCH/DELETE a member of own team.
+
+    PATCH: the caller may edit their own row (mssv matches their account),
+    or, if captain, any row in the team. DELETE stays captain-only — removing
+    a teammate is a roster-management action, not a self-edit.
+    """
     acc, err = _auth_or_401(request)
     if err:
         return err
     membership = TeamMembership.objects.filter(
-        participant__mssv=acc.mssv, is_captain=True,
+        participant__mssv=acc.mssv,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
@@ -846,9 +913,20 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         return _registration_closed_response()
 
     team = membership.team
+    is_captain = membership.is_captain
+    target_mssv = (mssv or "").strip()
+
+    if request.method == "DELETE" and not is_captain:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+    if request.method == "PATCH" and not is_captain and target_mssv != acc.mssv:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
-    if team.roster_locked_at:
+    # Roster lock (payment step) blocks add/remove but not editing member
+    # details — the roster shape must stay put, but typos should still be
+    # fixable while waiting for payment confirmation.
+    if team.roster_locked_at and request.method == "DELETE":
         return _roster_locked_response()
 
     if request.method == "PATCH":

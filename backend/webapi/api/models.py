@@ -140,6 +140,11 @@ class Team(models.Model):
     # Cleared when the organisers reject the team — asked-for fixes must stay
     # possible — and by a merge, which reshapes the roster anyway.
     roster_locked_at = models.DateTimeField(null=True, blank=True)
+    # Set once BTC's Timo money-pot auto-reconciliation (or, later, a manual
+    # admin action) matches a transfer to this team's payment_code + amount.
+    # While unset the captain may still cancel payment (unlocks the roster);
+    # once set, payment is final — cancel is refused and the roster stays locked.
+    payment_confirmed_at = models.DateTimeField(null=True, blank=True)
     provision_state = models.CharField(
         max_length=10, choices=PROVISION_CHOICES, default=PROVISION_NONE,
     )
