@@ -36,18 +36,6 @@ const aboutItems = [
   },
 ]
 
-const tourNotes = [
-  {
-    title: 'Đi qua những trạm trải nghiệm',
-    body: 'Các đội lần lượt khám phá những khu vực nổi bật trong đô thị đại học qua chuỗi hoạt động được thiết kế có chủ đích.',
-  },
-  {
-    title: 'Phối hợp để về đích',
-    body: 'Mỗi thử thách khuyến khích quan sát nhanh, chia sẻ vai trò rõ ràng và đưa ra quyết định cùng đồng đội.',
-  },
-  
-]
-
 const prizeHighlights = [
   {
     label: 'Tổng giá trị giải vô địch',
