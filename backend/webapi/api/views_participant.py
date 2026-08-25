@@ -943,7 +943,16 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         ):
             return JsonResponse({"error": "member_profile_owned"}, status=403)
 
-        columns, extra, schema_error = _prepare_member_submission({**data, "mssv": mssv}, "member")
+        # mssv + email are locked reference fields: they can never change on an
+        # edit, so we take them from the existing record and ignore whatever the
+        # client sent. This also lets a PATCH omit them entirely (the form keeps
+        # them read-only), which validation would otherwise reject as missing.
+        locked_email = (
+            target_membership.participant.email if target_membership else None
+        ) or data.get("email")
+        columns, extra, schema_error = _prepare_member_submission(
+            {**data, "mssv": mssv, "email": locked_email}, "member"
+        )
         if schema_error:
             return JsonResponse({"error": schema_error}, status=400)
 
