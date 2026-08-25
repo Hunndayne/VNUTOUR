@@ -443,7 +443,7 @@ function LandingPage() {
 
 <h2 className="mx-auto max-w-[950px] bg-gradient-to-r from-[#032b43] via-[#005f73] to-[#0096c7] bg-clip-text text-3xl font-extrabold uppercase leading-[1.6] tracking-normal text-transparent drop-shadow-sm sm:text-4xl md:text-5xl md:leading-[1.5] lg:text-6xl lg:leading-[1.55]">
   Hành trình chào mừng <br className="hidden sm:block" />
-  Tân Sinh Viên khóa 21
+  Tân Sinh Viên khóa 2026
 </h2>
 
       <p className="mx-auto mt-6 max-w-[680px] text-base font-medium leading-relaxed text-[#023e8a]/90 md:text-lg">
@@ -500,7 +500,7 @@ function LandingPage() {
             </Reveal>
 
             <Reveal delay={100}>
-              <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
+              <p className="text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
                 Chưa công bố
               </p>
               <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
@@ -511,7 +511,7 @@ function LandingPage() {
               </p>
               <a
                 href="mailto:vnutour@suctremmt.com"
-                className="landing-focus landing-accent mt-7 inline-flex border-b border-[#1478D4] pb-1 text-base font-bold text-[#1478D4] transition-opacity duration-200 hover:opacity-75"
+                className="landing-focus mt-7 inline-flex border-b border-[#1478D4] pb-1 text-base font-bold text-[#1478D4] transition-opacity duration-200 hover:opacity-75"
               >
                 vnutour@suctremmt.com
               </a>
@@ -531,7 +531,7 @@ function LandingPage() {
           {prizeHighlights.map((item, index) => (
             <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
               <p className="text-sm font-bold uppercase tracking-[0.08em] text-[#0c1d33]/55">{item.label}</p>
-              <p className="landing-accent mt-5 text-4xl font-bold uppercase leading-none tracking-[-0.04em] text-[#1478D4] sm:text-5xl lg:text-6xl">
+              <p className="mt-5 text-4xl font-bold uppercase leading-none tracking-[-0.04em] text-[#1478D4] sm:text-5xl lg:text-6xl">
                 {item.value}
               </p>
             </Reveal>
