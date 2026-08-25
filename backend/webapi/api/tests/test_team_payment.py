@@ -224,6 +224,7 @@ class MyTeamPaymentViewTests(PaymentApiTestBase):
             {
                 "amount", "content", "payment_code", "member_count",
                 "fee_per_person", "bank", "qr_image_url", "has_proof",
+                "roster_locked", "payment_confirmed", "timo_configured",
             },
         )
         self.assertEqual(

@@ -27,6 +27,7 @@ from api.services.submission_storage_service import (
     save_submission_files, save_payment_proof, proof_file_response,
 )
 from api.services.payment_service import build_payment_info
+from api.services.timo_service import confirm_team_payment_via_timo, is_timo_configured
 from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
     public_config as public_submission_config,
@@ -176,18 +177,35 @@ def _member_resolution(data: dict):
     return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
 
 
-def _team_size_max() -> int:
-    schema = get_schema()
-    return int(schema.get("team_size_max") or schema.get("team_size") or 5)
-
-
 def _placeholder_team_name(mssv: str) -> str:
-    """Stand-in name until the team is full and may be named for real.
+    """Stand-in name until the captain names the team on the dashboard.
 
     Same shape `register_team` already uses, so a team created either way reads
     the same in the admin list.
     """
     return f"Pending team {mssv}"
+
+
+def _team_name_is_placeholder(team) -> bool:
+    """Whether the team still carries a stand-in name.
+
+    A team starts as `Pending team <mssv>`, and a merged team is reset to its
+    own code until the post-merge ballot picks a captain. The dashboard gates
+    the payment step on the team being named for real, so it needs to tell the
+    stand-ins apart from a captain-chosen name.
+    """
+    name = (team.name or "").strip()
+    return not name or name == team.code or name.startswith("Pending team ")
+
+
+def _roster_locked_response():
+    """The captain confirmed this roster for payment — it no longer changes.
+
+    The transfer amount is fee x member count, so any roster or name change
+    after the confirm dialog would leave the paid sum and the expected sum
+    disagreeing. Rejection (or a merge) is what unlocks it again.
+    """
+    return JsonResponse({"error": "roster_locked"}, status=409)
 
 
 def _submission_limits(config: dict | None) -> dict:
@@ -452,10 +470,16 @@ def my_team_view(request: HttpRequest):
 
         team = membership.team
         ensure_default_phase_roster_for_team(team)
+        _mc = len(get_team_members(team))
+        _max = int(get_schema().get("team_size_max") or get_schema().get("team_size") or 5)
         return JsonResponse({
             "team": {
                 "code": team.code,
                 "name": team.name,
+                # The dashboard's team step needs to distinguish a captain's
+                # name from the creation/merge stand-ins.
+                "name_is_placeholder": _team_name_is_placeholder(team),
+                "roster_locked": bool(team.roster_locked_at),
                 "approval_status": team.approval_status,
                 "approval_note": team.approval_note,
                 "submitted_at": team.submitted_at.isoformat() if team.submitted_at else None,
@@ -465,6 +489,10 @@ def my_team_view(request: HttpRequest):
                 # submit gate in `my_team_submit_view`.
                 "has_payment_proof": bool(team.payment_proof_file),
                 "is_late_registration": team.is_late_registration,
+                "member_count": _mc,
+                "max_members": _max,
+                "roster_size_final": _mc == 1 or _mc == _max,
+                "can_name": _mc == _max,
             },
             "members": get_team_members(team, visibility="self", requester=acc),
             "editable": team_is_editable(team),
@@ -490,12 +518,11 @@ def my_team_view(request: HttpRequest):
         if existing:
             return JsonResponse({"error": "already_has_team", "team_code": existing.team.code}, status=409)
 
-        # Naming is reserved for full teams. A team starts with its captain
-        # alone, so there is never a point at creation where a name is allowed;
-        # it carries a placeholder until the fifth member arrives.
+        # Creation stays unnamed: the dashboard flow enters members first and
+        # names the team on its team step, via the PATCH below.
         if name:
             return JsonResponse(
-                {"error": f"team_name_requires_full_team:{_team_size_max()}"},
+                {"error": "team_created_unnamed"},
                 status=409,
             )
         team, err = create_team(_placeholder_team_name(acc.mssv), owner_account=acc)
@@ -540,28 +567,61 @@ def my_team_view(request: HttpRequest):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
         new_name = str((data.get("team_name") or data.get("name") or "").strip())
-        if not new_name:
+        lock_roster = data.get("roster_locked") is True
+
+        if not new_name and not lock_roster and "payment_proof" not in data:
             return JsonResponse({"error": "missing_team_name"}, status=400)
 
-        # Only a full team may be named. Resending the placeholder unchanged is
-        # allowed, so an under-strength captain can still update payment_proof
-        # through this same endpoint.
-        max_size = _team_size_max()
-        if new_name != team.name and len(get_team_members(team)) < max_size:
+        # Naming is captain-only and happens on the dashboard's team step,
+        # regardless of roster size — the team step sits between members and
+        # payment. A merge still resets the name to the surviving team's code,
+        # so an early name never survives into a merged team by accident.
+        # The confirm dialog sends the final name together with the lock; once
+        # locked, a *changing* name is refused while resending the unchanged
+        # name stays fine.
+        schema = get_schema()
+        members = get_team_members(team)
+        max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
+
+        if new_name and team.roster_locked_at and new_name != team.name:
+            return _roster_locked_response()
+        # Manual naming is reserved for a full team; an individual (1) keeps the
+        # server placeholder, and a partial team (2..max-1) cannot name at all.
+        if new_name and new_name != team.name and len(members) != max_size:
             return JsonResponse(
                 {"error": f"team_name_requires_full_team:{max_size}"},
                 status=409,
             )
+        if new_name:
+            team.name = new_name
 
-        team.name = new_name
+        if lock_roster and not team.roster_locked_at:
+            # A locked roster must be submittable as-is, or the captain is
+            # stuck with a team they can neither edit nor send — so the lock
+            # only lands after the same checks the submit gate runs.
+            if not (len(members) == 1 or len(members) == max_size):
+                return JsonResponse(
+                    {"error": f"team_size_not_final:{max_size}"},
+                    status=409,
+                )
+            for index, member in enumerate(members, start=1):
+                payload = {**member, **(member.get("extra") or {})}
+                _, _, schema_error = validate_person_submission(
+                    payload, "captain" if member.get("is_captain") else f"member_{index}",
+                )
+                if schema_error:
+                    return JsonResponse({"error": schema_error}, status=400)
+            team.roster_locked_at = timezone.now()
+
         if "payment_proof" in data:
             team.payment_proof = str((data.get("payment_proof") or "").strip()) or None
-        team.save(update_fields=["name", "payment_proof", "updated_at"])
+        team.save(update_fields=["name", "payment_proof", "roster_locked_at", "updated_at"])
         return JsonResponse({
             "code": team.code,
             "name": team.name,
             "approval_status": team.approval_status,
             "payment_proof": team.payment_proof,
+            "roster_locked": bool(team.roster_locked_at),
         })
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
@@ -581,7 +641,68 @@ def my_team_payment_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    return JsonResponse(build_payment_info(membership.team))
+    team = membership.team
+    payload = build_payment_info(team)
+    payload["roster_locked"] = bool(team.roster_locked_at)
+    payload["payment_confirmed"] = bool(team.payment_confirmed_at)
+    payload["timo_configured"] = is_timo_configured()
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+def my_team_payment_confirm_auto_view(request: HttpRequest):
+    """POST: captain clicks "Đã chuyển tiền" — poll BTC's Timo pot ONCE and
+    try to match this team's payment_code + amount. No cron/background
+    polling: every call here is one explicit poll triggered by the button."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    team = membership.team
+    if not team.roster_locked_at:
+        return JsonResponse({"error": "roster_not_locked"}, status=409)
+
+    result = confirm_team_payment_via_timo(team)
+    return JsonResponse({
+        "status": result.status,
+        "message": result.message,
+        "payment_confirmed": bool(team.payment_confirmed_at),
+    })
+
+
+@csrf_exempt
+def my_team_payment_cancel_view(request: HttpRequest):
+    """POST: captain cancels payment — unlocks the roster so members can be
+    added/removed again. Refused once payment is confirmed (final)."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    team = membership.team
+    if team.payment_confirmed_at:
+        return JsonResponse({"error": "payment_already_confirmed"}, status=409)
+    if not team.roster_locked_at:
+        return JsonResponse({"status": "ok", "roster_locked": False})
+
+    team.roster_locked_at = None
+    team.save(update_fields=["roster_locked_at", "updated_at"])
+    return JsonResponse({"status": "ok", "roster_locked": False})
 
 
 PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
@@ -656,15 +777,12 @@ def my_team_submit_view(request: HttpRequest):
     team = membership.team
     schema = get_schema()
     members = get_team_members(team)
-    # An under-strength team may submit: this is a freshers' event, so people
-    # sign up before they know four others, and the organisers merge teams up to
-    # full size afterwards. Only the ceiling is enforced here, matching the range
-    # that public registration has always allowed in `register_team`.
-    min_size = int(schema.get("team_size_min") or 1)
     max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
-    if len(members) < min_size or len(members) > max_size:
+    # Registration is final only for a solo entry (1) or a full team (max);
+    # a partial team (2..max-1) must recruit to full or stay individual.
+    if not (len(members) == 1 or len(members) == max_size):
         return JsonResponse(
-            {"error": f"team_size_out_of_range:{min_size}-{max_size}"},
+            {"error": f"team_size_not_final:{max_size}"},
             status=409,
         )
 
@@ -741,6 +859,8 @@ def my_team_members_view(request: HttpRequest):
     team = membership.team
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
+    if team.roster_locked_at:
+        return _roster_locked_response()
 
     data = _json_body(request)
     if data is None:
@@ -775,12 +895,17 @@ def my_team_members_view(request: HttpRequest):
 
 @csrf_exempt
 def my_team_member_detail_view(request: HttpRequest, mssv: str):
-    """PATCH/DELETE a member of own team."""
+    """PATCH/DELETE a member of own team.
+
+    PATCH: the caller may edit their own row (mssv matches their account),
+    or, if captain, any row in the team. DELETE stays captain-only — removing
+    a teammate is a roster-management action, not a self-edit.
+    """
     acc, err = _auth_or_401(request)
     if err:
         return err
     membership = TeamMembership.objects.filter(
-        participant__mssv=acc.mssv, is_captain=True,
+        participant__mssv=acc.mssv,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
@@ -788,8 +913,21 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         return _registration_closed_response()
 
     team = membership.team
+    is_captain = membership.is_captain
+    target_mssv = (mssv or "").strip()
+
+    if request.method == "DELETE" and not is_captain:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+    if request.method == "PATCH" and not is_captain and target_mssv != acc.mssv:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
+    # Roster lock (payment step) blocks add/remove but not editing member
+    # details — the roster shape must stay put, but typos should still be
+    # fixable while waiting for payment confirmation.
+    if team.roster_locked_at and request.method == "DELETE":
+        return _roster_locked_response()
 
     if request.method == "PATCH":
         data = _json_body(request)
@@ -805,7 +943,16 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         ):
             return JsonResponse({"error": "member_profile_owned"}, status=403)
 
-        columns, extra, schema_error = _prepare_member_submission({**data, "mssv": mssv}, "member")
+        # mssv + email are locked reference fields: they can never change on an
+        # edit, so we take them from the existing record and ignore whatever the
+        # client sent. This also lets a PATCH omit them entirely (the form keeps
+        # them read-only), which validation would otherwise reject as missing.
+        locked_email = (
+            target_membership.participant.email if target_membership else None
+        ) or data.get("email")
+        columns, extra, schema_error = _prepare_member_submission(
+            {**data, "mssv": mssv, "email": locked_email}, "member"
+        )
         if schema_error:
             return JsonResponse({"error": schema_error}, status=400)
 

@@ -54,8 +54,28 @@ function LoginPage() {
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setForm(prev => ({ ...prev, [name]: value }))
-    if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }))
+    setForm(prev => {
+      const next = { ...prev, [name]: value }
+      // Kiểm tra điều kiện cơ bản ngay khi gõ (không đợi bấm submit) cho các
+      // trường mật khẩu — cả login lẫn signup — để phản hồi sớm cho người dùng.
+      setErrors(prevErr => {
+        const err = { ...prevErr }
+        if (name === 'password' || name === 'confirmPassword') {
+          if (mode === 'signup') {
+            err.password = next.password && next.password.length < 8
+              ? 'Mật khẩu phải có ít nhất 8 ký tự' : ''
+            err.confirmPassword = next.confirmPassword && next.confirmPassword !== next.password
+              ? 'Mật khẩu xác nhận không khớp' : ''
+          } else if (name === 'password') {
+            err.password = ''
+          }
+        } else if (err[name]) {
+          err[name] = ''
+        }
+        return err
+      })
+      return next
+    })
   }
 
   // Pull the school dropdown options from the registration schema so signup and
@@ -99,7 +119,7 @@ function LoginPage() {
       missing_fields: 'Vui lòng điền đầy đủ thông tin.',
       missing_credentials: 'Vui lòng nhập tên đăng nhập và mật khẩu.',
       registration_mismatch: 'MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại.',
-      password_too_short: 'Mật khẩu chưa đạt độ dài tối thiểu của hệ thống.',
+      password_too_short: 'Mật khẩu phải có ít nhất 8 ký tự.',
       too_many_attempts: 'Bạn thao tác quá nhiều lần. Vui lòng chờ rồi thử lại.',
     }
     setApiError(map[data.error] || ANTIBOT_ERROR_TEXT[data.error] || `Lỗi: ${data.error || fallback}`)
@@ -115,7 +135,7 @@ function LoginPage() {
     else if (!/\S+@\S+\.\S+/.test(form.email)) e.email = 'Email không hợp lệ'
     if (!form.mssv.trim()) e.mssv = 'Vui lòng nhập MSSV'
     if (!form.password) e.password = 'Vui lòng nhập mật khẩu'
-    else if (form.password.length < 6) e.password = 'Mật khẩu phải có ít nhất 6 ký tự'
+    else if (form.password.length < 8) e.password = 'Mật khẩu phải có ít nhất 8 ký tự'
     if (form.confirmPassword !== form.password) e.confirmPassword = 'Mật khẩu xác nhận không khớp'
     setErrors(e)
     return Object.keys(e).length === 0
@@ -451,7 +471,7 @@ function LoginPage() {
                 <div>
                   <label htmlFor="password" className={labelCls}>Mật khẩu <span className="text-rose-400">*</span></label>
                   <input id="password" name="password" type="password" value={form.password} onChange={handleChange}
-                    placeholder="Tối thiểu 6 ký tự" className={inputClass(!!errors.password)} disabled={isLoading} />
+                    placeholder="Tối thiểu 8 ký tự" className={inputClass(!!errors.password)} disabled={isLoading} />
                   {errors.password && <p className="mt-1 text-xs text-rose-400">{errors.password}</p>}
                 </div>
                 <div>

@@ -48,8 +48,14 @@ def _image_dimensions(uploaded) -> tuple[int, int]:
 
 
 def serialize_frame(frame: PhotoFrame, request: HttpRequest | None = None, *, admin: bool = False) -> dict:
-    path = f"/api/public/frames/{frame.id}/image"
-    image_url = request.build_absolute_uri(path) if request is not None else path
+    # Prefer the direct R2 public URL (fast, CDN-cached) stored in the image
+    # metadata; fall back to the Django proxy endpoint for local storage.
+    direct_url = (frame.image or {}).get("url", "")
+    if direct_url:
+        image_url = direct_url
+    else:
+        path = f"/api/public/frames/{frame.id}/image"
+        image_url = request.build_absolute_uri(path) if request is not None else path
 
     data = {
         "id": frame.id,

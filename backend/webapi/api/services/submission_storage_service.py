@@ -231,6 +231,10 @@ def frame_file_response(entry: dict):
     if not key:
         return None
 
+    # Frame images are static assets (only replaced via admin re-upload which
+    # changes the DB row's `updated_at`), so aggressive caching is safe.
+    _FRAME_CACHE = "public, max-age=86400, immutable"
+
     if storage == STORAGE_R2:
         # Proxy the bytes through our own origin instead of redirecting to a
         # presigned R2 URL — see proof_file_response for why (CORS).
@@ -246,13 +250,16 @@ def frame_file_response(entry: dict):
         content_type = entry.get("type") or obj.get("ContentType") or "image/png"
         response = HttpResponse(data, content_type=content_type)
         response["Content-Length"] = str(len(data))
+        response["Cache-Control"] = _FRAME_CACHE
         return response
 
     if storage == STORAGE_LOCAL:
         path = Path(settings.MEDIA_ROOT) / key
         if not path.exists():
             return None
-        return FileResponse(open(path, "rb"), content_type=entry.get("type") or "image/png")
+        resp = FileResponse(open(path, "rb"), content_type=entry.get("type") or "image/png")
+        resp["Cache-Control"] = _FRAME_CACHE
+        return resp
 
     return None
 
