@@ -13,6 +13,7 @@ would just move the argument from the ballot to the name field.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 
 from django.db import transaction
@@ -234,28 +235,40 @@ def tally(team: Team) -> dict:
     member_count = TeamMembership.objects.filter(team=team).count()
     ranked = counts.most_common()
     leaders = [pid for pid, n in ranked if ranked and n == ranked[0][1]]
+    threshold = math.ceil(member_count * 3 / 5) if member_count > 0 else 1
     return {
         "counts": dict(counts),
         "votes_cast": len(votes),
         "member_count": member_count,
         "everyone_voted": member_count > 0 and len(votes) >= member_count,
         "leaders": leaders,
+        "threshold": threshold,
     }
 
 
 def resolve_election(team: Team) -> Participant | None:
-    """Promote the winner once every member has voted and one is clearly ahead.
-
-    A tie leaves the ballot open rather than picking arbitrarily — members can
-    change their vote, which is what breaks it.
+    """Promote the winner when a candidate reaches a 3/5 supermajority,
+    or when everyone has voted and one candidate leads outright.
     """
     if has_captain(team):
         return None
     result = tally(team)
-    if not result["everyone_voted"] or len(result["leaders"]) != 1:
+    if result["member_count"] == 0:
         return None
 
-    winner_id = result["leaders"][0]
+    # Early win: a candidate that already has >= 3/5 of all members.
+    threshold = result["threshold"]
+    winner_id = None
+    for pid, count in result["counts"].items():
+        if count >= threshold:
+            winner_id = pid
+            break
+
+    # Fallback: everyone voted and exactly one candidate leads.
+    if winner_id is None:
+        if not result["everyone_voted"] or len(result["leaders"]) != 1:
+            return None
+        winner_id = result["leaders"][0]
     TeamMembership.objects.filter(team=team).update(is_captain=False)
     TeamMembership.objects.filter(
         team=team, participant_id=winner_id,

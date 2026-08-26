@@ -323,16 +323,27 @@ def _registration_phase_open() -> bool:
 
 
 def _team_edits_allowed(team: Team | None) -> bool:
-    """Editing a team belongs to registration, with one deliberate exception.
+    """Editing a team belongs to registration, with two deliberate exceptions.
 
     Rejecting a team *is* an admin asking for changes, so that request has to
     stay actionable after registration closes — otherwise the note ("thiếu ảnh
     chuyển khoản") arrives with no way to act on it, and the captain has to find
     an organiser in person. Creating a brand new team stays registration-only.
+
+    Approved teams that haven't locked their roster yet (merged teams after
+    captain election) must also be editable so the captain can name the team
+    and lock the roster.
     """
     if _registration_phase_open():
         return True
-    return team is not None and team.approval_status == Team.APPROVAL_REJECTED
+    if team is None:
+        return False
+    if team.approval_status == Team.APPROVAL_REJECTED:
+        return True
+    # Merged teams: approved but roster not yet locked → allow naming + lock.
+    if team.approval_status == Team.APPROVAL_APPROVED and not team.roster_locked_at:
+        return True
+    return False
 
 
 def _registration_closed_response():
@@ -496,6 +507,11 @@ def my_team_view(request: HttpRequest):
             },
             "members": get_team_members(team, visibility="self", requester=acc),
             "editable": team_is_editable(team),
+            "naming_allowed": (
+                team.approval_status == Team.APPROVAL_APPROVED
+                and not team.roster_locked_at
+                and _team_name_is_placeholder(team)
+            ),
         })
 
     if request.method == "POST":
@@ -560,7 +576,10 @@ def my_team_view(request: HttpRequest):
 
         team = membership.team
         if not team_is_editable(team):
-            return JsonResponse({"error": "team_locked"}, status=409)
+            # Approved teams that haven't locked their roster yet may still
+            # rename and lock (merged teams need this after captain election).
+            if team.approval_status != Team.APPROVAL_APPROVED or team.roster_locked_at:
+                return JsonResponse({"error": "team_locked"}, status=409)
 
         data = _json_body(request)
         if data is None:
@@ -1556,6 +1575,7 @@ def my_team_captain_vote_view(request: HttpRequest):
         "i_have_voted": CaptainVote.objects.filter(team=team, voter=me).exists(),
         "votes_cast": result["votes_cast"],
         "member_count": result["member_count"],
+        "threshold": result.get("threshold", 0),
         "candidates": [
             {
                 "mssv": m.participant.mssv,
