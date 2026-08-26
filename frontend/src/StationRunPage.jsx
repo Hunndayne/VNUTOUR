@@ -155,6 +155,11 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
   // Luật chơi lại chặn NGAY TỪ LÚC quét (server sẽ trả 409), nhưng cờ này đã có
   // sẵn trong `/my-team/stations` nên báo trước cho đội khỏi mất công quét hụt.
   if (station.replay_locked) return 'replay_locked'
+  if (station.checkin_policy === 'free_play') {
+    if (station.has_form && !hasSubmitted(state.submission)) return 'form'
+    return 'closed'
+  }
+
   return qrReady ? 'entry_qr' : 'entry_disabled'
 }
 
@@ -565,9 +570,11 @@ function StationStageScreen({
       {step === 'form' && (
         <StatusPanel
           tone="trail"
-          eyebrow="Bước 2"
-          title="Đã vào trạm — làm bài thôi"
-          body="CTV đã quét QR vào trạm. Mở phần thi của trạm này để làm và nộp bài."
+          eyebrow={station?.checkin_policy === 'free_play' ? "Phần thi" : "Bước 2"}
+          title="Làm bài tại trạm"
+          body={station?.checkin_policy === 'free_play'
+            ? "Mở phần thi của trạm này để làm và nộp bài."
+            : "CTV đã quét QR vào trạm. Mở phần thi của trạm này để làm và nộp bài."}
         >
           <button type="button" onClick={() => onOpenForm(stationId)} className={`w-full ${TRAIL_BUTTON}`}>
             <Icon name="doc" className="h-5 w-5" />

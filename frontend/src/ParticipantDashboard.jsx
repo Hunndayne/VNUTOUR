@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
-import StationRunPage from './StationRunPage.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
@@ -1558,6 +1557,7 @@ function ParticipantDashboard() {
   const rosterSizeFinal = Boolean(team?.roster_size_final)
   const teamIsFull = Boolean(team?.can_name)
   const canRenameTeam = captainMayRename && (teamIsFull || Boolean(team?.naming_allowed))
+  const isFullyApproved = team?.approval_status === 'approved' && !team?.naming_allowed
   // Rejecting a team is the organisers asking for changes, and that ask can
   // land after registration closes. The backend allows the edit in that case,
   // so the editor has to stay reachable — creating a team stays registration-only.
@@ -1794,7 +1794,8 @@ function ParticipantDashboard() {
       // where a not-yet-saved name still reads as "team not named" and the
       // move to payment would be silently dropped.
       const params = new URLSearchParams(window.location.search)
-      params.set('step', 'payment')
+      const isApproved = team?.approval_status === 'approved'
+      params.set('step', isApproved ? 'approved' : 'payment')
       navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     })
   }
@@ -2064,7 +2065,7 @@ function ParticipantDashboard() {
             busy={busyAction === 'captain-vote'}
           />
         )}
-        {registrationOpen ? (
+        {registrationOpen && !isFullyApproved ? (
           <>
             <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
@@ -2115,22 +2116,27 @@ function ParticipantDashboard() {
                 })}
               />
             )}
-            {/* Once registration closes the screen is about running the course:
-                the stations, and the QR a coop scans. The old open-forms list is
-                folded into this — a station with a form is reached by checking
-                into it, not by a separate link. */}
-            {team ? <StationRunPage embedded /> : null}
+            {/* Once registration closes or the team is approved, they just need
+                to run the course. Stations are now a separate page. */}
+            {team && (
+              <div className={`${PARTICIPANT_CARD} px-5 py-6 sm:px-7`}>
+                <h2 className="font-display text-xl font-bold text-ink">Các trạm sự kiện</h2>
+                <p className="mt-2 text-sm leading-6 text-ink/65">
+                  Truy cập trang chạy trạm để xem bản đồ, quét mã QR check-in và làm bài tập tại các trạm.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/stations')}
+                  className={`mt-6 w-full sm:w-auto ${PRIMARY_BUTTON}`}
+                >
+                  Đến trang Trạm
+                  <Icon name="chevronR" className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </>
         )}
 
-        {/* Show stations for approved teams even during registration phase */}
-        {registrationOpen && team?.approval_status === 'approved'
-          && experience?.current_sub_event?.uses_stations && (
-          <>
-            <EventExperienceCard experience={experience} />
-            <StationRunPage embedded />
-          </>
-        )}
 
         {/* The Discord role and private channel only exist once the team is
             approved (provisioning is queued on approval), so the connect card is
@@ -2139,7 +2145,7 @@ function ParticipantDashboard() {
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
-            {registrationOpen ? (
+            {registrationOpen && !isFullyApproved ? (
               <>
                 {/* BƯỚC 1 — HỒ SƠ */}
                 {activeStep === 'profile' && (
@@ -2211,7 +2217,7 @@ function ParticipantDashboard() {
                         <div className="mt-5">
                           <StepNav
                             onBack={() => gotoStep('members')}
-                            onNext={() => gotoStep('payment')}
+                            onNext={() => gotoStep(team.approval_status === 'approved' ? 'approved' : 'payment')}
                             nextLabel="Tiếp tục"
                           />
                         </div>
