@@ -341,7 +341,7 @@ def _team_edits_allowed(team: Team | None) -> bool:
     if team.approval_status == Team.APPROVAL_REJECTED:
         return True
     # Merged teams: approved but roster not yet locked → allow naming + lock.
-    if team.approval_status == Team.APPROVAL_APPROVED and not team.roster_locked_at:
+    if team.approval_status == Team.APPROVAL_APPROVED and not team.roster_locked_at and _team_name_is_placeholder(team):
         return True
     return False
 
