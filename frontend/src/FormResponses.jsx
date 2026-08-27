@@ -217,7 +217,6 @@ function FormFieldCard({ label, required, helper, children }) {
         {helper ? <p className="mt-1 text-sm text-ink/55">{helper}</p> : null}
       </div>
       {children}
-      <AITrapPrompt />
     </div>
   )
 }
