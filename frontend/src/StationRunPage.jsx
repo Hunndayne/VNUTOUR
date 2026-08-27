@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
-import { MarkdownBlock } from './FormResponses.jsx'
+import { MarkdownBlock, InvisibleWatermark } from './FormResponses.jsx'
 
 const POLL_MS = 2000
 const EXIT_LOCK_MS = 10000
@@ -903,11 +903,19 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
 
   // Embedded inside the participant dashboard, the page chrome would stack a
   // second background and contour layer on top of the one already there.
-  if (embedded) return body
+  if (embedded) {
+    return (
+      <>
+        <InvisibleWatermark text={listPayload?.team_code} />
+        {body}
+      </>
+    )
+  }
 
   return (
     <div className="relative min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
       <Contours />
+      <InvisibleWatermark text={listPayload?.team_code} />
       {body}
     </div>
   )

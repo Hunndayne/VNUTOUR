@@ -1073,6 +1073,7 @@ def my_team_stations_view(request: HttpRequest):
     current_event = get_current_sub_event()
 
     payload = {
+        "team_code": team.code,
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "stations": [],

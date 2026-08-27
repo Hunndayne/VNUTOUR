@@ -60,6 +60,27 @@ function renderInlineMarkdown(text, keyPrefix = 'md') {
   return nodes.length > 0 ? nodes : text
 }
 
+export function InvisibleWatermark({ text }) {
+  if (!text) return null
+  const repeatedText = ` ${text} `.repeat(20)
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none fixed inset-0 z-[9999] overflow-hidden select-none flex items-center justify-center"
+      style={{ mixBlendMode: 'multiply', opacity: 0.012 }}
+    >
+      <div 
+        className="w-[250vw] h-[250vh] flex flex-wrap content-start -rotate-12"
+        style={{ color: '#000000', fontSize: '24px', fontWeight: '800', lineHeight: '3' }}
+      >
+        {Array.from({ length: 80 }).map((_, i) => (
+          <span key={i} className="w-full text-center tracking-[0.5em]">{repeatedText}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function MarkdownBlock({ content }) {
   const normalized = String(content || '').replace(/\r\n/g, '\n').trim()
   if (!normalized) return null
@@ -726,6 +747,7 @@ export default function FormResponses() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [forms, setForms] = useState([])
+  const [teamCode, setTeamCode] = useState('')
   // A form is one-to-one with its station, and StationRunPage/ParticipantDashboard
   // already link here as `/form?stationId=...` — so the open form rides in that
   // same param rather than a second `form` param that would just duplicate it.
@@ -741,6 +763,7 @@ export default function FormResponses() {
         if (cancelled) return
         const accessibleForms = payload?.accessible_forms || []
         setForms(accessibleForms)
+        if (payload?.team_code) setTeamCode(payload.team_code)
         // `selectedId` here is only ever the URL's value at mount time (see the
         // eslint-disable below) — an id that is missing or no longer valid
         // falls back to the first accessible form instead of a blank page.
@@ -797,6 +820,7 @@ export default function FormResponses() {
 
   return (
     <div className="min-h-screen bg-paper text-ink selection:bg-gold/30">
+      <InvisibleWatermark text={teamCode} />
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <a href="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink">
           <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
