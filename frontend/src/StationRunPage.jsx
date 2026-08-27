@@ -37,7 +37,7 @@ const COLORS = {
   clay: '#D6492B',
 }
 
-const STATION_CARD = 'rounded-xl border border-[#DCD8CC] bg-white shadow-[0_1px_3px_rgba(32,49,43,0.05)]'
+const STATION_CARD = 'relative rounded-xl border border-[#DCD8CC] bg-white shadow-[0_1px_3px_rgba(32,49,43,0.05)]'
 const PRIMARY_BUTTON = 'inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl bg-[#20312B] px-5 py-3 text-base font-semibold text-white transition hover:bg-[#20312B]/85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
 const SECONDARY_BUTTON = 'inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl border border-[#DCD8CC] bg-white px-5 py-3 text-base font-semibold text-[#20312B]/70 transition hover:bg-[#F3F4F1] hover:text-[#20312B] disabled:cursor-not-allowed disabled:opacity-45'
 const TRAIL_BUTTON = 'inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl bg-[#1F7A6B] px-5 py-3 text-base font-semibold text-white transition hover:brightness-95 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
