@@ -224,10 +224,36 @@ function StatusPanel({ tone = 'neutral', eyebrow, title, body, children }) {
  * component này cố tình không giữ state để không bao giờ vẽ lại mã đã bị xoay.
  */
 function QrBlock({ payload, teamCode, hint }) {
+  const [time, setTime] = useState(new Date())
+  
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
   return (
     <div className="flex flex-col items-center">
-      <div className="rounded-2xl border-2 border-[#20312B]/10 bg-white p-4 shadow-[0_2px_12px_rgba(32,49,43,0.10)]">
+      <div className="mb-3 flex items-center gap-2 rounded-full bg-[#D6492B]/10 px-3 py-1.5 font-mono text-sm font-semibold text-[#D6492B]">
+        <div className="h-2 w-2 animate-pulse rounded-full bg-[#D6492B]" />
+        {time.toLocaleTimeString('vi-VN', { hour12: false })}
+      </div>
+      <div className="relative overflow-hidden rounded-2xl border-2 border-[#20312B]/10 bg-white p-4 shadow-[0_2px_12px_rgba(32,49,43,0.10)]">
         <QRCodeSVG value={payload} size={280} level="M" className="h-auto w-full max-w-[280px]" />
+        
+        {/* Anti-screenshot scanner line */}
+        <div 
+          className="absolute left-0 top-0 h-1 w-full bg-[#1F7A6B]/50 shadow-[0_0_8px_2px_rgba(31,122,107,0.4)]"
+          style={{
+            animation: 'scan 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite',
+          }}
+        />
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes scan {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(310px); }
+            100% { transform: translateY(0); }
+          }
+        `}} />
       </div>
       {teamCode && (
         <span className="mt-4 inline-flex rounded-full bg-[#1F7A6B]/12 px-4 py-1.5 font-mono text-base font-bold tracking-wider text-[#1F7A6B]">
