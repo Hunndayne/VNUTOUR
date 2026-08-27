@@ -154,6 +154,8 @@ function MarkdownBlock({ content }) {
   return <div className="space-y-4">{blocks}</div>
 }
 
+const CARD = 'rounded-2xl border border-stone bg-white shadow-[0_1px_4px_rgba(27,27,25,0.02)] overflow-hidden'
+
 function inferFieldKind(field) {
   const source = `${field.label || ''} ${field.placeholder || ''}`.toLowerCase()
   if (source.includes('mô tả') || source.includes('chia sẻ') || source.includes('giải thích') || source.includes('cam nhan')) {
@@ -162,34 +164,18 @@ function inferFieldKind(field) {
   return 'text'
 }
 
-function Card({ children, radius = 28, className = '', style = {} }) {
+function FormFieldCard({ label, required, helper, children }) {
   return (
-    <section className={className} style={{ borderRadius: radius, ...style }}>
-      {children}
-    </section>
-  )
-}
-
-function FormFieldCard({ index, label, required, helper, children }) {
-  return (
-    <Card className="relative overflow-hidden border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 14px 40px rgba(84,72,49,0.08)' }}>
-      <div className="absolute right-0 top-0 border-b border-l border-stone bg-paper/70" style={{ height: 96, width: 96, borderBottomLeftRadius: 32 }} />
-      <div className="relative">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div className="max-w-2xl">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
-              Muc {String(index).padStart(2, '0')}
-            </div>
-            <h2 className="font-display text-xl font-semibold leading-tight text-ink">
-              {label}
-              {required ? <span className="ml-1 text-clay">*</span> : null}
-            </h2>
-            {helper ? <p className="mt-2 text-sm leading-6 text-ink/55">{helper}</p> : null}
-          </div>
-        </div>
-        {children}
+    <div className={`${CARD} px-5 py-5 sm:px-6`}>
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-ink">
+          {label}
+          {required ? <span className="ml-1 text-clay">*</span> : null}
+        </h2>
+        {helper ? <p className="mt-1 text-sm text-ink/55">{helper}</p> : null}
       </div>
-    </Card>
+      {children}
+    </div>
   )
 }
 
@@ -606,7 +592,7 @@ function FormSubmissionPanel({ form, onSubmitted }) {
         onDragStart={blockClipboardEvent}
       >
         {formClosed || mySubmission ? (
-          <Card radius={32} className={`border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
+          <div className={`rounded-2xl border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
               {formClosed ? (
                 <span className="font-semibold text-clay">
@@ -626,14 +612,10 @@ function FormSubmissionPanel({ form, onSubmitted }) {
                 </span>
               ) : null}
             </div>
-          </Card>
+          </div>
         ) : null}
 
-        {submissionConfig.brief ? (
-          <Card radius={32} className="border border-stone bg-white px-5 py-5 sm:px-6" style={{ boxShadow: '0 18px 54px rgba(84,72,49,0.08)' }}>
-            <MarkdownBlock content={submissionConfig.brief} />
-          </Card>
-        ) : null}
+
 
         <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
         {answersDraft.restored && attachmentConfig ? (
@@ -708,33 +690,33 @@ function FormSubmissionPanel({ form, onSubmitted }) {
           )
         })}
 
-        <Card radius={32} className="border border-ink bg-ink px-5 py-5 text-white sm:px-6" style={{ boxShadow: '0 18px 50px rgba(32,49,43,0.3)' }}>
+        <div className={`${CARD} bg-paper px-5 py-5 sm:px-6`}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="font-display text-2xl font-semibold">Da noi voi cau hinh admin</p>
-              <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-                Trang nay dang doc cau hinh bai nop tu quan ly tram va tu dong an cac form khong thuoc phase cua doi.
+              <p className="text-lg font-semibold text-ink">Nộp bài</p>
+              <p className="mt-1 max-w-xl text-sm leading-6 text-ink/60">
+                Hãy kiểm tra kỹ thông tin trước khi gửi bài nộp.
               </p>
             </div>
             <button
               type="button"
               onClick={handleSubmit}
               disabled={submitState === 'submitting' || formClosed}
-              className="rounded-full bg-gold px-5 py-3 text-sm font-semibold text-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+              className="rounded-xl bg-ink px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {formClosed ? 'Da dong' : submitState === 'submitting' ? 'Dang gui...' : 'Gui bai nop'}
+              {formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
             </button>
           </div>
           {submitMessage ? (
-            <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
+            <p className={`mt-4 rounded-xl px-4 py-3 text-sm font-medium ${
               submitState === 'success'
-                ? 'bg-trail/15 text-white'
-                : 'bg-clay/20 text-white'
+                ? 'bg-trail/15 text-trail'
+                : 'bg-clay/15 text-clay'
             }`}>
               {submitMessage}
             </p>
           ) : null}
-        </Card>
+        </div>
       </div>
     </>
   )
@@ -814,44 +796,43 @@ export default function FormResponses() {
   }
 
   return (
-    <div className="min-h-screen text-ink" style={{ backgroundColor: '#efe5d4' }}>
-      <div
-        className="absolute inset-x-0 top-0 h-[420px]"
-        style={{
-          background:
-            'radial-gradient(circle at top left, rgba(255,250,244,0.96), rgba(239,229,212,0) 55%), linear-gradient(135deg, #1d5b52 0%, #2c7568 35%, #d88a52 100%)',
-        }}
-      />
-
-      <div className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <a href="/" className="inline-flex items-center gap-2 rounded-full border border-white/35 bg-white/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-white backdrop-blur-sm transition hover:bg-white/15">
+    <div className="min-h-screen bg-paper text-ink selection:bg-gold/30">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <a href="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink">
           <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
-          Participant
+          Quay lại trang chủ
         </a>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_320px] lg:items-start">
           <main className="space-y-5">
-            <Card radius={36} className="overflow-hidden border border-white/30" style={{ backgroundColor: '#f7f1e8', boxShadow: '0 30px 80px rgba(52,42,28,0.16)' }}>
-              <div className="grid gap-8 px-5 py-6 sm:px-7 sm:py-8 lg:grid-cols-[minmax(0,1fr)_220px]">
+            <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
+              <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_220px]">
                 <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-stone bg-white/85 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
-                    Form theo tram / phase
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
+                    Bài tập trạm
                   </div>
-                  <h1 className="mt-4 max-w-2xl font-display text-4xl font-semibold leading-[0.96] tracking-[-0.05em] text-ink sm:text-5xl">
+                  <h1 className="mt-2 text-2xl font-bold text-ink sm:text-3xl">
                     {selectedForm.station_name}
                   </h1>
-                  <p className="mt-3 text-sm leading-7 text-ink/70">
+                  <p className="mt-2 text-sm text-ink/70">
                     {selectedForm.event_name} · {selectedForm.phase_label}
                   </p>
                   {selectedForm.station_location ? <p className="mt-2 max-w-2xl text-sm leading-7 text-ink/55">{selectedForm.station_location}</p> : null}
                 </div>
 
-                <Card radius={28} className="border border-stone bg-white px-5 py-5">
-                  <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Pham vi truy cap</p>
-                  <p className="mt-4 font-display text-2xl font-semibold text-ink">{selectedForm.phase_label}</p>
-                </Card>
+                <div className="rounded-2xl border border-stone bg-paper px-5 py-5 text-center flex flex-col justify-center">
+                  <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Phạm vi</p>
+                  <p className="mt-2 text-xl font-semibold text-ink">{selectedForm.phase_label}</p>
+                </div>
               </div>
-            </Card>
+            </div>
+
+            {selectedForm.submission_config?.brief ? (
+              <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
+                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Nhiệm vụ trạm</p>
+                <MarkdownBlock content={selectedForm.submission_config.brief} />
+              </div>
+            ) : null}
 
             {/* Keyed by the open form's id so a switch fully remounts the panel
                 below instead of leaking one form's draft state into another. */}
@@ -875,8 +856,8 @@ export default function FormResponses() {
           </main>
 
           <aside className="space-y-5 lg:sticky lg:top-6">
-            <Card radius={28} className="border border-white/25 bg-white/90 p-5 backdrop-blur" style={{ boxShadow: '0 18px 50px rgba(52,42,28,0.12)' }}>
-              <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Bieu mau kha dung</p>
+            <div className={`${CARD} p-5`}>
+              <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Biểu mẫu khả dụng</p>
               <div className="mt-4 space-y-3">
                 {forms.map((item) => (
                   <button
@@ -894,7 +875,7 @@ export default function FormResponses() {
                   </button>
                 ))}
               </div>
-            </Card>
+            </div>
           </aside>
         </div>
       </div>
