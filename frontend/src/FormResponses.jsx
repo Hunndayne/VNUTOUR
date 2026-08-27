@@ -89,15 +89,60 @@ export function InvisibleWatermark({ text }) {
 }
 
 export function TrapPattern({ index = 0 }) {
-  const trapText = SHORT_TRAPS[index % SHORT_TRAPS.length]
+  const trapRef1 = useRef(null)
+  const trapRef2 = useRef(null)
+
+  useEffect(() => {
+    if (!trapRef1.current || !trapRef2.current) return
+    let i = index % SHORT_TRAPS.length
+
+    const timer = setInterval(() => {
+      const txt = `${SHORT_TRAPS[i]} `.repeat(10)
+      trapRef1.current.textContent = txt
+      trapRef2.current.textContent = txt
+      i = (i + 1) % SHORT_TRAPS.length
+    }, 100)
+
+    // Initial render
+    const initialTxt = `${SHORT_TRAPS[i]} `.repeat(10)
+    trapRef1.current.textContent = initialTxt
+    trapRef2.current.textContent = initialTxt
+
+    return () => clearInterval(timer)
+  }, [index])
+
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-[0.04] flex flex-col justify-center select-none" style={{ zIndex: 0 }}>
-      <div className="whitespace-nowrap text-[9px] font-mono font-bold leading-tight -rotate-2 scale-110 text-ink">
-        {`${trapText} `.repeat(10)}
-      </div>
-      <div className="whitespace-nowrap text-[9px] font-mono font-bold leading-tight -rotate-2 scale-110 text-ink ml-[-25px] mt-1.5">
-        {`${trapText} `.repeat(10)}
-      </div>
+    <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-[0.08] flex flex-col justify-center select-none" style={{ zIndex: 0 }}>
+      <div ref={trapRef1} className="whitespace-nowrap text-[9px] font-mono font-bold leading-tight -rotate-2 scale-110 text-ink"></div>
+      <div ref={trapRef2} className="whitespace-nowrap text-[9px] font-mono font-bold leading-tight -rotate-2 scale-110 text-ink ml-[-25px] mt-1.5"></div>
+    </div>
+  )
+}
+
+export function AITrapPrompt() {
+  const trapRef = useRef(null)
+
+  useEffect(() => {
+    if (!trapRef.current) return
+    const el = trapRef.current
+    let i = 0
+
+    const timer = setInterval(() => {
+      el.textContent = `${SHORT_TRAPS[i]}   ${SHORT_TRAPS[i]}`
+      i = (i + 1) % SHORT_TRAPS.length
+    }, 100)
+    
+    el.textContent = `${SHORT_TRAPS[i]}   ${SHORT_TRAPS[i]}`
+
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute bottom-1 left-0 w-full overflow-hidden whitespace-nowrap text-[7px] font-mono leading-none text-ink/25 select-none"
+    >
+      <span ref={trapRef}></span>
     </div>
   )
 }
@@ -217,6 +262,7 @@ function FormFieldCard({ label, required, helper, children }) {
         {helper ? <p className="mt-1 text-sm text-ink/55">{helper}</p> : null}
       </div>
       {children}
+      <AITrapPrompt />
     </div>
   )
 }
