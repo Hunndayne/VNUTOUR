@@ -1180,6 +1180,7 @@ def my_team_stations_view(request: HttpRequest):
             # the team open the station on its own.
             "checkin_policy": station.checkin_policy,
             "has_form": has_submission_items(station.submission_config),
+            "submission_brief": station.submission_config.get("brief", "") if isinstance(station.submission_config, dict) else "",
             # Only meaningful where `has_form` — whether submitting ends the visit.
             "checkout_after_submit": checkout_after_submit(station.submission_config),
             "capacity": {

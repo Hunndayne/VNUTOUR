@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
+import { MarkdownBlock } from './FormResponses.jsx'
 
 const POLL_MS = 2000
 const EXIT_LOCK_MS = 10000
@@ -510,6 +511,13 @@ function StationStageScreen({
           <Icon name="pin" className="h-4 w-4 shrink-0" />
           {station.station_location}
         </p>
+      )}
+
+      {station?.submission_brief && (
+        <div className={`${STATION_CARD} mt-4 px-5 py-6 sm:px-7 sm:py-7`}>
+          <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Nhiệm vụ trạm</p>
+          <MarkdownBlock content={station.submission_brief} />
+        </div>
       )}
 
       <ConnectionNote message={pollError} />

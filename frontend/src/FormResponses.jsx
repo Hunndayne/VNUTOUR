@@ -60,7 +60,7 @@ function renderInlineMarkdown(text, keyPrefix = 'md') {
   return nodes.length > 0 ? nodes : text
 }
 
-function MarkdownBlock({ content }) {
+export function MarkdownBlock({ content }) {
   const normalized = String(content || '').replace(/\r\n/g, '\n').trim()
   if (!normalized) return null
 
@@ -806,33 +806,19 @@ export default function FormResponses() {
         <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_320px] lg:items-start">
           <main className="space-y-5">
             <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
-              <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_220px]">
-                <div>
-                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
-                    Bài tập trạm
-                  </div>
-                  <h1 className="mt-2 text-2xl font-bold text-ink sm:text-3xl">
-                    {selectedForm.station_name}
-                  </h1>
-                  <p className="mt-2 text-sm text-ink/70">
-                    {selectedForm.event_name} · {selectedForm.phase_label}
-                  </p>
-                  {selectedForm.station_location ? <p className="mt-2 max-w-2xl text-sm leading-7 text-ink/55">{selectedForm.station_location}</p> : null}
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
+                  Bài tập trạm
                 </div>
-
-                <div className="rounded-2xl border border-stone bg-paper px-5 py-5 text-center flex flex-col justify-center">
-                  <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Phạm vi</p>
-                  <p className="mt-2 text-xl font-semibold text-ink">{selectedForm.phase_label}</p>
-                </div>
+                <h1 className="mt-2 text-2xl font-bold text-ink sm:text-3xl">
+                  {selectedForm.station_name}
+                </h1>
+                <p className="mt-2 text-sm text-ink/70">
+                  {selectedForm.event_name} · {selectedForm.phase_label}
+                </p>
+                {selectedForm.station_location ? <p className="mt-2 max-w-2xl text-sm leading-7 text-ink/55">{selectedForm.station_location}</p> : null}
               </div>
             </div>
-
-            {selectedForm.submission_config?.brief ? (
-              <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
-                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Nhiệm vụ trạm</p>
-                <MarkdownBlock content={selectedForm.submission_config.brief} />
-              </div>
-            ) : null}
 
             {/* Keyed by the open form's id so a switch fully remounts the panel
                 below instead of leaking one form's draft state into another. */}
