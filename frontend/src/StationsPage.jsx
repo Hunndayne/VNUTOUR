@@ -2131,7 +2131,7 @@ function resolveAttachmentUrl(url) {
   return url.startsWith('/') ? `${API_BASE_URL}${url}` : url
 }
 
-function StationSubmissionRow({ submission, onGrade, busy }) {
+function StationSubmissionDetailView({ submission, onGrade, busy }) {
   const [scoreInput, setScoreInput] = useState(submission.score ?? '')
   const files = submission.files || []
   const formAnswers = submission.response_payload?.form || []
@@ -2142,11 +2142,11 @@ function StationSubmissionRow({ submission, onGrade, busy }) {
     : { label: 'Đã nộp', cls: 'bg-gold/15 text-[#9A6B12]' }
 
   return (
-    <div className={`${CARD} px-4 py-3.5`}>
+    <div className={`${CARD} px-5 py-5`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-ink">{submission.team_name}</p>
-          <p className="font-mono text-xs text-ink/40">{submission.team_code}</p>
+          <p className="truncate text-xl font-bold text-ink">{submission.team_name}</p>
+          <p className="font-mono text-sm text-ink/40">{submission.team_code}</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge {...statusMeta} />
@@ -2159,122 +2159,124 @@ function StationSubmissionRow({ submission, onGrade, busy }) {
         </div>
       </div>
 
-      <p className="mt-1.5 text-xs text-ink/45">
+      <p className="mt-3 text-sm text-ink/50">
         Nộp lúc: {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
         {submission.graded_by ? ` · Đã chấm bởi ${submission.graded_by}` : ''}
         {submission.score !== null && submission.score !== undefined ? ` · Điểm: ${submission.score}` : ''}
       </p>
       {quizResult ? (
-        <p className="mt-1 text-xs font-medium text-[#3E7CA8]">
+        <p className="mt-1 text-sm font-medium text-[#3E7CA8]">
           Quiz: đúng {quizResult.correct_count}/{quizResult.total} câu · {quizResult.points}/{quizResult.max_points} điểm
         </p>
       ) : null}
 
-      {formAnswers.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Câu trả lời</p>
-          {formAnswers.map((field, index) => (
-            <div key={field.id || index} className="rounded-lg border border-stone bg-paper px-3 py-2">
-              <p className="text-xs font-medium text-ink/55">{field.label || `Trường ${index + 1}`}</p>
-              <p className="mt-0.5 text-sm text-ink">{field.value || '—'}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {quizAnswers.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Trắc nghiệm</p>
-          {quizAnswers.map((item, index) => (
-            <div key={item.id || index} className="rounded-lg border border-stone bg-paper px-3 py-2">
-              <p className="text-xs font-medium text-ink/55">{item.question || `Câu ${index + 1}`}</p>
-              <p className="mt-0.5 text-sm text-ink">
-                {item.selectedOption === null || item.selectedOption === undefined
-                  ? 'Chưa chọn đáp án'
-                  : `Đã chọn: đáp án ${Number(item.selectedOption) + 1}`}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {files.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink/35">Tệp đính kèm</p>
-          <div className="flex flex-wrap gap-1.5">
-            {files.map((file, index) => {
-              const url = resolveAttachmentUrl(file.url)
-              return url ? (
-                <a
-                  key={file.key || index}
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-stone bg-paper px-2.5 py-1.5 text-xs font-medium text-ink/70 transition hover:bg-white"
-                >
-                  <Icon name="paperclip" className="h-3.5 w-3.5" />
-                  {file.name}
-                </a>
-              ) : (
-                <span
-                  key={file.key || index}
-                  className="inline-flex items-center gap-1 rounded-lg border border-dashed border-stone px-2.5 py-1.5 text-xs text-ink/40"
-                >
-                  <Icon name="paperclip" className="h-3.5 w-3.5" />
-                  {file.name} (chưa có link)
-                </span>
-              )
-            })}
+      <div className="mt-6 border-t border-stone/40 pt-4">
+        {formAnswers.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Câu trả lời</p>
+            {formAnswers.map((field, index) => (
+              <div key={field.id || index} className="rounded-xl border border-stone bg-paper px-4 py-3">
+                <p className="text-sm font-medium text-ink/60">{field.label || `Trường ${index + 1}`}</p>
+                <p className="mt-1 text-base text-ink">{field.value || '—'}</p>
+              </div>
+            ))}
           </div>
-        </div>
-      )}
+        )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onGrade(submission.id, { is_correct: true })}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-trail/30 bg-trail/10 px-3 py-1.5 text-xs font-semibold text-trail transition hover:bg-trail/15 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Icon name="checkPlain" className="h-3.5 w-3.5" />
-          Đánh dấu Đúng
-        </button>
-        <button
-          type="button"
-          onClick={() => onGrade(submission.id, { is_correct: false })}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-clay/30 bg-clay/10 px-3 py-1.5 text-xs font-semibold text-clay transition hover:bg-clay/15 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Icon name="xmark" className="h-3.5 w-3.5" />
-          Đánh dấu Sai
-        </button>
-        <div className="ml-auto flex items-center gap-1.5">
-          {quizResult ? (
-            <button
-              type="button"
-              onClick={() => setScoreInput(String(quizResult.points))}
-              disabled={busy}
-              title="Điền điểm quiz tự tính vào ô điểm"
-              className="inline-flex items-center gap-1 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs font-semibold text-[#3E7CA8] transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Lấy điểm quiz
-            </button>
-          ) : null}
-          <input
-            type="number"
-            value={scoreInput}
-            onChange={event => setScoreInput(event.target.value)}
-            placeholder="Điểm"
-            className="w-20 rounded-lg border border-stone bg-white px-2.5 py-1.5 text-xs text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
-          />
+        {quizAnswers.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Trắc nghiệm</p>
+            {quizAnswers.map((item, index) => (
+              <div key={item.id || index} className="rounded-xl border border-stone bg-paper px-4 py-3">
+                <p className="text-sm font-medium text-ink/60">{item.question || `Câu ${index + 1}`}</p>
+                <p className="mt-1 text-base text-ink">
+                  {item.selectedOption === null || item.selectedOption === undefined
+                    ? 'Chưa chọn đáp án'
+                    : `Đã chọn: đáp án ${Number(item.selectedOption) + 1}`}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Tệp đính kèm</p>
+            <div className="flex flex-wrap gap-2">
+              {files.map((file, index) => {
+                const url = resolveAttachmentUrl(file.url)
+                return url ? (
+                  <a
+                    key={file.key || index}
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-paper px-3 py-2 text-sm font-medium text-ink/70 transition hover:bg-white"
+                  >
+                    <Icon name="paperclip" className="h-4 w-4" />
+                    {file.name}
+                  </a>
+                ) : (
+                  <span
+                    key={file.key || index}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-stone px-3 py-2 text-sm text-ink/40"
+                  >
+                    <Icon name="paperclip" className="h-4 w-4" />
+                    {file.name} (chưa có link)
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-8 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => onGrade(submission.id, { score: Number(scoreInput) })}
-            disabled={busy || scoreInput === '' || !Number.isFinite(Number(scoreInput))}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/70 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => onGrade(submission.id, { is_correct: true })}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg border border-trail/30 bg-trail/10 px-4 py-2 text-sm font-semibold text-trail transition hover:bg-trail/15 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Lưu điểm
+            <Icon name="checkPlain" className="h-4 w-4" />
+            Đánh dấu Đúng
           </button>
+          <button
+            type="button"
+            onClick={() => onGrade(submission.id, { is_correct: false })}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg border border-clay/30 bg-clay/10 px-4 py-2 text-sm font-semibold text-clay transition hover:bg-clay/15 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Icon name="xmark" className="h-4 w-4" />
+            Đánh dấu Sai
+          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {quizResult ? (
+              <button
+                type="button"
+                onClick={() => setScoreInput(String(quizResult.points))}
+                disabled={busy}
+                title="Điền điểm quiz tự tính vào ô điểm"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-[#3E7CA8] transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Lấy điểm quiz
+              </button>
+            ) : null}
+            <input
+              type="number"
+              value={scoreInput}
+              onChange={event => setScoreInput(event.target.value)}
+              placeholder="Điểm"
+              className="w-24 rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+            />
+            <button
+              type="button"
+              onClick={() => onGrade(submission.id, { score: Number(scoreInput) })}
+              disabled={busy || scoreInput === '' || !Number.isFinite(Number(scoreInput))}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Lưu điểm
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2287,6 +2289,7 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState('')
   const [busyId, setBusyId] = useState('')
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
 
   const load = useCallback(async () => {
     if (!stationId) return
@@ -2333,6 +2336,38 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
     }
   }
 
+  const selectedSubmission = submissions.find(s => s.id === selectedSubmissionId)
+
+  if (selectedSubmission) {
+    return (
+      <div className="space-y-4">
+        <StationErrorBanner message={apiError} />
+        <div className={`${CARD} px-5 py-4`}>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <button
+                type="button"
+                onClick={() => setSelectedSubmissionId(null)}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink"
+              >
+                <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
+                Danh sách bài nộp
+              </button>
+              <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">{stationLabel}</p>
+              <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{selectedSubmission.team_name}</h2>
+              <p className="mt-1 text-sm text-ink/45">Mã đội: {selectedSubmission.team_code}</p>
+            </div>
+          </div>
+        </div>
+        <StationSubmissionDetailView 
+          submission={selectedSubmission} 
+          onGrade={handleGrade} 
+          busy={busyId === selectedSubmission.id} 
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <StationErrorBanner message={apiError} />
@@ -2355,14 +2390,34 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
           </div>
         ) : submissions.length > 0 ? (
           <div className="space-y-3">
-            {submissions.map(submission => (
-              <StationSubmissionRow
-                key={submission.id}
-                submission={submission}
-                onGrade={handleGrade}
-                busy={busyId === submission.id}
-              />
-            ))}
+            {submissions.map(submission => {
+              const statusMeta = submission.status === 'graded'
+                ? { label: 'Đã chấm', cls: 'bg-trail/12 text-trail' }
+                : { label: 'Đã nộp', cls: 'bg-gold/15 text-[#9A6B12]' }
+              return (
+                <div 
+                  key={submission.id}
+                  className={`${CARD} cursor-pointer px-5 py-4 transition hover:border-stone/80 hover:bg-paper group`}
+                  onClick={() => setSelectedSubmissionId(submission.id)}
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-base font-semibold text-ink">{submission.team_name}</p>
+                        <Badge {...statusMeta} />
+                      </div>
+                      <p className="mt-1 text-sm text-ink/50">
+                        {submission.team_code} · {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
+                        {submission.score !== null && submission.score !== undefined ? ` · Điểm: ${submission.score}` : ''}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-ink/20 transition group-hover:text-ink/60">
+                      <Icon name="chevronR" className="h-5 w-5" />
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         ) : (
           <div className={`${CARD} border-dashed px-4 py-10 text-center text-sm text-ink/40`}>
