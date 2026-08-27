@@ -2284,7 +2284,7 @@ function StationSubmissionRow({ submission, onGrade, busy }) {
   )
 }
 
-function StationSubmissionsDrawer({ stationId, stationName, onClose }) {
+function StationSubmissionsView({ stationId, stationName, onBack }) {
   const [submissions, setSubmissions] = useState([])
   const [stationLabel, setStationLabel] = useState(stationName || '')
   const [loading, setLoading] = useState(true)
@@ -2337,53 +2337,42 @@ function StationSubmissionsDrawer({ stationId, stationName, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" onClick={onClose} />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-[560px] flex-col border-l border-stone bg-paper shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
+    <div className="space-y-4">
+      <StationErrorBanner message={apiError} />
+
+      <div className={`${CARD} px-5 py-4`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Bài nộp trạm</p>
-            <h2 className="mt-1 truncate font-display text-xl font-bold text-ink">{stationLabel}</h2>
-            <p className="mt-1 text-xs text-ink/45">{submissions.length} bài nộp</p>
+            <StationBackLink onClick={onBack} />
+            <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Bài nộp trạm</p>
+            <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{stationLabel}</h2>
+            <p className="mt-1 text-sm text-ink/45">{submissions.length} bài nộp</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 text-ink/40 transition hover:bg-paper hover:text-ink"
-          >
-            <Icon name="close" />
-          </button>
         </div>
+      </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {apiError && (
-            <div className="mb-3 rounded-xl border border-clay/20 bg-clay/[0.05] px-4 py-3 text-sm text-clay">
-              {apiError}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="rounded-xl border border-dashed border-stone bg-white px-4 py-10 text-center text-sm text-ink/40">
-              Đang tải bài nộp...
-            </div>
-          ) : submissions.length > 0 ? (
-            <div className="space-y-3">
-              {submissions.map(submission => (
-                <StationSubmissionRow
-                  key={submission.id}
-                  submission={submission}
-                  onGrade={handleGrade}
-                  busy={busyId === submission.id}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-stone bg-white px-4 py-10 text-center text-sm text-ink/40">
-              Trạm này chưa có đội nào nộp bài.
-            </div>
-          )}
-        </div>
-      </aside>
+      <div className="space-y-4">
+        {loading ? (
+          <div className={`${CARD} px-4 py-10 text-center text-sm text-ink/40`}>
+            Đang tải bài nộp...
+          </div>
+        ) : submissions.length > 0 ? (
+          <div className="space-y-3">
+            {submissions.map(submission => (
+              <StationSubmissionRow
+                key={submission.id}
+                submission={submission}
+                onGrade={handleGrade}
+                busy={busyId === submission.id}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className={`${CARD} border-dashed px-4 py-10 text-center text-sm text-ink/40`}>
+            Trạm này chưa có đội nào nộp bài.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -2931,6 +2920,17 @@ function StationsPage({
     )
   }
 
+  if (submissionsStationId) {
+    return (
+      <StationSubmissionsView
+        stationId={submissionsStationId}
+        stationName={stations.find(station => station.id === submissionsStationId)?.name}
+        onBack={() => setSubmissionsStationId(null)}
+      />
+    )
+  }
+
+
   return (
     <div className="space-y-4">
       {apiError && (
@@ -3032,8 +3032,8 @@ function StationsPage({
                 return (
                   <tr
                     key={station.id}
-                    onClick={() => setSelectedId(station.id)}
-                    className={`cursor-pointer transition hover:bg-paper/70 ${selectedId === station.id ? 'bg-paper/60' : ''}`}
+                    onClick={() => setSubmissionsStationId(station.id)}
+                    className={`cursor-pointer transition hover:bg-paper/70 ${submissionsStationId === station.id ? 'bg-paper/60' : ''}`}
                   >
                     <td className="px-4 py-3.5">
                       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink/[0.07] font-mono text-xs font-semibold text-ink/60">
@@ -3050,19 +3050,6 @@ function StationsPage({
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-2">
                         <SubmissionModeList submission={station.submission} compact />
-                        {hasSubmissionConfig(station.submission) && (
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setSubmissionsStationId(station.id)
-                            }}
-                            title={`Bài nộp · ${station.name}`}
-                            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-stone bg-white px-2 py-1 text-[11px] font-semibold text-ink/55 transition hover:bg-paper hover:text-ink"
-                          >
-                            <Icon name="doc" className="h-3.5 w-3.5" />
-                          </button>
-                        )}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-center">
@@ -3082,8 +3069,18 @@ function StationsPage({
                     <td className="px-4 py-3.5">
                       <Badge {...status} />
                     </td>
-                    <td className="px-4 py-3.5 text-ink/25">
-                      <Icon name="chevronR" className="h-4 w-4" />
+                    <td className="px-4 py-3.5 text-right">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setSelectedId(station.id)
+                        }}
+                        className="inline-flex shrink-0 items-center justify-center rounded-lg p-2 text-ink/35 transition hover:bg-stone/50 hover:text-ink"
+                        title="Sửa trạm"
+                      >
+                        <Icon name="edit" className="h-4 w-4" />
+                      </button>
                     </td>
                   </tr>
                 )
@@ -3101,12 +3098,6 @@ function StationsPage({
           </div>
         </div>
       ) : null}
-
-      <StationSubmissionsDrawer
-        stationId={submissionsStationId}
-        stationName={stations.find(station => station.id === submissionsStationId)?.name}
-        onClose={() => setSubmissionsStationId(null)}
-      />
     </div>
   )
 }
