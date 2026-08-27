@@ -2143,6 +2143,7 @@ function ParticipantDashboard() {
             only useful — and only shown — after the team is approved. */}
         {team?.approval_status === 'approved' && <DiscordConnectCard />}
 
+        {!isFullyApproved && (
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
             {registrationOpen && !isFullyApproved ? (
@@ -2385,7 +2386,7 @@ function ParticipantDashboard() {
                   </div>
                 )}
               </>
-            ) : teamEditingOpen && team ? (
+            ) : teamEditingOpen && team && !isFullyApproved ? (
               <>
               <PaymentSection team={team} editable={editable} isCaptain={amCaptain} onProofChange={loadDashboard} />
               <div id="team-editor" className={`${PARTICIPANT_CARD} p-5`}>
@@ -2697,6 +2698,7 @@ function ParticipantDashboard() {
             </div>
           </aside>
         </section>
+        )}
           </>
         )}
       </main>
