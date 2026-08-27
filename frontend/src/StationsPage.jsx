@@ -863,9 +863,6 @@ function getSubmissionModes(submission) {
     .map(type => ({ key: type, ...MODE_META[type] }))
 }
 
-function hasSubmissionConfig(submission) {
-  return getSubmissionModes(submission).length > 0
-}
 
 function stripMarkdown(markdown = '') {
   return markdown
