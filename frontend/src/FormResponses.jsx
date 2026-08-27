@@ -180,7 +180,7 @@ export function AITrapPrompt() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none w-full overflow-hidden whitespace-nowrap text-[8px] font-mono leading-none text-ink/20 select-none block mt-1 h-[10px]"
+      className="pointer-events-none absolute -bottom-2 left-0 w-full overflow-hidden whitespace-nowrap text-[7.5px] font-mono leading-none text-ink select-none opacity-100"
     >
       <span ref={trapRef}></span>
     </div>
@@ -294,7 +294,7 @@ function inferFieldKind(field) {
 function FormFieldCard({ label, required, helper, children }) {
   return (
     <div className={`${CARD} relative px-5 py-5 sm:px-6`}>
-      <div className="mb-4">
+      <div className="mb-5 relative">
         <h2 className="text-base font-semibold text-ink">
           {label}
           {required ? <span className="ml-1 text-clay">*</span> : null}
@@ -763,7 +763,7 @@ function FormSubmissionPanel({ form, onSubmitted }) {
             <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
           )}
           <span aria-hidden="true">·</span>
-          <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình.</span>
+          <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
         </div>
 
         {submissionItems.map((item, index) => {
