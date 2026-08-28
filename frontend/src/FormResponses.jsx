@@ -397,12 +397,73 @@ function AttachmentBox({ attachment, files, onChange, onPickerOpen }) {
   )
 }
 
+function formatCountdown(ms) {
+  if (ms <= 0) return '00:00'
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const parts = []
+  if (hours > 0) parts.push(String(hours).padStart(2, '0'))
+  parts.push(String(minutes).padStart(2, '0'))
+  parts.push(String(seconds).padStart(2, '0'))
+  return parts.join(':')
+}
+
+function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffset)
+  
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now() + serverTimeOffset)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [serverTimeOffset])
+
+  const openTime = opensAt ? new Date(opensAt).getTime() : 0
+  const closeTime = closesAt ? new Date(closesAt).getTime() : 0
+
+  let status = 'open'
+  let label = ''
+  let timeStr = ''
+
+  if (openTime > 0 && now < openTime) {
+    status = 'waiting'
+    label = 'Form chưa mở. Sẽ mở sau:'
+    timeStr = formatCountdown(openTime - now)
+  } else if (closeTime > 0 && now < closeTime) {
+    status = 'closing'
+    label = 'Thời gian làm bài còn lại:'
+    timeStr = formatCountdown(closeTime - now)
+  } else if (closeTime > 0 && now >= closeTime) {
+    status = 'closed'
+    label = 'Form đã đóng thời gian làm bài.'
+  }
+
+  useEffect(() => {
+    onStateChange(status)
+  }, [status, onStateChange])
+
+  if (status === 'open') return null
+
+  return (
+    <div className={`mb-6 flex items-center justify-between rounded-xl border px-5 py-3 ${
+      status === 'closed' ? 'bg-[#D6492B]/10 border-[#D6492B]/30 text-[#D6492B]' :
+      status === 'waiting' ? 'bg-[#DCD8CC]/30 border-[#DCD8CC] text-[#20312B]/70' :
+      'bg-[#E0A23A]/15 border-[#E0A23A]/40 text-[#9A6B12]'
+    }`}>
+      <span className="text-sm font-semibold">{label}</span>
+      {timeStr && <span className="font-mono text-lg font-bold tabular-nums">{timeStr}</span>}
+    </div>
+  )
+}
+
 // Everything that depends on the answers the user is typing, split out so the
 // parent can remount it with `key={selectedId}` on every form switch. That
 // remount is what makes useDraftState safe here — the hook only ever reads
 // its baseline once per mount, and re-mounting is simpler than teaching it to
 // change key mid-life without mixing one form's answers into another's.
-function FormSubmissionPanel({ form, onSubmitted }) {
+function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
   const submissionConfig = form?.submission_config || {}
   // The backend always sends the canonical ordered item list, converting older
   // three-section configs on the way out — so display order is admin-controlled.
@@ -411,7 +472,8 @@ function FormSubmissionPanel({ form, onSubmitted }) {
   const activeQuizItems = submissionItems.filter((item) => item.type === 'quiz')
   const attachmentConfig = submissionItems.find((item) => item.type === 'attachment') || null
   const closure = form?.closure || null
-  const formClosed = Boolean(closure?.closed)
+  const [timeStatus, setTimeStatus] = useState('open')
+  const formClosed = Boolean(closure?.closed) || timeStatus === 'closed' || timeStatus === 'waiting'
   const mySubmission = form?.my_submission || null
 
   // Survey forms stay individual — one person, one device, plain localStorage,
@@ -679,6 +741,8 @@ function FormSubmissionPanel({ form, onSubmitted }) {
         manual: 'Biểu mẫu đã được ban tổ chức đóng.',
         limit_reached: 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.',
         correct_answer: 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.',
+        not_opened: 'Biểu mẫu chưa tới giờ mở.',
+        time_closed: 'Biểu mẫu đã hết giờ làm bài.',
       }
       const messageMap = {
         team_not_approved: 'Đội của bạn chưa được duyệt nên chưa thể gửi bài.',
@@ -720,16 +784,26 @@ function FormSubmissionPanel({ form, onSubmitted }) {
         onContextMenu={blockClipboardEvent}
         onDragStart={blockClipboardEvent}
       >
+        <FormCountdown 
+          opensAt={submissionConfig.limits?.opensAt} 
+          closesAt={submissionConfig.limits?.closesAt}
+          serverTimeOffset={serverTimeOffset}
+          onStateChange={setTimeStatus}
+        />
         {formClosed || mySubmission ? (
           <div className={`rounded-2xl border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
               {formClosed ? (
                 <span className="font-semibold text-clay">
-                  {closure?.reason === 'limit_reached'
-                    ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
-                    : closure?.reason === 'correct_answer'
-                      ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
-                      : 'Biểu mẫu đã được ban tổ chức đóng.'}
+                  {timeStatus === 'waiting'
+                    ? 'Biểu mẫu chưa tới giờ mở.'
+                    : timeStatus === 'closed' || closure?.reason === 'time_closed'
+                      ? 'Biểu mẫu đã hết giờ làm bài.'
+                      : closure?.reason === 'limit_reached'
+                        ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
+                        : closure?.reason === 'correct_answer'
+                          ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
+                          : 'Biểu mẫu đã được ban tổ chức đóng.'}
                 </span>
               ) : null}
               {mySubmission?.submitted_at ? (
@@ -857,6 +931,7 @@ export default function FormResponses() {
   const [error, setError] = useState('')
   const [forms, setForms] = useState([])
   const [teamCode, setTeamCode] = useState('')
+  const [serverTimeOffset, setServerTimeOffset] = useState(0)
   // A form is one-to-one with its station, and StationRunPage/ParticipantDashboard
   // already link here as `/form?stationId=...` — so the open form rides in that
   // same param rather than a second `form` param that would just duplicate it.
@@ -870,6 +945,14 @@ export default function FormResponses() {
         setError('')
         const payload = await apiRequest('/my-team/forms')
         if (cancelled) return
+        
+        if (payload?.server_now) {
+          const serverNow = new Date(payload.server_now).getTime()
+          if (!isNaN(serverNow)) {
+            setServerTimeOffset(serverNow - Date.now())
+          }
+        }
+        
         const accessibleForms = payload?.accessible_forms || []
         setForms(accessibleForms)
         if (payload?.team_code) setTeamCode(payload.team_code)
@@ -958,6 +1041,7 @@ export default function FormResponses() {
             <FormSubmissionPanel
               key={selectedId}
               form={selectedForm}
+              serverTimeOffset={serverTimeOffset}
               onSubmitted={(stationId) => {
                 setForms((current) => current.map((item) => {
                   if (String(item.station_id) !== String(stationId)) return item

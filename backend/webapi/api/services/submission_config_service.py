@@ -158,6 +158,8 @@ def _limits(config: dict) -> dict:
         "maxSubmissions": max_submissions,
         "closeOnCorrect": bool(limits.get("closeOnCorrect")),
         "manualClosed": bool(limits.get("manualClosed")),
+        "opensAt": _clean_str(limits.get("opensAt")),
+        "closesAt": _clean_str(limits.get("closesAt")),
     }
 
 

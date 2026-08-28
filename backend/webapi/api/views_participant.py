@@ -214,6 +214,8 @@ def _submission_limits(config: dict | None) -> dict:
         "max_submissions": limits["maxSubmissions"],
         "close_on_correct": limits["closeOnCorrect"],
         "manual_closed": limits["manualClosed"],
+        "opens_at": limits.get("opensAt", ""),
+        "closes_at": limits.get("closesAt", ""),
     }
 
 
@@ -233,6 +235,25 @@ def _form_closure_state(station: Station) -> dict:
         reason = "limit_reached"
     elif limits["close_on_correct"] and submitted.filter(is_correct=True).exists():
         reason = "correct_answer"
+    else:
+        from django.utils.dateparse import parse_datetime
+        now = timezone.now()
+        
+        if limits.get("opens_at"):
+            opens_at = parse_datetime(limits["opens_at"])
+            if opens_at:
+                if timezone.is_naive(opens_at):
+                    opens_at = timezone.make_aware(opens_at)
+                if now < opens_at:
+                    reason = "not_opened"
+
+        if limits.get("closes_at") and not reason:
+            closes_at = parse_datetime(limits["closes_at"])
+            if closes_at:
+                if timezone.is_naive(closes_at):
+                    closes_at = timezone.make_aware(closes_at)
+                if now >= closes_at:
+                    reason = "time_closed"
 
     return {
         "closed": reason is not None,
@@ -1273,6 +1294,7 @@ def my_team_forms_view(request: HttpRequest):
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "accessible_forms": accessible_forms,
+        "server_now": timezone.now().isoformat(),
     })
 
 
@@ -1680,4 +1702,5 @@ def my_team_station_state_view(request: HttpRequest):
             "submitted_at": stamp(submission["submitted_at"]),
         } if submission else None,
         "qr": qr,
+        "server_now": timezone.now().isoformat(),
     })
