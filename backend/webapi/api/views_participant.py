@@ -12,7 +12,7 @@ from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
-    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamMembership,
+    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamFormSession, TeamMembership,
     PhaseRoster, ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
     MssvLinkAudit,
 )
@@ -241,6 +241,7 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
         import datetime
         now = timezone.now()
         dynamic_closes_at = None
+        session_started_at = None
         
         if limits.get("opens_at"):
             opens_at = parse_datetime(limits["opens_at"])
@@ -260,24 +261,27 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
                     reason = "time_closed"
 
         if limits.get("duration_minutes") and team and not reason:
-            session = StationSession.objects.filter(
-                team=team, station=station, status=StationSession.STATUS_ACTIVE
-            ).order_by("-entered_at").first()
+            session = TeamFormSession.objects.filter(
+                team=team, station=station
+            ).order_by("-started_at").first()
             if session:
-                session_closes_at = session.entered_at + datetime.timedelta(minutes=limits["duration_minutes"])
+                session_started_at = session.started_at
+                session_closes_at = session.started_at + datetime.timedelta(minutes=limits["duration_minutes"])
                 if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
                     dynamic_closes_at = session_closes_at
                 if now >= session_closes_at:
                     reason = "time_closed"
             else:
-                reason = "not_opened" # Needs a session to start the timer
+                reason = "not_started"
 
     return {
         "closed": reason is not None,
         "reason": reason,
         "submitted_count": submitted_count,
         "max_submissions": limits["max_submissions"] or None,
-        "closes_at": dynamic_closes_at.isoformat() if locals().get("dynamic_closes_at") else None,
+        "closes_at": dynamic_closes_at.isoformat() if dynamic_closes_at else None,
+        "started_at": session_started_at.isoformat() if session_started_at else None,
+        "duration_minutes": limits.get("duration_minutes", 0),
     }
 
 
@@ -1312,6 +1316,48 @@ def my_team_forms_view(request: HttpRequest):
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "accessible_forms": accessible_forms,
+        "server_now": timezone.now().isoformat(),
+    })
+
+
+@csrf_exempt
+def my_team_form_start_view(request: HttpRequest, station_id: int):
+    """POST to explicitly start the form session, locking in the start time."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        return JsonResponse({"error": "team_not_approved"}, status=403)
+
+    station = _team_form_station_or_none(team, station_id)
+    if not station:
+        return JsonResponse({"error": "form_not_found"}, status=404)
+
+    closure = _form_closure_state(station, team)
+    if closure["closed"]:
+        return JsonResponse({"error": "form_closed"}, status=403)
+
+    session, created = TeamFormSession.objects.get_or_create(
+        team=team, station=station,
+        defaults={"started_by": acc},
+    )
+
+    return JsonResponse({
+        "status": "started",
+        "started_at": session.started_at.isoformat(),
         "server_now": timezone.now().isoformat(),
     })
 
