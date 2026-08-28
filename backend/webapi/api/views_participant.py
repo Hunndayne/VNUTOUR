@@ -12,7 +12,7 @@ from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
-    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamMembership,
+    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamFormSession, TeamMembership,
     PhaseRoster, ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
     MssvLinkAudit,
 )
@@ -216,10 +216,11 @@ def _submission_limits(config: dict | None) -> dict:
         "manual_closed": limits["manualClosed"],
         "opens_at": limits.get("opensAt", ""),
         "closes_at": limits.get("closesAt", ""),
+        "duration_minutes": limits.get("durationMinutes", 0),
     }
 
 
-def _form_closure_state(station: Station) -> dict:
+def _form_closure_state(station: Station, team: Team | None = None) -> dict:
     """Whether the station form stopped accepting submissions, and why."""
     limits = _submission_limits(station.submission_config)
     submitted = StationSubmission.objects.filter(
@@ -229,6 +230,9 @@ def _form_closure_state(station: Station) -> dict:
     submitted_count = submitted.count()
 
     reason = None
+    dynamic_closes_at = None
+    session_started_at = None
+
     if limits["manual_closed"]:
         reason = "manual"
     elif limits["max_submissions"] and submitted_count >= limits["max_submissions"]:
@@ -237,6 +241,7 @@ def _form_closure_state(station: Station) -> dict:
         reason = "correct_answer"
     else:
         from django.utils.dateparse import parse_datetime
+        import datetime
         now = timezone.now()
         
         if limits.get("opens_at"):
@@ -252,14 +257,32 @@ def _form_closure_state(station: Station) -> dict:
             if closes_at:
                 if timezone.is_naive(closes_at):
                     closes_at = timezone.make_aware(closes_at)
+                dynamic_closes_at = closes_at
                 if now >= closes_at:
                     reason = "time_closed"
+
+        if limits.get("duration_minutes") and team and not reason:
+            session = TeamFormSession.objects.filter(
+                team=team, station=station
+            ).order_by("-started_at").first()
+            if session:
+                session_started_at = session.started_at
+                session_closes_at = session.started_at + datetime.timedelta(minutes=limits["duration_minutes"])
+                if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
+                    dynamic_closes_at = session_closes_at
+                if now >= session_closes_at:
+                    reason = "time_closed"
+            else:
+                reason = "not_started"
 
     return {
         "closed": reason is not None,
         "reason": reason,
         "submitted_count": submitted_count,
         "max_submissions": limits["max_submissions"] or None,
+        "closes_at": dynamic_closes_at.isoformat() if dynamic_closes_at else None,
+        "started_at": session_started_at.isoformat() if session_started_at else None,
+        "duration_minutes": limits.get("duration_minutes", 0),
     }
 
 
@@ -284,7 +307,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "phase_key": phase.key,
         "phase_label": phase.label,
         "submission_config": public_submission_config(station.submission_config, drawn_items),
-        "closure": _form_closure_state(station),
+        "closure": _form_closure_state(station, team),
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
@@ -1299,6 +1322,48 @@ def my_team_forms_view(request: HttpRequest):
 
 
 @csrf_exempt
+def my_team_form_start_view(request: HttpRequest, station_id: int):
+    """POST to explicitly start the form session, locking in the start time."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        return JsonResponse({"error": "team_not_approved"}, status=403)
+
+    station = _team_form_station_or_none(team, station_id)
+    if not station:
+        return JsonResponse({"error": "form_not_found"}, status=404)
+
+    closure = _form_closure_state(station, team)
+    if closure["closed"]:
+        return JsonResponse({"error": "form_closed"}, status=403)
+
+    session, created = TeamFormSession.objects.get_or_create(
+        team=team, station=station,
+        defaults={"started_by": acc},
+    )
+
+    return JsonResponse({
+        "status": "started",
+        "started_at": session.started_at.isoformat(),
+        "server_now": timezone.now().isoformat(),
+    })
+
+
+@csrf_exempt
 def my_team_form_submit_view(request: HttpRequest, station_id: int):
     """POST a participant station form submission for the current team."""
     if request.method != "POST":
@@ -1346,7 +1411,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if current_event and station.sub_event_id != current_event.id:
         return JsonResponse({"error": "event_not_found"}, status=404)
 
-    closure = _form_closure_state(station)
+    closure = _form_closure_state(station, team)
     if closure["closed"]:
         return JsonResponse({
             "error": "form_closed",

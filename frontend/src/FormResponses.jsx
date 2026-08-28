@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
@@ -458,12 +458,50 @@ function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
   )
 }
 
+function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
+  const shuffledOptions = useMemo(() => {
+    const opts = (item.options || []).map((label, originalIndex) => ({ label, originalIndex }))
+    if (randomizeOptions) {
+      for (let i = opts.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[opts[i], opts[j]] = [opts[j], opts[i]]
+      }
+    }
+    return opts
+  }, [item.options, randomizeOptions])
+
+  return (
+    <FormFieldCard
+      index={index + 1}
+      label={item.question || `Cau hoi ${index + 1}`}
+      helper="Chon mot dap an"
+    >
+      <div className="grid gap-3">
+        {shuffledOptions.map((opt, displayIndex) => (
+          <QuizChoice
+            key={`${item.id}-${opt.originalIndex}`}
+            index={displayIndex}
+            label={opt.label || `Lua chon ${opt.originalIndex + 1}`}
+            active={answer === opt.originalIndex}
+            onClick={() => onAnswer(opt.originalIndex)}
+          />
+        ))}
+      </div>
+    </FormFieldCard>
+  )
+}
+
 // Everything that depends on the answers the user is typing, split out so the
 // parent can remount it with `key={selectedId}` on every form switch. That
 // remount is what makes useDraftState safe here — the hook only ever reads
 // its baseline once per mount, and re-mounting is simpler than teaching it to
 // change key mid-life without mixing one form's answers into another's.
-function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
+function FormSubmissionPanel({
+  form,
+  serverTimeOffset,
+  onSubmitted,
+  onReload,
+}) {
   const submissionConfig = form?.submission_config || {}
   // The backend always sends the canonical ordered item list, converting older
   // three-section configs on the way out — so display order is admin-controlled.
@@ -473,7 +511,7 @@ function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
   const attachmentConfig = submissionItems.find((item) => item.type === 'attachment') || null
   const closure = form?.closure || null
   const [timeStatus, setTimeStatus] = useState('open')
-  const formClosed = Boolean(closure?.closed) || timeStatus === 'closed' || timeStatus === 'waiting'
+  const formClosed = Boolean(closure?.closed && closure?.reason !== 'not_started') || timeStatus === 'closed' || timeStatus === 'waiting'
   const mySubmission = form?.my_submission || null
 
   // Survey forms stay individual — one person, one device, plain localStorage,
@@ -786,7 +824,7 @@ function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
       >
         <FormCountdown 
           opensAt={submissionConfig.limits?.opensAt} 
-          closesAt={submissionConfig.limits?.closesAt}
+          closesAt={closure?.closes_at || submissionConfig.limits?.closesAt}
           serverTimeOffset={serverTimeOffset}
           onStateChange={setTimeStatus}
         />
@@ -818,49 +856,75 @@ function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
           </div>
         ) : null}
 
+        {closure?.reason === 'not_started' ? (
+          <div className={`${CARD} bg-paper px-6 py-10 sm:px-10 text-center`}>
+            <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full bg-trail/10 text-trail">
+              <Icon name="clock" className="h-8 w-8" />
+            </div>
+            <h2 className="text-xl font-bold text-ink">Bắt đầu làm bài</h2>
+            <p className="mt-2 text-sm leading-6 text-ink/70">
+              Trạm này có giới hạn thời gian làm bài là {closure?.duration_minutes || 0} phút.
+              <br/>
+              Thời gian sẽ bắt đầu đếm ngược ngay khi bạn nhấn nút bên dưới.
+            </p>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  setSubmitState('submitting')
+                  await apiRequest(`/my-team/forms/${form.station_id}/start`, { method: 'POST' })
+                  onReload()
+                } catch (err) {
+                  if (err?.status === 401) {
+                    logoutAndRedirect('/')
+                    return
+                  }
+                  setSubmitMessage('Lỗi khi bắt đầu làm bài.')
+                  setSubmitState('error')
+                }
+              }}
+              disabled={submitState === 'submitting'}
+              className="mt-6 inline-flex rounded-xl bg-ink px-8 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitState === 'submitting' ? 'Đang tải...' : 'Bắt đầu làm bài'}
+            </button>
+            {submitState === 'error' && submitMessage ? (
+              <p className="mt-4 text-sm text-clay">{submitMessage}</p>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
+            {answersDraft.restored && attachmentConfig ? (
+              <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
+            ) : null}
 
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
+              {isSurvey ? (
+                <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
+              ) : teamSync.updatedAt ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
+                  Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
+                </span>
+              ) : (
+                <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
+              )}
+              <span aria-hidden="true">·</span>
+              <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
+            </div>
 
-        <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
-        {answersDraft.restored && attachmentConfig ? (
-          <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
-          {isSurvey ? (
-            <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
-          ) : teamSync.updatedAt ? (
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
-              Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
-            </span>
-          ) : (
-            <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
-          )}
-          <span aria-hidden="true">·</span>
-          <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
-        </div>
-
-        {submissionItems.map((item, index) => {
+            {submissionItems.map((item, index) => {
           if (item.type === 'quiz') {
             return (
-              <FormFieldCard
+              <QuizItemDisplay
                 key={item.id}
-                index={index + 1}
-                label={item.question || `Cau hoi ${index + 1}`}
-                helper="Chon mot dap an"
-              >
-                <div className="grid gap-3">
-                  {(item.options || []).map((option, optionIndex) => (
-                    <QuizChoice
-                      key={`${item.id}-${optionIndex}`}
-                      index={optionIndex}
-                      label={option || `Lua chon ${optionIndex + 1}`}
-                      active={answers[`quiz:${item.id}`] === optionIndex}
-                      onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
-                    />
-                  ))}
-                </div>
-              </FormFieldCard>
+                item={item}
+                index={index}
+                answer={answers[`quiz:${item.id}`]}
+                onAnswer={(val) => setAnswer(`quiz:${item.id}`, val)}
+                randomizeOptions={submissionConfig.quiz?.randomizeOptions}
+              />
             )
           }
 
@@ -921,6 +985,8 @@ function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
             </p>
           ) : null}
         </div>
+        </>
+        )}
       </div>
     </>
   )
@@ -937,61 +1003,59 @@ export default function FormResponses() {
   // same param rather than a second `form` param that would just duplicate it.
   const [selectedId, setSelectedId] = useSearchParam('stationId', '')
 
-  useEffect(() => {
-    let cancelled = false
-    async function loadForms() {
-      try {
-        setLoading(true)
-        setError('')
-        const payload = await apiRequest('/my-team/forms')
-        if (cancelled) return
-        
-        if (payload?.server_now) {
-          const serverNow = new Date(payload.server_now).getTime()
-          if (!isNaN(serverNow)) {
-            setServerTimeOffset(serverNow - Date.now())
-          }
+  const loadForms = useCallback(async (isCancelled) => {
+    try {
+      setLoading(true)
+      setError('')
+      const payload = await apiRequest('/my-team/forms')
+      if (isCancelled && isCancelled()) return
+      
+      if (payload?.server_now) {
+        const serverNow = new Date(payload.server_now).getTime()
+        if (!isNaN(serverNow)) {
+          setServerTimeOffset(serverNow - Date.now())
         }
-        
-        const accessibleForms = payload?.accessible_forms || []
-        setForms(accessibleForms)
-        if (payload?.team_code) setTeamCode(payload.team_code)
-        // `selectedId` here is only ever the URL's value at mount time (see the
-        // eslint-disable below) — an id that is missing or no longer valid
-        // falls back to the first accessible form instead of a blank page.
-        const validId = accessibleForms.some((item) => String(item.station_id) === selectedId)
-          ? selectedId
+      }
+      
+      const accessibleForms = payload?.accessible_forms || []
+      setForms(accessibleForms)
+      if (payload?.team_code) setTeamCode(payload.team_code)
+      
+      setSelectedId((prevSelectedId) => {
+        const validId = accessibleForms.some((item) => String(item.station_id) === prevSelectedId)
+          ? prevSelectedId
           : accessibleForms[0]?.station_id
             ? String(accessibleForms[0].station_id)
             : ''
-        if (validId !== selectedId) setSelectedId(validId, { replace: true })
-      } catch (err) {
-        if (cancelled) return
-        if (err?.status === 401) {
-          logoutAndRedirect('/')
-          return
-        }
-        if (err?.status === 403) {
-          setError('Ban khong co quyen truy cap bieu mau nay.')
-          return
-        }
-        if (err?.status === 404) {
-          setError('Ban chua co doi hoac chua co bieu mau phu hop voi phase hien tai.')
-          return
-        }
-        setError('Khong tai duoc danh sach bieu mau.')
-      } finally {
-        if (!cancelled) setLoading(false)
+        return validId
+      }, { replace: true })
+    } catch (err) {
+      if (isCancelled && isCancelled()) return
+      if (err?.status === 401) {
+        logoutAndRedirect('/')
+        return
       }
+      if (err?.status === 403) {
+        setError('Ban khong co quyen truy cap bieu mau nay.')
+        return
+      }
+      if (err?.status === 404) {
+        setError('Ban chua co doi hoac chua co bieu mau phu hop voi phase hien tai.')
+        return
+      }
+      setError('Khong tai duoc danh sach bieu mau.')
+    } finally {
+      if (!isCancelled || !isCancelled()) setLoading(false)
     }
-    void loadForms()
+  }, [setSelectedId])
+
+  useEffect(() => {
+    let cancelled = false
+    loadForms(() => cancelled)
     return () => {
       cancelled = true
     }
-    // Mount-only: reads selectedId's value at load time without refetching
-    // the form list every time the user switches forms afterwards.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [loadForms])
 
   const selectedForm = useMemo(
     () => forms.find((item) => String(item.station_id) === String(selectedId)) || null,
@@ -1042,6 +1106,7 @@ export default function FormResponses() {
               key={selectedId}
               form={selectedForm}
               serverTimeOffset={serverTimeOffset}
+              onReload={loadForms}
               onSubmitted={(stationId) => {
                 setForms((current) => current.map((item) => {
                   if (String(item.station_id) !== String(stationId)) return item

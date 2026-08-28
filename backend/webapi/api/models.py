@@ -746,7 +746,32 @@ class CaptainVote(models.Model):
 
 
 # =====================================================================
-# 14b. TeamFormVariant
+# 14b. TeamFormSession
+# =====================================================================
+
+class TeamFormSession(models.Model):
+    """Tracks when a team explicitly starts a form that has a time limit."""
+    team = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="form_sessions",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="team_form_sessions",
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    started_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+
+    class Meta:
+        db_table = "team_form_session"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "station"],
+                name="uq_team_form_session_station",
+            )
+        ]
+
+# 14c. TeamFormVariant
 # =====================================================================
 
 class TeamFormVariant(models.Model):

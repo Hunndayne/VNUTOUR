@@ -203,6 +203,7 @@ function createSubmissionLimits(limits = {}) {
     manualClosed: limits.manualClosed ?? false,
     opensAt: limits.opensAt ?? '',
     closesAt: limits.closesAt ?? '',
+    durationMinutes: Math.max(0, Number(limits.durationMinutes) || 0),
   }
 }
 
@@ -231,6 +232,7 @@ function createSubmissionConfig(submission = {}) {
       autoScore: submission.quiz?.autoScore ?? false,
       // 0 = phát hết bộ đề; N > 0 = mỗi đội nhận N câu bốc ngẫu nhiên (cố định theo đội).
       randomCount: Math.max(0, Math.trunc(Number(submission.quiz?.randomCount)) || 0),
+      randomizeOptions: submission.quiz?.randomizeOptions ?? false,
     },
     limits: createSubmissionLimits(submission.limits),
     flow: {
@@ -2007,6 +2009,18 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
               />
               Tự cộng điểm quiz vào điểm đội trong phase (leaderboard)
             </label>
+            <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
+              <input
+                type="checkbox"
+                checked={form.submission.quiz.randomizeOptions}
+                onChange={event => updateSubmission(submission => ({
+                  ...submission,
+                  quiz: { ...submission.quiz, randomizeOptions: event.target.checked },
+                }))}
+                className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              />
+              Đảo ngẫu nhiên thứ tự các đáp án
+            </label>
             <p className="mt-1 text-xs leading-5 text-ink/45">
               Tắt: điểm quiz chỉ hiển thị ở bài nộp để tham khảo khi chấm. Bật: mỗi lần đội nộp bài,
               tổng điểm các câu đúng tự ghi vào bảng điểm.
@@ -2069,6 +2083,20 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
               onChange={event => updateLimits('closesAt', event.target.value)}
               className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
             />
+
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Thời gian làm bài (Phút, 0 = Không giới hạn)
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={form.submission.limits.durationMinutes || 0}
+              onChange={event => updateLimits('durationMinutes', Math.max(0, Number(event.target.value) || 0))}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
+            />
+            <p className="mt-1 mb-4 text-xs leading-5 text-ink/45">
+              Thời gian đếm ngược sẽ tính từ lúc đội check-in quét QR mã trạm.
+            </p>
 
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
               Số đội nộp tối đa (0 = không giới hạn)
