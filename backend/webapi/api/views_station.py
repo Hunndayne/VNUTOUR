@@ -347,7 +347,7 @@ def station_detail_view(request: HttpRequest, station_id: int):
 
     if request.method == "DELETE":
         delete_station(station_id)
-        return JsonResponse({"status": "deactivated"})
+        return JsonResponse({"status": "deleted"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 

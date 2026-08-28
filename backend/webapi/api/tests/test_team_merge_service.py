@@ -251,9 +251,22 @@ class CaptainBallotTests(TeamMergeTestBase):
             TeamMembership.objects.filter(team=self.team, is_captain=True).count(), 1,
         )
 
-    def test_the_ballot_stays_open_until_everyone_has_voted(self):
-        self._all_vote_for(self.members[0], skip=1)
+    def test_a_supermajority_ends_the_ballot_early(self):
+        # 3 out of 5 is a supermajority, so the winner is declared immediately
+        # even without the last 2 votes.
+        self._all_vote_for(self.members[0], skip=2)
+        
+        self.assertTrue(svc.has_captain(self.team))
 
+    def test_the_ballot_stays_open_until_everyone_has_voted_if_no_supermajority(self):
+        # 4 votes cast, but no one has 3 votes (2 for member[0], 2 for member[1]).
+        # The ballot must wait for the 5th vote.
+        svc.cast_vote(self.team, self.members[0], self.members[0])
+        svc.cast_vote(self.team, self.members[1], self.members[0])
+        svc.cast_vote(self.team, self.members[2], self.members[1])
+        svc.cast_vote(self.team, self.members[3], self.members[1])
+        
+        svc.resolve_election(self.team)
         self.assertFalse(svc.has_captain(self.team))
 
     def test_a_tie_leaves_the_ballot_open(self):

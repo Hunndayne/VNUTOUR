@@ -45,8 +45,12 @@ def update_station(station_id: int, **kwargs) -> Station:
 
 
 def delete_station(station_id: int) -> None:
-    """Soft-delete: deactivate station."""
-    Station.objects.filter(id=station_id).update(active=False)
+    """Hard-delete the station and its score entries."""
+    ScoreEntry.objects.filter(
+        Q(station_session__station_id=station_id) |
+        Q(submission__station_id=station_id)
+    ).delete()
+    Station.objects.filter(id=station_id).delete()
 
 
 def get_stations_for_event(sub_event_id: int, include_inactive: bool = False) -> list[Station]:

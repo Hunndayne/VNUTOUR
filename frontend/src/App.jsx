@@ -6,6 +6,7 @@ import ParticipantDashboard from './ParticipantDashboard.jsx'
 import FormResponses from './FormResponses.jsx'
 import CoopDashboard from './CoopDashboard.jsx'
 import FramePage from './FramePage.jsx'
+import StationRunPage from './StationRunPage.jsx'
 import TaiTro from './tai-tro.jsx'
 import { getStoredAuthToken, getStoredUser, isAdminRole, roleHomePath } from './api.js'
 import { navigate, useLocation } from './router.js'
@@ -19,6 +20,7 @@ const ROUTES = {
   '/coop': { render: () => <CoopDashboard />, allows: (role) => role === 'collab' },
   '/participant': { render: () => <ParticipantDashboard />, allows: (role) => role === 'participant' },
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
+  '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
 }
 
 // Paths that used to exist, kept alive so old links and bookmarks still land

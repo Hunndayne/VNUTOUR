@@ -12,7 +12,7 @@ from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
-    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamMembership,
+    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamFormSession, TeamMembership,
     PhaseRoster, ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
     MssvLinkAudit,
 )
@@ -214,10 +214,13 @@ def _submission_limits(config: dict | None) -> dict:
         "max_submissions": limits["maxSubmissions"],
         "close_on_correct": limits["closeOnCorrect"],
         "manual_closed": limits["manualClosed"],
+        "opens_at": limits.get("opensAt", ""),
+        "closes_at": limits.get("closesAt", ""),
+        "duration_minutes": limits.get("durationMinutes", 0),
     }
 
 
-def _form_closure_state(station: Station) -> dict:
+def _form_closure_state(station: Station, team: Team | None = None) -> dict:
     """Whether the station form stopped accepting submissions, and why."""
     limits = _submission_limits(station.submission_config)
     submitted = StationSubmission.objects.filter(
@@ -227,18 +230,59 @@ def _form_closure_state(station: Station) -> dict:
     submitted_count = submitted.count()
 
     reason = None
+    dynamic_closes_at = None
+    session_started_at = None
+
     if limits["manual_closed"]:
         reason = "manual"
     elif limits["max_submissions"] and submitted_count >= limits["max_submissions"]:
         reason = "limit_reached"
     elif limits["close_on_correct"] and submitted.filter(is_correct=True).exists():
         reason = "correct_answer"
+    else:
+        from django.utils.dateparse import parse_datetime
+        import datetime
+        now = timezone.now()
+        
+        if limits.get("opens_at"):
+            opens_at = parse_datetime(limits["opens_at"])
+            if opens_at:
+                if timezone.is_naive(opens_at):
+                    opens_at = timezone.make_aware(opens_at)
+                if now < opens_at:
+                    reason = "not_opened"
+
+        if limits.get("closes_at") and not reason:
+            closes_at = parse_datetime(limits["closes_at"])
+            if closes_at:
+                if timezone.is_naive(closes_at):
+                    closes_at = timezone.make_aware(closes_at)
+                dynamic_closes_at = closes_at
+                if now >= closes_at:
+                    reason = "time_closed"
+
+        if limits.get("duration_minutes") and team and not reason:
+            session = TeamFormSession.objects.filter(
+                team=team, station=station
+            ).order_by("-started_at").first()
+            if session:
+                session_started_at = session.started_at
+                session_closes_at = session.started_at + datetime.timedelta(minutes=limits["duration_minutes"])
+                if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
+                    dynamic_closes_at = session_closes_at
+                if now >= session_closes_at:
+                    reason = "time_closed"
+            else:
+                reason = "not_started"
 
     return {
         "closed": reason is not None,
         "reason": reason,
         "submitted_count": submitted_count,
         "max_submissions": limits["max_submissions"] or None,
+        "closes_at": dynamic_closes_at.isoformat() if dynamic_closes_at else None,
+        "started_at": session_started_at.isoformat() if session_started_at else None,
+        "duration_minutes": limits.get("duration_minutes", 0),
     }
 
 
@@ -263,7 +307,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "phase_key": phase.key,
         "phase_label": phase.label,
         "submission_config": public_submission_config(station.submission_config, drawn_items),
-        "closure": _form_closure_state(station),
+        "closure": _form_closure_state(station, team),
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
@@ -323,16 +367,27 @@ def _registration_phase_open() -> bool:
 
 
 def _team_edits_allowed(team: Team | None) -> bool:
-    """Editing a team belongs to registration, with one deliberate exception.
+    """Editing a team belongs to registration, with two deliberate exceptions.
 
     Rejecting a team *is* an admin asking for changes, so that request has to
     stay actionable after registration closes — otherwise the note ("thiếu ảnh
     chuyển khoản") arrives with no way to act on it, and the captain has to find
     an organiser in person. Creating a brand new team stays registration-only.
+
+    Approved teams that haven't locked their roster yet (merged teams after
+    captain election) must also be editable so the captain can name the team
+    and lock the roster.
     """
     if _registration_phase_open():
         return True
-    return team is not None and team.approval_status == Team.APPROVAL_REJECTED
+    if team is None:
+        return False
+    if team.approval_status == Team.APPROVAL_REJECTED:
+        return True
+    # Merged teams: approved but roster not yet locked → allow naming + lock.
+    if team.approval_status == Team.APPROVAL_APPROVED and not team.roster_locked_at and _team_name_is_placeholder(team):
+        return True
+    return False
 
 
 def _registration_closed_response():
@@ -496,6 +551,11 @@ def my_team_view(request: HttpRequest):
             },
             "members": get_team_members(team, visibility="self", requester=acc),
             "editable": team_is_editable(team),
+            "naming_allowed": (
+                team.approval_status == Team.APPROVAL_APPROVED
+                and not team.roster_locked_at
+                and _team_name_is_placeholder(team)
+            ),
         })
 
     if request.method == "POST":
@@ -560,7 +620,10 @@ def my_team_view(request: HttpRequest):
 
         team = membership.team
         if not team_is_editable(team):
-            return JsonResponse({"error": "team_locked"}, status=409)
+            # Approved teams that haven't locked their roster yet may still
+            # rename and lock (merged teams need this after captain election).
+            if team.approval_status != Team.APPROVAL_APPROVED or team.roster_locked_at:
+                return JsonResponse({"error": "team_locked"}, status=409)
 
         data = _json_body(request)
         if data is None:
@@ -1054,6 +1117,7 @@ def my_team_stations_view(request: HttpRequest):
     current_event = get_current_sub_event()
 
     payload = {
+        "team_code": team.code,
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "stations": [],
@@ -1161,6 +1225,7 @@ def my_team_stations_view(request: HttpRequest):
             # the team open the station on its own.
             "checkin_policy": station.checkin_policy,
             "has_form": has_submission_items(station.submission_config),
+            "submission_brief": station.submission_config.get("brief", "") if isinstance(station.submission_config, dict) else "",
             # Only meaningful where `has_form` — whether submitting ends the visit.
             "checkout_after_submit": checkout_after_submit(station.submission_config),
             "capacity": {
@@ -1252,6 +1317,49 @@ def my_team_forms_view(request: HttpRequest):
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "accessible_forms": accessible_forms,
+        "server_now": timezone.now().isoformat(),
+    })
+
+
+@csrf_exempt
+def my_team_form_start_view(request: HttpRequest, station_id: int):
+    """POST to explicitly start the form session, locking in the start time."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        return JsonResponse({"error": "team_not_approved"}, status=403)
+
+    station = _team_form_station_or_none(team, station_id)
+    if not station:
+        return JsonResponse({"error": "form_not_found"}, status=404)
+
+    closure = _form_closure_state(station, team)
+    if closure["closed"]:
+        return JsonResponse({"error": "form_closed"}, status=403)
+
+    session, created = TeamFormSession.objects.get_or_create(
+        team=team, station=station,
+        defaults={"started_by": acc},
+    )
+
+    return JsonResponse({
+        "status": "started",
+        "started_at": session.started_at.isoformat(),
+        "server_now": timezone.now().isoformat(),
     })
 
 
@@ -1303,7 +1411,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if current_event and station.sub_event_id != current_event.id:
         return JsonResponse({"error": "event_not_found"}, status=404)
 
-    closure = _form_closure_state(station)
+    closure = _form_closure_state(station, team)
     if closure["closed"]:
         return JsonResponse({
             "error": "form_closed",
@@ -1556,6 +1664,7 @@ def my_team_captain_vote_view(request: HttpRequest):
         "i_have_voted": CaptainVote.objects.filter(team=team, voter=me).exists(),
         "votes_cast": result["votes_cast"],
         "member_count": result["member_count"],
+        "threshold": result.get("threshold", 0),
         "candidates": [
             {
                 "mssv": m.participant.mssv,
@@ -1658,4 +1767,5 @@ def my_team_station_state_view(request: HttpRequest):
             "submitted_at": stamp(submission["submitted_at"]),
         } if submission else None,
         "qr": qr,
+        "server_now": timezone.now().isoformat(),
     })

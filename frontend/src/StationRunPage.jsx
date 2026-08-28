@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
+import { MarkdownBlock, InvisibleWatermark, TrapPattern } from './FormResponses.jsx'
 
 const POLL_MS = 2000
 const EXIT_LOCK_MS = 10000
@@ -36,7 +37,7 @@ const COLORS = {
   clay: '#D6492B',
 }
 
-const STATION_CARD = 'rounded-xl border border-[#DCD8CC] bg-white shadow-[0_1px_3px_rgba(32,49,43,0.05)]'
+const STATION_CARD = 'relative rounded-xl border border-[#DCD8CC] bg-white shadow-[0_1px_3px_rgba(32,49,43,0.05)]'
 const PRIMARY_BUTTON = 'inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl bg-[#20312B] px-5 py-3 text-base font-semibold text-white transition hover:bg-[#20312B]/85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
 const SECONDARY_BUTTON = 'inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl border border-[#DCD8CC] bg-white px-5 py-3 text-base font-semibold text-[#20312B]/70 transition hover:bg-[#F3F4F1] hover:text-[#20312B] disabled:cursor-not-allowed disabled:opacity-45'
 const TRAIL_BUTTON = 'inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl bg-[#1F7A6B] px-5 py-3 text-base font-semibold text-white transition hover:brightness-95 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45'
@@ -155,6 +156,11 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
   // Luật chơi lại chặn NGAY TỪ LÚC quét (server sẽ trả 409), nhưng cờ này đã có
   // sẵn trong `/my-team/stations` nên báo trước cho đội khỏi mất công quét hụt.
   if (station.replay_locked) return 'replay_locked'
+  if (station.checkin_policy === 'free_play') {
+    if (station.has_form && !hasSubmitted(state.submission)) return 'form'
+    return 'closed'
+  }
+
   return qrReady ? 'entry_qr' : 'entry_disabled'
 }
 
@@ -219,10 +225,36 @@ function StatusPanel({ tone = 'neutral', eyebrow, title, body, children }) {
  * component này cố tình không giữ state để không bao giờ vẽ lại mã đã bị xoay.
  */
 function QrBlock({ payload, teamCode, hint }) {
+  const [time, setTime] = useState(new Date())
+  
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
   return (
     <div className="flex flex-col items-center">
-      <div className="rounded-2xl border-2 border-[#20312B]/10 bg-white p-4 shadow-[0_2px_12px_rgba(32,49,43,0.10)]">
+      <div className="mb-3 flex items-center gap-2 rounded-full bg-[#D6492B]/10 px-3 py-1.5 font-mono text-sm font-semibold text-[#D6492B]">
+        <div className="h-2 w-2 animate-pulse rounded-full bg-[#D6492B]" />
+        {time.toLocaleTimeString('vi-VN', { hour12: false })}
+      </div>
+      <div className="relative overflow-hidden rounded-2xl border-2 border-[#20312B]/10 bg-white p-4 shadow-[0_2px_12px_rgba(32,49,43,0.10)]">
         <QRCodeSVG value={payload} size={280} level="M" className="h-auto w-full max-w-[280px]" />
+        
+        {/* Anti-screenshot scanner line */}
+        <div 
+          className="absolute left-0 top-0 h-1 w-full bg-[#1F7A6B]/50 shadow-[0_0_8px_2px_rgba(31,122,107,0.4)]"
+          style={{
+            animation: 'scan 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite',
+          }}
+        />
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes scan {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(310px); }
+            100% { transform: translateY(0); }
+          }
+        `}} />
       </div>
       {teamCode && (
         <span className="mt-4 inline-flex rounded-full bg-[#1F7A6B]/12 px-4 py-1.5 font-mono text-base font-bold tracking-wider text-[#1F7A6B]">
@@ -481,6 +513,16 @@ function StationStageScreen({
         </p>
       )}
 
+      {station?.submission_brief && (
+        <div className={`${STATION_CARD} mt-4 overflow-hidden px-5 py-6 sm:px-7 sm:py-7`}>
+          <TrapPattern index={0} />
+          <div className="relative z-10">
+            <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Nhiệm vụ trạm</p>
+            <MarkdownBlock content={station.submission_brief} />
+          </div>
+        </div>
+      )}
+
       <ConnectionNote message={pollError} />
 
       {step === 'loading' && (
@@ -565,9 +607,11 @@ function StationStageScreen({
       {step === 'form' && (
         <StatusPanel
           tone="trail"
-          eyebrow="Bước 2"
-          title="Đã vào trạm — làm bài thôi"
-          body="CTV đã quét QR vào trạm. Mở phần thi của trạm này để làm và nộp bài."
+          eyebrow={station?.checkin_policy === 'free_play' ? "Phần thi" : "Bước 2"}
+          title="Làm bài tại trạm"
+          body={station?.checkin_policy === 'free_play'
+            ? "Mở phần thi của trạm này để làm và nộp bài."
+            : "CTV đã quét QR vào trạm. Mở phần thi của trạm này để làm và nộp bài."}
         >
           <button type="button" onClick={() => onOpenForm(stationId)} className={`w-full ${TRAIL_BUTTON}`}>
             <Icon name="doc" className="h-5 w-5" />
@@ -862,11 +906,19 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
 
   // Embedded inside the participant dashboard, the page chrome would stack a
   // second background and contour layer on top of the one already there.
-  if (embedded) return body
+  if (embedded) {
+    return (
+      <>
+        <InvisibleWatermark text={listPayload?.team_code} />
+        {body}
+      </>
+    )
+  }
 
   return (
     <div className="relative min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
       <Contours />
+      <InvisibleWatermark text={listPayload?.team_code} />
       {body}
     </div>
   )

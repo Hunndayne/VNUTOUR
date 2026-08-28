@@ -1,9 +1,7 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
-import { QRCodeSVG } from 'qrcode.react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import logoImage from './assets/vnutour-logo.png'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
-import StationRunPage from './StationRunPage.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
@@ -135,6 +133,7 @@ function normalizeTeam(teamPayload, teamDetail = null) {
     max_members: teamDetail?.max_members ?? teamPayload?.team?.max_members,
     roster_size_final: Boolean(teamDetail?.roster_size_final ?? teamPayload?.team?.roster_size_final),
     can_name: Boolean(teamDetail?.can_name ?? teamPayload?.team?.can_name),
+    naming_allowed: Boolean(teamPayload?.naming_allowed),
   }
 }
 
@@ -740,7 +739,7 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
 // roster they confirmed.
 function PaymentConfirmModal({
   open, teamName, members, maxMembers, paymentInfo, paymentLoading,
-  busy, error, onConfirm, onClose,
+  busy, error, onConfirm, onClose, skipPayment,
 }) {
   useEffect(() => {
     if (!open) return undefined
@@ -775,7 +774,7 @@ function PaymentConfirmModal({
       >
         <div className="flex items-start justify-between border-b border-[#DCD8CC] bg-white px-5 py-4 sm:px-6">
           <div>
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Thanh toán</p>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">{skipPayment ? 'Xác nhận' : 'Thanh toán'}</p>
             <h2 id="payment-confirm-title" className="mt-1 font-display text-xl font-bold text-ink">
               Xác nhận thông tin đội
             </h2>
@@ -811,23 +810,27 @@ function PaymentConfirmModal({
             </ul>
           </div>
 
-          <div className="rounded-lg border border-[#DCD8CC] bg-white px-4 py-3">
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Số tiền cần chuyển</p>
-            {paymentLoading ? (
-              <p className="mt-1 text-sm text-ink/45">Đang tính số tiền theo số thành viên...</p>
-            ) : paymentInfo ? (
-              <p className="mt-1 text-sm leading-7 text-ink">
-                {paymentInfo.member_count} người × {formatVnd(paymentInfo.fee_per_person)} ={' '}
-                <span className="font-display text-lg font-bold text-ink">{formatVnd(paymentInfo.amount)}</span>
-              </p>
-            ) : (
-              <p className="mt-1 text-sm text-ink/45">Số tiền sẽ hiển thị ở bước thanh toán.</p>
-            )}
-          </div>
+          {!skipPayment && (
+            <div className="rounded-lg border border-[#DCD8CC] bg-white px-4 py-3">
+              <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Số tiền cần chuyển</p>
+              {paymentLoading ? (
+                <p className="mt-1 text-sm text-ink/45">Đang tính số tiền theo số thành viên...</p>
+              ) : paymentInfo ? (
+                <p className="mt-1 text-sm leading-7 text-ink">
+                  {paymentInfo.member_count} người × {formatVnd(paymentInfo.fee_per_person)} ={' '}
+                  <span className="font-display text-lg font-bold text-ink">{formatVnd(paymentInfo.amount)}</span>
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-ink/45">Số tiền sẽ hiển thị ở bước thanh toán.</p>
+              )}
+            </div>
+          )}
 
           <div className="rounded-lg border border-[#E0A23A]/40 bg-[#E0A23A]/10 px-4 py-3 text-sm leading-6 text-[#9A6B12]">
-            Xác nhận sẽ <span className="font-semibold">khóa danh sách thành viên và tên đội</span> để
-            số tiền chuyển khoản không bị chênh lệch. Nếu cần thay đổi sau này, hãy liên hệ BTC.
+            {skipPayment
+              ? 'Xác nhận sẽ khóa tên đội và danh sách thành viên. Nếu cần thay đổi sau này, hãy liên hệ BTC.'
+              : <>Xác nhận sẽ <span className="font-semibold">khóa danh sách thành viên và tên đội</span> để
+                số tiền chuyển khoản không bị chênh lệch. Nếu cần thay đổi sau này, hãy liên hệ BTC.</>}
           </div>
 
           {error && (
@@ -843,7 +846,7 @@ function PaymentConfirmModal({
           </button>
           <button type="submit" disabled={busy} className={PRIMARY_BUTTON}>
             <Icon name="checkPlain" className="h-4 w-4" />
-            {busy ? 'Đang xác nhận...' : 'Xác nhận & thanh toán'}
+            {busy ? 'Đang xác nhận...' : skipPayment ? 'Xác nhận thông tin đội' : 'Xác nhận & thanh toán'}
           </button>
         </div>
       </form>
@@ -962,40 +965,6 @@ function OpenFormsCard({ forms }) {
   )
 }
 
-function TeamCheckinQrCard({ qrInfo, teamName }) {
-  const enabled = Boolean(qrInfo?.enabled && qrInfo?.qr_payload)
-  return (
-    <div className={`${PARTICIPANT_CARD} overflow-hidden`}>
-      <div className="grid gap-0 sm:grid-cols-[auto_1fr]">
-        <div className="flex items-center justify-center border-b border-[#DCD8CC] bg-white p-5 sm:border-b-0 sm:border-r">
-          {enabled ? (
-            <div className="rounded-xl border border-[#DCD8CC] bg-white p-3">
-              <QRCodeSVG value={qrInfo.qr_payload} size={172} level="M" />
-            </div>
-          ) : (
-            <div className="flex h-[196px] w-[196px] items-center justify-center rounded-xl border border-dashed border-[#DCD8CC] bg-[#F3F4F1] px-4 text-center text-xs text-ink/40">
-              BTC chưa mở điểm danh
-            </div>
-          )}
-        </div>
-        <div className="p-5">
-          <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">QR điểm danh</p>
-          <h2 className="mt-1 font-display text-xl font-bold text-ink">{teamName || 'Đội của bạn'}</h2>
-          <p className="mt-2 text-sm leading-6 text-ink/55">
-            {enabled
-              ? 'Đưa QR này cho cộng tác viên quét khi check-in sự kiện và tại mỗi trạm. Một QR dùng cho mọi trạm trong phase hiện tại.'
-              : 'Khi BTC mở điểm danh cho phase của đội, mã QR sẽ hiện ở đây. QR được làm mới mỗi lần BTC mở để chống gian lận.'}
-          </p>
-          {enabled && qrInfo.team_code && (
-            <span className="mt-3 inline-flex rounded-full bg-[#1F7A6B]/12 px-3 py-1 font-mono text-xs font-semibold text-[#1F7A6B]">
-              {qrInfo.team_code}
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // The ballot is a side call: a team that was never merged has no election to
 // show, and a failure here must not blank the dashboard the way the old
@@ -1036,7 +1005,8 @@ function CaptainVoteCard({ vote, myMssv, selected, onSelect, onVote, busy }) {
         </div>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/55">
           Đội của bạn được BTC ghép từ hai đội nên hiện chưa có đội trưởng. Cả đội cùng chọn một
-          người, và chỉ đội trưởng mới được đặt tên chính thức cho đội.
+          người — ai được <strong>{vote?.threshold || Math.ceil(memberCount * 3 / 5)}/{memberCount}</strong> phiếu
+          trở lên sẽ trở thành đội trưởng. Chỉ đội trưởng mới được đặt tên chính thức cho đội.
         </p>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/55">
           <span className="font-semibold text-ink">Phiếu của bạn là kín.</span> Hệ thống chỉ công bố
@@ -1501,7 +1471,6 @@ function ParticipantDashboard() {
   })
   const [registrationSchema, setRegistrationSchema] = useState(null)
   const [experience, setExperience] = useState(null)
-  const [qrInfo, setQrInfo] = useState(null)
   const [captainVote, setCaptainVote] = useState(null)
   const [voteChoice, setVoteChoice] = useState('')
   // The payment-confirm dialog: shows the roster + the amount it implies
@@ -1565,33 +1534,6 @@ function ParticipantDashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    if (team?.approval_status !== 'approved') {
-      setQrInfo(null)
-      return undefined
-    }
-    let cancelled = false
-    const loadQr = async () => {
-      try {
-        const payload = await apiRequest('/my-team/qr')
-        if (!cancelled) setQrInfo(payload)
-      } catch (error) {
-        if (cancelled) return
-        if (error?.status === 401) {
-          logoutAndRedirect('/')
-          return
-        }
-        setQrInfo({ enabled: false })
-      }
-    }
-    loadQr()
-    const timer = window.setInterval(loadQr, 15000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [team?.approval_status])
-
   const status = STATUS[team?.approval_status || 'draft']
   const provision = PROVISION[team?.provision_state || 'none']
   const registrationOpen = experience?.registration_open !== false
@@ -1614,7 +1556,8 @@ function ParticipantDashboard() {
   const captainMayRename = captainVote ? captainVote.can_rename_team !== false : true
   const rosterSizeFinal = Boolean(team?.roster_size_final)
   const teamIsFull = Boolean(team?.can_name)
-  const canRenameTeam = captainMayRename && teamIsFull
+  const canRenameTeam = captainMayRename && (teamIsFull || Boolean(team?.naming_allowed))
+  const isFullyApproved = team?.approval_status === 'approved' && !team?.naming_allowed
   // Rejecting a team is the organisers asking for changes, and that ask can
   // land after registration closes. The backend allows the edit in that case,
   // so the editor has to stay reachable — creating a team stays registration-only.
@@ -1766,8 +1709,9 @@ function ParticipantDashboard() {
 
   // The confirm dialog previews the exact amount the captain is about to be
   // billed, so fetch the same payload the payment step will show.
+  // Approved teams (e.g. merged teams) already paid individually — skip.
   useEffect(() => {
-    if (!confirmOpen) return undefined
+    if (!confirmOpen || team?.approval_status === 'approved') return undefined
     let cancelled = false
     setConfirmPaymentLoading(true)
     apiRequest('/my-team/payment')
@@ -1783,7 +1727,7 @@ function ParticipantDashboard() {
     return () => {
       cancelled = true
     }
-  }, [confirmOpen])
+  }, [confirmOpen, team?.approval_status])
 
   // A closed form should not keep showing a stale save error next time it opens.
   useEffect(() => {
@@ -1850,7 +1794,8 @@ function ParticipantDashboard() {
       // where a not-yet-saved name still reads as "team not named" and the
       // move to payment would be silently dropped.
       const params = new URLSearchParams(window.location.search)
-      params.set('step', 'payment')
+      const isApproved = team?.approval_status === 'approved'
+      params.set('step', isApproved ? 'approved' : 'payment')
       navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     })
   }
@@ -2110,9 +2055,6 @@ function ParticipantDashboard() {
           <SettingsPage />
         ) : (
           <>
-        {team?.approval_status === 'approved' && (
-          <TeamCheckinQrCard qrInfo={qrInfo} teamName={team.team_name} />
-        )}
         {captainVoteOpen && (
           <CaptainVoteCard
             vote={captainVote}
@@ -2123,7 +2065,7 @@ function ParticipantDashboard() {
             busy={busyAction === 'captain-vote'}
           />
         )}
-        {registrationOpen ? (
+        {registrationOpen && !isFullyApproved ? (
           <>
             <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
@@ -2174,22 +2116,37 @@ function ParticipantDashboard() {
                 })}
               />
             )}
-            {/* Once registration closes the screen is about running the course:
-                the stations, and the QR a coop scans. The old open-forms list is
-                folded into this — a station with a form is reached by checking
-                into it, not by a separate link. */}
-            {team ? <StationRunPage embedded /> : null}
+            {/* Once registration closes or the team is approved, they just need
+                to run the course. Stations are now a separate page. */}
+            {team && (
+              <div className={`${PARTICIPANT_CARD} px-5 py-6 sm:px-7`}>
+                <h2 className="font-display text-xl font-bold text-ink">Các trạm sự kiện</h2>
+                <p className="mt-2 text-sm leading-6 text-ink/65">
+                  Truy cập trang chạy trạm để xem bản đồ, quét mã QR check-in và làm bài tập tại các trạm.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/stations')}
+                  className={`mt-6 w-full sm:w-auto ${PRIMARY_BUTTON}`}
+                >
+                  Đến trang Trạm
+                  <Icon name="chevronR" className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </>
         )}
+
 
         {/* The Discord role and private channel only exist once the team is
             approved (provisioning is queued on approval), so the connect card is
             only useful — and only shown — after the team is approved. */}
         {team?.approval_status === 'approved' && <DiscordConnectCard />}
 
+        {!isFullyApproved && (
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
-            {registrationOpen ? (
+            {registrationOpen && !isFullyApproved ? (
               <>
                 {/* BƯỚC 1 — HỒ SƠ */}
                 {activeStep === 'profile' && (
@@ -2249,62 +2206,83 @@ function ParticipantDashboard() {
                         Lý do cần sửa: {team.approval_note}
                       </div>
                     )}
-                    <div className="mt-5">
-                      <Field
-                        label="Tên đội"
-                        value={teamNameDraft}
-                        disabled={!editable || !canRenameTeam}
-                        onChange={setTeamNameDraft}
-                        required
-                      />
-                      {!canRenameTeam ? (
-                        <p className="mt-1 text-xs leading-5 text-ink/45">{teamNameHint}</p>
-                      ) : captainShouldNameTeam ? (
-                        <p className="mt-1 text-xs leading-5 text-[#9A6B12]">
-                          Đội vừa bầu xong và vẫn đang lấy mã đội làm tên. Bạn là đội trưởng — hãy đặt
-                          tên chính thức cho đội.
-                        </p>
-                      ) : null}
-                    </div>
-                    {editable && canRenameTeam && teamNameDraft.trim() && teamNameDraft !== team.team_name && (
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => withBusy('save-team-name', saveTeamNameIfNeeded)}
-                          disabled={Boolean(busyAction)}
-                          className={SECONDARY_BUTTON}
-                        >
-                          <Icon name="checkPlain" className="h-4 w-4" />
-                          Lưu tên đội
-                        </button>
-                      </div>
+                    {isTeamNamed(team) && (rosterLocked || (team.approval_status === 'approved' && !team.naming_allowed)) ? (
+                      <>
+                        <div className="mt-5">
+                          <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Tên đội</p>
+                          <p className="mt-1 font-display text-lg font-bold text-ink">{team.team_name}</p>
+                          <p className="mt-2 text-xs leading-5 text-ink/45">
+                            Tên đội đã được đặt. Nếu cần thay đổi, hãy liên hệ BTC.
+                          </p>
+                        </div>
+                        <div className="mt-5">
+                          <StepNav
+                            onBack={() => gotoStep('members')}
+                            onNext={() => gotoStep(team.approval_status === 'approved' ? 'approved' : 'payment')}
+                            nextLabel="Tiếp tục"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mt-5">
+                          <Field
+                            label="Tên đội"
+                            value={teamNameDraft}
+                            disabled={(!editable && !team?.naming_allowed) || !canRenameTeam}
+                            onChange={setTeamNameDraft}
+                            required
+                          />
+                          {!canRenameTeam ? (
+                            <p className="mt-1 text-xs leading-5 text-ink/45">{teamNameHint}</p>
+                          ) : captainShouldNameTeam ? (
+                            <p className="mt-1 text-xs leading-5 text-[#9A6B12]">
+                              Đội vừa bầu xong và vẫn đang lấy mã đội làm tên. Bạn là đội trưởng — hãy đặt
+                              tên chính thức cho đội.
+                            </p>
+                          ) : null}
+                        </div>
+                        {(editable || team?.naming_allowed) && canRenameTeam && teamNameDraft.trim() && teamNameDraft !== team.team_name && (
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => withBusy('save-team-name', saveTeamNameIfNeeded)}
+                              disabled={Boolean(busyAction)}
+                              className={SECONDARY_BUTTON}
+                            >
+                              <Icon name="checkPlain" className="h-4 w-4" />
+                              Lưu tên đội
+                            </button>
+                          </div>
+                        )}
+                        <div className="mt-5">
+                          <StepNav
+                            onBack={() => gotoStep('members')}
+                            onNext={openPaymentConfirm}
+                            nextLabel="Xác nhận & tiếp tục"
+                            // A team that already paid (legacy flow) must not get
+                            // stuck here just because size/name doesn't line up —
+                            // advancing stays open then.
+                            nextDisabled={
+                              Boolean(busyAction)
+                              || (!stepUnlocked('payment') && (
+                                  !rosterSizeFinal
+                                  || ((teamIsFull || team?.naming_allowed) && !teamNameDraft.trim())
+                              ))
+                            }
+                            hint={
+                              stepUnlocked('payment')
+                                ? undefined
+                                : !rosterSizeFinal
+                                  ? `Đội cần đủ ${maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới sang được bước Thanh toán.`
+                                  : ((teamIsFull || team?.naming_allowed) && !teamNameDraft.trim())
+                                    ? 'Nhập tên đội để sang bước Thanh toán.'
+                                    : undefined
+                            }
+                          />
+                        </div>
+                      </>
                     )}
-                    <div className="mt-5">
-                      <StepNav
-                        onBack={() => gotoStep('members')}
-                        onNext={openPaymentConfirm}
-                        nextLabel="Xác nhận & tiếp tục"
-                        // A team that already paid (legacy flow) must not get
-                        // stuck here just because size/name doesn't line up —
-                        // advancing stays open then.
-                        nextDisabled={
-                          Boolean(busyAction)
-                          || (!stepUnlocked('payment') && (
-                              !rosterSizeFinal
-                              || (teamIsFull && !teamNameDraft.trim())
-                          ))
-                        }
-                        hint={
-                          stepUnlocked('payment')
-                            ? undefined
-                            : !rosterSizeFinal
-                              ? `Đội cần đủ ${maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới sang được bước Thanh toán.`
-                              : (teamIsFull && !teamNameDraft.trim())
-                                ? 'Nhập tên đội để sang bước Thanh toán.'
-                                : undefined
-                        }
-                      />
-                    </div>
                   </div>
                 )}
 
@@ -2408,7 +2386,7 @@ function ParticipantDashboard() {
                   </div>
                 )}
               </>
-            ) : teamEditingOpen && team ? (
+            ) : teamEditingOpen && team && !isFullyApproved ? (
               <>
               <PaymentSection team={team} editable={editable} isCaptain={amCaptain} onProofChange={loadDashboard} />
               <div id="team-editor" className={`${PARTICIPANT_CARD} p-5`}>
@@ -2433,7 +2411,7 @@ function ParticipantDashboard() {
                   <Field
                     label="Tên đội"
                     value={teamNameDraft}
-                    disabled={!editable || !canRenameTeam}
+                    disabled={(!editable && !team?.naming_allowed) || !canRenameTeam}
                     onChange={setTeamNameDraft}
                     required
                   />
@@ -2720,6 +2698,7 @@ function ParticipantDashboard() {
             </div>
           </aside>
         </section>
+        )}
           </>
         )}
       </main>
@@ -2747,6 +2726,7 @@ function ParticipantDashboard() {
         error={apiError}
         onConfirm={confirmTeamForPayment}
         onClose={() => setConfirmOpen(false)}
+        skipPayment={team?.approval_status === 'approved'}
       />
     </div>
   )
