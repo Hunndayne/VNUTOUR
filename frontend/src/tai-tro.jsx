@@ -7,7 +7,7 @@ import React from "react";
 import universityLogo from "./assets/organizer-university.webp";
 import youthUnionLogo from "./assets/organizer-youth-union.webp";
 import facultyLogo from "./assets/organizer-faculty.webp";
-
+import SiteHeader from "./SiteHeader.jsx";
 /* ==========================================================================
    DỮ LIỆU — theo Hồ sơ tài trợ VNU Tour 2026
    ========================================================================== */
@@ -229,6 +229,7 @@ function BenefitCell({ benefit, tierId }) {
 export default function TaiTro() {
   return (
     <main className="min-h-[100dvh] bg-white font-display text-[#0c1d33]">
+      <SiteHeader />
       {/* ===== HERO ===== */}
       <section className="relative overflow-hidden bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF] px-5 pb-32 pt-20 text-center md:pb-40 md:pt-28 xl:pb-44 xl:pt-36">
         <div className="mx-auto w-full max-w-[1400px]">
