@@ -201,6 +201,8 @@ function createSubmissionLimits(limits = {}) {
     maxSubmissions: Math.max(0, Number(limits.maxSubmissions) || 0),
     closeOnCorrect: limits.closeOnCorrect ?? false,
     manualClosed: limits.manualClosed ?? false,
+    opensAt: limits.opensAt ?? '',
+    closesAt: limits.closesAt ?? '',
   }
 }
 
@@ -2048,6 +2050,26 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
         <SectionTitle title="Giới hạn nộp bài" />
         <div className="grid gap-3">
           <div>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Thời gian mở form (Tùy chọn)
+            </label>
+            <input
+              type="datetime-local"
+              value={form.submission.limits.opensAt}
+              onChange={event => updateLimits('opensAt', event.target.value)}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-3"
+            />
+            
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Thời gian đóng form (Tùy chọn)
+            </label>
+            <input
+              type="datetime-local"
+              value={form.submission.limits.closesAt}
+              onChange={event => updateLimits('closesAt', event.target.value)}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
+            />
+
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
               Số đội nộp tối đa (0 = không giới hạn)
             </label>
