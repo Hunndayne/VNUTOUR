@@ -5,15 +5,7 @@ import universityLogo from './assets/organizer-university.webp'
 import youthUnionLogo from './assets/organizer-youth-union.webp'
 import facultyLogo from './assets/organizer-faculty.webp'
 import vnu2025 from './assets/vnutour-hero.jpg'
-
-const navigationItems = [
-  { label: 'HOME', href: '#home' },
-  { label: 'ABOUT US', href: '#about' },
-  { label: 'TOUR', href: '#tour' },
-  { label: 'PRICING', href: '#pricing' },
-  { label: 'FAQ', href: '#faq' },
-  { label: 'FRAME', href: '/frame' },
-]
+import SiteHeader, { NavLinks } from './SiteHeader.jsx'
 
 const organizerLogos = [
   { src: universityLogo, alt: 'Trường Đại học Công nghệ Thông tin' },
@@ -72,24 +64,20 @@ const prizeItems = [
 
 const faqItems = [
   {
-    question: 'Tham gia VNUTour, thí sinh sẽ được trải nghiệm những gì?',
-    answer: 'Các bạn tân sinh viên sẽ khám phá các địa điểm nổi bật tại ĐHQG-HCM, cùng vượt trạm thử thách với đồng đội tại các trường đại học trên địa bàn. Tại chương trình, các bạn sẽ có cơ hội nối với các bạn mới và cùng thử tài thi đấu để nhận những phần thưởng hấp dẫn đến từ chương trình.',
+    question: 'VNU Tour là gì mà hot thế nhờ?',
+    answer: 'VNU Tour là “chiếc” tour siêu thực tế, xịn sò giúp các bạn tân sinh viên tham quan và khám phá các trường Đại học thuộc khu đô thị ĐHQG-HCM. Giúp các bạn Tân Sinh Viên thoát cảnh bỡ ngỡ và kết thêm nhiều bạn mới qua những thử thách tình bạn siêu thú vị',
   },
   {
-    question: 'Em không quen ai cả, có nên tham gia không?',
-    answer: 'Có. Bạn có thể đăng ký cá nhân và BTC sẽ ghép các bạn thành đội 5 người. Đây cũng là cơ hội để làm quen với những người bạn mới.',
+    question: 'Tham gia VNU Tour, các bạn Tân Sinh Viên sẽ hời sẽ được những gì?',
+    answer: 'Các út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
   },
   {
-    question: 'Chương trình có yêu cầu thể lực nhiều không?',
-    answer: 'Không. Các thử thách có mức vận động vừa phải, tập trung vào phối hợp, quan sát và tinh thần đồng đội, phù hợp với đa số sinh viên.',
+    question: 'BTC ơi! Nếu một thành viên vắng mặt, cả đội còn được tham gia không?',
+    answer: 'Thấu hiểu được nỗi lòng của các đôi chơi khi trong team không may có bạn vướng lịch, BTC vẫn sẽ tạo điều kiện để đội chơi vẫn có thể tiếp tục chuyến "hải trình" cùng các thành viên còn lại, nhưng để hành trình được trọn vẹn nhất. Các út iu hãy liên hệ ngay với BTC để được thông báo hoặc thay đổi thành viên trong trường hợp bất khả kháng nhé.',
   },
   {
-    question: 'Nếu một thành viên vắng mặt, đội có được tham gia không?',
-    answer: 'Có. Đội vẫn được tham gia với số thành viên còn lại, nhưng việc thiếu người có thể khiến một số thử thách khó hoàn thành hơn.',
-  },
-  {
-    question: 'Em cần chuẩn bị gì khi tham gia?',
-    answer: 'Hãy ăn sáng đầy đủ, mặc trang phục thoải mái, mang nước uống cá nhân và chuẩn bị tinh thần sẵn sàng phối hợp cùng đồng đội.',
+    question: 'Nếu em chỉ có một mình thì có thể tham gia VNU Tour không nhỉ?',
+    answer: 'Các út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
   },
 ]
 
@@ -143,72 +131,6 @@ function Reveal({ as = 'div', children, className = '', delay = 0, direction = '
   )
 }
 
-function NavLinks({ className = '', onDark = false }) {
-  return (
-    <nav
-      aria-label="Điều hướng landing page"
-      className={`items-center gap-7 text-xs font-bold uppercase tracking-[0.08em] ${onDark ? 'text-[#0c1d33]' : 'text-[#0c1d33]'} ${className}`}
-    >
-      {navigationItems.map(item => (
-        <a
-          key={item.label}
-          href={item.href}
-          className="landing-focus whitespace-nowrap transition-opacity duration-200 hover:opacity-60"
-        >
-          {item.label}
-        </a>
-      ))}
-    </nav>
-  )
-}
-
-function Header() {
-  return (
-    <header className="relative z-20 mx-3 mt-4 flex h-20 w-[calc(100%-1.5rem)] items-center justify-between rounded-2xl border border-white/75 bg-white/65 px-3 shadow-[0_12px_35px_rgba(12,29,51,0.08)] backdrop-blur-md md:mx-6 md:w-[calc(100%-3rem)] md:px-4 xl:mx-auto xl:w-full xl:max-w-[1400px]">
-<a
-  href="#home"
-  aria-label="VNUTour home"
-  className="
-    landing-focus
-    flex
-    h-16
-    w-16
-    shrink-0
-    items-center
-    justify-center
-    transition-transform
-    duration-200
-    hover:-translate-y-0.5
-  "
->
-  <img
-    src={logoImage}
-    alt="VNUTour"
-    className="h-full w-full object-contain"
-  />
-</a>
-
-      <div className="flex items-center gap-4 lg:gap-7">
-        <NavLinks className="hidden md:flex" />
-
-        <a
-          href="/login"
-          className="landing-focus landing-login-button inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded-full border-2 border-[#00B6F1] bg-white/85 px-4 text-xs font-bold uppercase tracking-[0.06em] text-[#00B6F1] transition-all duration-200 active:translate-y-px hover:bg-[#00B6F1] hover:text-white sm:px-5"
-        >
-          Đăng nhập
-        </a>
-
-        <details className="group relative md:hidden">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center rounded-full border-2 border-[#1478D4] bg-[#1478D4] px-4 text-xs font-bold uppercase tracking-[0.06em] text-white shadow-[0_5px_14px_rgba(20,120,212,0.2)] transition-colors duration-200 hover:bg-[#0c1d33] [&::-webkit-details-marker]:hidden">
-            Menu
-          </summary>
-          <NavLinks className="landing-mobile-menu absolute right-0 top-14 flex min-w-44 flex-col items-start gap-0 overflow-hidden border bg-white shadow-[0_18px_60px_rgba(4,18,31,0.15)] [&_a]:w-full [&_a]:px-5 [&_a]:py-4" />
-        </details>
-      </div>
-    </header>
-  )
-}
-
 function LandingPage() {
   const [isCtaPopping, setIsCtaPopping] = useState(false)
 
@@ -231,7 +153,7 @@ function LandingPage() {
           fetchPriority="high"
         />
 
-<Header />
+<SiteHeader />
 
 <div className="relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] w-full max-w-[1400px] content-start items-start gap-2 px-5 pb-12 pt-4 md:px-8 lg:grid-cols-[minmax(240px,1fr)_minmax(0,880px)] lg:content-normal lg:items-center lg:gap-12 lg:pb-16 lg:pt-8 xl:px-0">
 
@@ -488,45 +410,6 @@ function LandingPage() {
       />
     </Reveal>
   </div>
-</section>
-      <section id="sponsors" className="bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF]">
-        <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
-          <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-end lg:gap-20">
-            <Reveal>
-              <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
-              <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
-                Nhà tài trợ
-              </h2>
-            </Reveal>
-
-            <Reveal delay={100}>
-              <p className="text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
-                Chưa công bố
-              </p>
-              <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
-                Trở thành nhà tài trợ của chương trình
-              </h3>
-              <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
-                Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
-              </p>
-              <a
-                href="mailto:vnutour@suctremmt.com"
-                className="landing-focus mt-7 inline-flex border-b border-[#1478D4] pb-1 text-base font-bold text-[#1478D4] transition-opacity duration-200 hover:opacity-75"
-              >
-                vnutour@suctremmt.com
-              </a>
-            </Reveal>
-          </div>
-        </div>
-      </section>
-
-      <section id="pricing" className="mx-auto w-full max-w-[1400px] bg-gradient-to-b from-[#E8F8FF] to-white px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
-        <Reveal>
-          <h2 className="max-w-[900px] text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
-            Giá trị giải thưởng
-          </h2>
-        </Reveal>
-
         <div className="landing-accent-grid mt-14 grid gap-px lg:grid-cols-[1.15fr_0.85fr]">
           {prizeHighlights.map((item, index) => (
             <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
