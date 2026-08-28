@@ -819,7 +819,7 @@ function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
       >
         <FormCountdown 
           opensAt={submissionConfig.limits?.opensAt} 
-          closesAt={submissionConfig.limits?.closesAt}
+          closesAt={closure?.closes_at || submissionConfig.limits?.closesAt}
           serverTimeOffset={serverTimeOffset}
           onStateChange={setTimeStatus}
         />

@@ -216,10 +216,11 @@ def _submission_limits(config: dict | None) -> dict:
         "manual_closed": limits["manualClosed"],
         "opens_at": limits.get("opensAt", ""),
         "closes_at": limits.get("closesAt", ""),
+        "duration_minutes": limits.get("durationMinutes", 0),
     }
 
 
-def _form_closure_state(station: Station) -> dict:
+def _form_closure_state(station: Station, team: Team | None = None) -> dict:
     """Whether the station form stopped accepting submissions, and why."""
     limits = _submission_limits(station.submission_config)
     submitted = StationSubmission.objects.filter(
@@ -237,7 +238,9 @@ def _form_closure_state(station: Station) -> dict:
         reason = "correct_answer"
     else:
         from django.utils.dateparse import parse_datetime
+        import datetime
         now = timezone.now()
+        dynamic_closes_at = None
         
         if limits.get("opens_at"):
             opens_at = parse_datetime(limits["opens_at"])
@@ -252,14 +255,29 @@ def _form_closure_state(station: Station) -> dict:
             if closes_at:
                 if timezone.is_naive(closes_at):
                     closes_at = timezone.make_aware(closes_at)
+                dynamic_closes_at = closes_at
                 if now >= closes_at:
                     reason = "time_closed"
+
+        if limits.get("duration_minutes") and team and not reason:
+            session = StationSession.objects.filter(
+                team=team, station=station, status=StationSession.STATUS_ACTIVE
+            ).order_by("-entered_at").first()
+            if session:
+                session_closes_at = session.entered_at + datetime.timedelta(minutes=limits["duration_minutes"])
+                if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
+                    dynamic_closes_at = session_closes_at
+                if now >= session_closes_at:
+                    reason = "time_closed"
+            else:
+                reason = "not_opened" # Needs a session to start the timer
 
     return {
         "closed": reason is not None,
         "reason": reason,
         "submitted_count": submitted_count,
         "max_submissions": limits["max_submissions"] or None,
+        "closes_at": dynamic_closes_at.isoformat() if locals().get("dynamic_closes_at") else None,
     }
 
 
@@ -284,7 +302,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "phase_key": phase.key,
         "phase_label": phase.label,
         "submission_config": public_submission_config(station.submission_config, drawn_items),
-        "closure": _form_closure_state(station),
+        "closure": _form_closure_state(station, team),
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
@@ -1346,7 +1364,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if current_event and station.sub_event_id != current_event.id:
         return JsonResponse({"error": "event_not_found"}, status=404)
 
-    closure = _form_closure_state(station)
+    closure = _form_closure_state(station, team)
     if closure["closed"]:
         return JsonResponse({
             "error": "form_closed",

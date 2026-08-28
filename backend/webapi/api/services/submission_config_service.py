@@ -154,12 +154,19 @@ def _limits(config: dict) -> dict:
         max_submissions = max(0, int(limits.get("maxSubmissions") or 0))
     except (TypeError, ValueError):
         max_submissions = 0
+        
+    try:
+        duration_minutes = max(0, int(limits.get("durationMinutes") or 0))
+    except (TypeError, ValueError):
+        duration_minutes = 0
+
     return {
         "maxSubmissions": max_submissions,
         "closeOnCorrect": bool(limits.get("closeOnCorrect")),
         "manualClosed": bool(limits.get("manualClosed")),
         "opensAt": _clean_str(limits.get("opensAt")),
         "closesAt": _clean_str(limits.get("closesAt")),
+        "durationMinutes": duration_minutes,
     }
 
 
