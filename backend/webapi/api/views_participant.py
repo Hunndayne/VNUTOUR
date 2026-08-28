@@ -1348,7 +1348,7 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
         return JsonResponse({"error": "form_not_found"}, status=404)
 
     closure = _form_closure_state(station, team)
-    if closure["closed"]:
+    if closure["closed"] and closure.get("reason") != "not_started":
         return JsonResponse({"error": "form_closed"}, status=403)
 
     session, created = TeamFormSession.objects.get_or_create(
@@ -1769,3 +1769,5 @@ def my_team_station_state_view(request: HttpRequest):
         "qr": qr,
         "server_now": timezone.now().isoformat(),
     })
+
+
