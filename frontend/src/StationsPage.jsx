@@ -231,6 +231,7 @@ function createSubmissionConfig(submission = {}) {
       autoScore: submission.quiz?.autoScore ?? false,
       // 0 = phát hết bộ đề; N > 0 = mỗi đội nhận N câu bốc ngẫu nhiên (cố định theo đội).
       randomCount: Math.max(0, Math.trunc(Number(submission.quiz?.randomCount)) || 0),
+      randomizeOptions: submission.quiz?.randomizeOptions ?? false,
     },
     limits: createSubmissionLimits(submission.limits),
     flow: {
@@ -2006,6 +2007,18 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
                 className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
               />
               Tự cộng điểm quiz vào điểm đội trong phase (leaderboard)
+            </label>
+            <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
+              <input
+                type="checkbox"
+                checked={form.submission.quiz.randomizeOptions}
+                onChange={event => updateSubmission(submission => ({
+                  ...submission,
+                  quiz: { ...submission.quiz, randomizeOptions: event.target.checked },
+                }))}
+                className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              />
+              Đảo ngẫu nhiên thứ tự các đáp án
             </label>
             <p className="mt-1 text-xs leading-5 text-ink/45">
               Tắt: điểm quiz chỉ hiển thị ở bài nộp để tham khảo khi chấm. Bật: mỗi lần đội nộp bài,

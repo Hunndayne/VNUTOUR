@@ -458,6 +458,39 @@ function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
   )
 }
 
+function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
+  const shuffledOptions = useMemo(() => {
+    const opts = (item.options || []).map((label, originalIndex) => ({ label, originalIndex }))
+    if (randomizeOptions) {
+      for (let i = opts.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[opts[i], opts[j]] = [opts[j], opts[i]]
+      }
+    }
+    return opts
+  }, [item.options, randomizeOptions])
+
+  return (
+    <FormFieldCard
+      index={index + 1}
+      label={item.question || `Cau hoi ${index + 1}`}
+      helper="Chon mot dap an"
+    >
+      <div className="grid gap-3">
+        {shuffledOptions.map((opt, displayIndex) => (
+          <QuizChoice
+            key={`${item.id}-${opt.originalIndex}`}
+            index={displayIndex}
+            label={opt.label || `Lua chon ${opt.originalIndex + 1}`}
+            active={answer === opt.originalIndex}
+            onClick={() => onAnswer(opt.originalIndex)}
+          />
+        ))}
+      </div>
+    </FormFieldCard>
+  )
+}
+
 // Everything that depends on the answers the user is typing, split out so the
 // parent can remount it with `key={selectedId}` on every form switch. That
 // remount is what makes useDraftState safe here — the hook only ever reads
@@ -843,24 +876,14 @@ function FormSubmissionPanel({ form, serverTimeOffset, onSubmitted }) {
         {submissionItems.map((item, index) => {
           if (item.type === 'quiz') {
             return (
-              <FormFieldCard
+              <QuizItemDisplay
                 key={item.id}
-                index={index + 1}
-                label={item.question || `Cau hoi ${index + 1}`}
-                helper="Chon mot dap an"
-              >
-                <div className="grid gap-3">
-                  {(item.options || []).map((option, optionIndex) => (
-                    <QuizChoice
-                      key={`${item.id}-${optionIndex}`}
-                      index={optionIndex}
-                      label={option || `Lua chon ${optionIndex + 1}`}
-                      active={answers[`quiz:${item.id}`] === optionIndex}
-                      onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
-                    />
-                  ))}
-                </div>
-              </FormFieldCard>
+                item={item}
+                index={index}
+                answer={answers[`quiz:${item.id}`]}
+                onAnswer={(val) => setAnswer(`quiz:${item.id}`, val)}
+                randomizeOptions={submissionConfig.quiz?.randomizeOptions}
+              />
             )
           }
 

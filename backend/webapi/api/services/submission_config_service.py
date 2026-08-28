@@ -211,6 +211,7 @@ def normalize_config(config: dict | None) -> dict:
         "quiz": {
             "autoScore": bool(quiz.get("autoScore")),
             "randomCount": random_count,
+            "randomizeOptions": bool(quiz.get("randomizeOptions")),
         },
         "limits": _limits(config),
         "flow": _flow(config),
