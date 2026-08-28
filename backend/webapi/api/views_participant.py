@@ -230,6 +230,9 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
     submitted_count = submitted.count()
 
     reason = None
+    dynamic_closes_at = None
+    session_started_at = None
+
     if limits["manual_closed"]:
         reason = "manual"
     elif limits["max_submissions"] and submitted_count >= limits["max_submissions"]:
@@ -240,8 +243,6 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
         from django.utils.dateparse import parse_datetime
         import datetime
         now = timezone.now()
-        dynamic_closes_at = None
-        session_started_at = None
         
         if limits.get("opens_at"):
             opens_at = parse_datetime(limits["opens_at"])
