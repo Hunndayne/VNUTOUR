@@ -258,7 +258,8 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
                 if timezone.is_naive(closes_at):
                     closes_at = timezone.make_aware(closes_at)
                 dynamic_closes_at = closes_at
-                if now >= closes_at:
+                # 15s grace period for auto-submission
+                if now >= closes_at + datetime.timedelta(seconds=15):
                     reason = "time_closed"
 
         if limits.get("duration_minutes") and team and not reason:
@@ -270,7 +271,8 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
                 session_closes_at = session.started_at + datetime.timedelta(minutes=limits["duration_minutes"])
                 if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
                     dynamic_closes_at = session_closes_at
-                if now >= session_closes_at:
+                # 15s grace period for auto-submission due to network latency
+                if now >= session_closes_at + datetime.timedelta(seconds=15):
                     reason = "time_closed"
             else:
                 reason = "not_started"
@@ -1348,7 +1350,7 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
         return JsonResponse({"error": "form_not_found"}, status=404)
 
     closure = _form_closure_state(station, team)
-    if closure["closed"]:
+    if closure["closed"] and closure.get("reason") != "not_started":
         return JsonResponse({"error": "form_closed"}, status=403)
 
     session, created = TeamFormSession.objects.get_or_create(
@@ -1769,3 +1771,5 @@ def my_team_station_state_view(request: HttpRequest):
         "qr": qr,
         "server_now": timezone.now().isoformat(),
     })
+
+

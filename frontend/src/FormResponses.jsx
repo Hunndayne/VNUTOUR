@@ -684,7 +684,17 @@ function FormSubmissionPanel({
     setAnswers((current) => ({ ...current, [key]: value }))
   }
 
-  const handleSubmit = async () => {
+  const handleSubmitRef = useRef(null)
+
+  useEffect(() => {
+    if (timeStatus === 'closed' && closure?.reason !== 'not_started' && !mySubmission && submitState !== 'success' && submitState !== 'submitting') {
+      if (handleSubmitRef.current) {
+        handleSubmitRef.current(true) // skip validation
+      }
+    }
+  }, [timeStatus, closure?.reason, mySubmission, submitState])
+
+  const handleSubmit = async (skipValidation = false) => {
     const missingRequiredField = activeFormFields.some((field) => {
       if (!field.required) return false
       return !String(answers[`form:${field.id}`] || '').trim()
@@ -693,7 +703,7 @@ function FormSubmissionPanel({
       if (item.required === false) return false
       return answers[`quiz:${item.id}`] === undefined
     })
-    if (missingRequiredField || missingQuizAnswer) {
+    if (!skipValidation && (missingRequiredField || missingQuizAnswer)) {
       setSubmitState('error')
       setSubmitMessage('Vui lòng hoàn tất các mục bắt buộc trước khi gửi.')
       return
@@ -796,6 +806,8 @@ function FormSubmissionPanel({
       setSubmitMessage(messageMap[code] || 'Không gửi được bài nộp. Vui lòng thử lại.')
     }
   }
+
+  handleSubmitRef.current = handleSubmit
 
   return (
     <>
@@ -1150,3 +1162,4 @@ export default function FormResponses() {
     </div>
   )
 }
+
