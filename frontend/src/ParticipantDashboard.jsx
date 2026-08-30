@@ -1378,7 +1378,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             <img
               src={info.qr_image_url}
               alt="VietQR"
-              className="h-auto w-56 rounded-lg border border-[#DCD8CC] bg-white"
+              className="h-auto w-full max-w-56 rounded-lg border border-[#DCD8CC] bg-white"
             />
             <button type="button" onClick={handleDownloadQr} className={SECONDARY_BUTTON}>
               <Icon name="doc" className="h-4 w-4" />
@@ -2096,7 +2096,7 @@ function ParticipantDashboard() {
           <>
             <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
-                <div className="px-5 py-6 sm:px-7">
+                <div className="min-w-0 px-5 py-6 sm:px-7">
                   <div className="flex flex-wrap items-center gap-2">
                     {team ? <Badge label={status.label} cls={status.cls} /> : <Badge label="Chưa có đội" cls="bg-[#20312B]/[0.07] text-[#20312B]/50" />}
                   </div>
@@ -2172,7 +2172,7 @@ function ParticipantDashboard() {
 
         {!isFullyApproved && (
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
-          <div className="space-y-5">
+          <div className="space-y-5 min-w-0">
             {registrationOpen && !isFullyApproved ? (
               <>
                 {/* BƯỚC 1 — HỒ SƠ */}
@@ -2686,7 +2686,7 @@ function ParticipantDashboard() {
             ) : null}
           </div>
 
-          <aside className="space-y-5">
+          <aside className="min-w-0 space-y-5">
             <div className={`${PARTICIPANT_CARD} p-5`}>
               <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Ngày thi</p>
               <h2 className="mt-1 font-display text-lg font-bold text-ink">Checklist nhanh</h2>
