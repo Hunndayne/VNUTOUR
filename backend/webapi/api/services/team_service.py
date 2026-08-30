@@ -483,7 +483,20 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
 
     participant = Participant.objects.filter(mssv=account.mssv).first()
     if not participant:
-        return None, None
+        # No Participant row exists yet — create one from the Account data so
+        # that school, faculty, etc. collected during signup are immediately
+        # available in the registration profile without waiting for the captain
+        # profile-save step.
+        participant = Participant.objects.create(
+            account=account,
+            mssv=account.mssv,
+            full_name=account.full_name or "",
+            email=account.email or "",
+            phone=account.phone or "",
+            school=account.school or "",
+            faculty=account.faculty or "",
+        )
+        return participant, "linked"
 
     # Already linked to this same account, but still keep account-owned fields
     # in sync because team membership views read from Participant.
