@@ -215,6 +215,10 @@ def normalize_config(config: dict | None) -> dict:
     return {
         "brief": _clean_str(config.get("brief")),
         "items": items,
+        "bank": {
+            "itemIds": config.get("bank", {}).get("itemIds", []),
+            "mixStationQuiz": bool(config.get("bank", {}).get("mixStationQuiz", False)),
+        },
         "quiz": {
             "autoScore": bool(quiz.get("autoScore")),
             "randomCount": random_count,
@@ -230,9 +234,36 @@ def checkout_after_submit(config: dict | None) -> bool:
     return normalize_config(config)["flow"]["checkoutAfterSubmit"]
 
 
-def submission_items(config: dict | None, item_type: str | None = None) -> list[dict]:
-    """Canonical items, optionally filtered to one type."""
+def submission_items(
+    config: dict | None,
+    item_type: str | None = None,
+    effective_quiz_items: list[dict] | None = None,
+) -> list[dict]:
+    """Canonical items, optionally filtered to one type, overriding quiz items if provided."""
     items = normalize_config(config)["items"]
+
+    if effective_quiz_items is not None:
+        # Merge in place so display order stays interleaved: each inline quiz
+        # slot is replaced by its effective counterpart (same id), and any
+        # bank-only questions (not backed by an inline item) are prepended —
+        # bank first, inline after, per the shared-question-bank plan.
+        effective_by_id = {
+            item["id"]: item for item in effective_quiz_items if isinstance(item, dict)
+        }
+        inline_quiz_ids = {item["id"] for item in items if item["type"] == TYPE_QUIZ}
+        bank_only = [
+            item for item in effective_quiz_items
+            if isinstance(item, dict) and item.get("id") not in inline_quiz_ids
+        ]
+
+        merged = list(bank_only)
+        for item in items:
+            if item["type"] == TYPE_QUIZ:
+                merged.append(effective_by_id.get(item["id"], item))
+            else:
+                merged.append(item)
+        items = merged
+
     if item_type is None:
         return items
     return [item for item in items if item["type"] == item_type]
@@ -254,23 +285,54 @@ def random_count(config: dict | None) -> int:
     return normalize_config(config)["quiz"]["randomCount"]
 
 
-def quiz_item_ids(config: dict | None) -> list[str]:
+def quiz_item_ids(
+    config: dict | None,
+    effective_quiz_items: list[dict] | None = None,
+) -> list[str]:
     """Ids of every quiz item in the bank, in display order."""
-    return [item["id"] for item in submission_items(config, TYPE_QUIZ)]
+    return [item["id"] for item in submission_items(config, TYPE_QUIZ, effective_quiz_items)]
 
 
-def draw_quiz_item_ids(config: dict | None, rng, keep: list[str] | None = None) -> list[str]:
-    """Pick the quiz ids to serve, reusing `keep` wherever it is still valid.
+def _full_serve_order(available: list[str], kept: list[str]) -> list[str]:
+    """Full-bank order that still remembers a prior partial draw.
 
-    `keep` is a team's earlier draw. Ids that no longer exist in the bank drop out;
-    the rest stay put so editing a typo never hands a team a different quiz. Only
-    the shortfall is drawn anew, and an oversized draw is trimmed from the end.
-    Returns ids in bank order, or [] when randomisation is off.
+    Returning `available` as-is when the target count no longer restricts
+    anything (0, or the pool shrank to it) would forget which questions a
+    team had already been served — so if `randomCount` is later raised back
+    up, trimming the stored list to the new, smaller target must recover the
+    original draw rather than an arbitrary prefix of the bank.
     """
-    available = quiz_item_ids(config)
+    if not kept:
+        return list(available)
+    kept_set = set(kept)
+    return kept + [item_id for item_id in available if item_id not in kept_set]
+
+
+def draw_quiz_item_ids(
+    config: dict | None,
+    rng,
+    keep: list[str] | None = None,
+    effective_quiz_items: list[dict] | None = None,
+    seen_bank_ids: set[int] | None = None,
+) -> list[str]:
+    """Pick the quiz ids to serve, reusing `keep` wherever it is still valid.
+    
+    If `mixStationQuiz` is false, it only randomizes from the bank items and always keeps inline items.
+    If `mixStationQuiz` is true, it randomizes across all quiz items.
+    Prioritizes items not in `seen_bank_ids` (soft dedup).
+    """
+    normalized = normalize_config(config)
+    mix_station_quiz = normalized["bank"]["mixStationQuiz"]
     target = random_count(config)
-    if not target or target >= len(available):
-        return []
+    
+    available_items = submission_items(config, TYPE_QUIZ, effective_quiz_items)
+    available = [item["id"] for item in available_items]
+
+    # Map item ID -> bankItemId (if any)
+    bank_item_id_map = {}
+    for item in available_items:
+        if "bankItemId" in item and item.get("bankItemId") is not None:
+            bank_item_id_map[item["id"]] = item["bankItemId"]
 
     available_set = set(available)
     kept = []
@@ -278,11 +340,80 @@ def draw_quiz_item_ids(config: dict | None, rng, keep: list[str] | None = None) 
         if item_id in available_set and item_id not in kept:
             kept.append(item_id)
 
-    if len(kept) > target:
-        kept = kept[:target]
-    elif len(kept) < target:
-        pool = [item_id for item_id in available if item_id not in set(kept)]
-        kept.extend(rng.sample(pool, target - len(kept)))
+    # Calculate what needs to be drawn
+    if not mix_station_quiz:
+        inline_items = [item_id for item_id in available if item_id not in bank_item_id_map]
+        bank_pool = [item_id for item_id in available if item_id in bank_item_id_map]
+
+        if bank_pool:
+            # Bank items configured: only the bank pool is randomized, inline
+            # items are always shown in full (§2.4).
+            always_shown = inline_items
+            randomizable = bank_pool
+        else:
+            # No bank items at all — the station predates the shared bank
+            # (or simply doesn't use one). Preserve the original behavior:
+            # randomCount applies to the whole (inline) item list.
+            always_shown = []
+            randomizable = inline_items
+
+        if not target or target >= len(randomizable):
+            return _full_serve_order(available, kept)  # N=0 or >= pool size means serve all
+
+        # Ensure always-shown items are kept.
+        for item_id in always_shown:
+            if item_id not in kept:
+                kept.append(item_id)
+
+        # Prune kept randomizable items if we have more than target
+        current_kept_random = [k for k in kept if k in randomizable]
+        if len(current_kept_random) > target:
+            kept_random = current_kept_random[:target]
+            kept = kept_random + always_shown
+            current_kept_random = kept_random
+
+        needed = target - len(current_kept_random)
+
+        if needed > 0:
+            pool = [pid for pid in randomizable if pid not in kept]
+            seen = seen_bank_ids or set()
+            unseen_pool = [pid for pid in pool if bank_item_id_map.get(pid) not in seen]
+            seen_pool = [pid for pid in pool if bank_item_id_map.get(pid) in seen]
+
+            if len(unseen_pool) >= needed:
+                kept.extend(rng.sample(unseen_pool, needed))
+            else:
+                kept.extend(rng.sample(unseen_pool, len(unseen_pool)))
+                needed -= len(unseen_pool)
+                if len(seen_pool) >= needed:
+                    kept.extend(rng.sample(seen_pool, needed))
+                else:
+                    kept.extend(rng.sample(seen_pool, len(seen_pool)))
+    else:
+        # mixStationQuiz = true
+        if not target or target >= len(available):
+            return _full_serve_order(available, kept)
+            
+        if len(kept) > target:
+            kept = kept[:target]
+        elif len(kept) < target:
+            pool = [item_id for item_id in available if item_id not in kept]
+            seen = seen_bank_ids or set()
+            
+            # For dedup, inline items (not in bank_item_id_map) are treated as unseen.
+            unseen_pool = [pid for pid in pool if pid not in bank_item_id_map or bank_item_id_map.get(pid) not in seen]
+            seen_pool = [pid for pid in pool if pid in bank_item_id_map and bank_item_id_map.get(pid) in seen]
+            
+            needed = target - len(kept)
+            if len(unseen_pool) >= needed:
+                kept.extend(rng.sample(unseen_pool, needed))
+            else:
+                kept.extend(rng.sample(unseen_pool, len(unseen_pool)))
+                needed -= len(unseen_pool)
+                if len(seen_pool) >= needed:
+                    kept.extend(rng.sample(seen_pool, needed))
+                else:
+                    kept.extend(rng.sample(seen_pool, len(seen_pool)))
 
     order = {item_id: index for index, item_id in enumerate(available)}
     return sorted(kept, key=lambda item_id: order[item_id])
@@ -299,13 +430,19 @@ def _served_items(items: list[dict], item_ids: list[str] | None) -> list[dict]:
     ]
 
 
-def public_config(config: dict | None, item_ids: list[str] | None = None) -> dict:
+def public_config(
+    config: dict | None,
+    item_ids: list[str] | None = None,
+    effective_quiz_items: list[dict] | None = None,
+) -> dict:
     """Canonical config with quiz answers removed, safe to send to participants.
 
     Pass `item_ids` — a team's stored draw — to serve only that team's questions.
     """
     public = deepcopy(normalize_config(config))
-    public["items"] = _served_items(public["items"], item_ids)
+    all_items = submission_items(config, effective_quiz_items=effective_quiz_items)
+    public["items"] = _served_items(all_items, item_ids)
+    
     for item in public["items"]:
         if item["type"] == TYPE_QUIZ:
             for key in _ANSWER_KEYS:
@@ -317,19 +454,13 @@ def grade_quiz(
     config: dict | None,
     response_payload: dict | None,
     item_ids: list[str] | None = None,
+    effective_quiz_items: list[dict] | None = None,
 ) -> dict | None:
-    """Grade quiz answers against the config; None when the form has no quiz.
-
-    Returns {correct_count, total, points, max_points, all_correct}, where points
-    sum the per-question weights. Items without a configured correct answer are
-    skipped, so an unfinished quiz never counts against the team.
-
-    `item_ids` scopes grading to the questions a team was actually served. Without
-    it a drawn team could never reach `all_correct`, which would break both
-    `limits.closeOnCorrect` and `quiz.autoScore`. Answers sent for questions
-    outside the draw are ignored.
-    """
-    items = _served_items(submission_items(config, TYPE_QUIZ), item_ids)
+    """Grade quiz answers against the config; None when the form has no quiz."""
+    items = _served_items(
+        submission_items(config, TYPE_QUIZ, effective_quiz_items),
+        item_ids
+    )
     if not items:
         return None
 

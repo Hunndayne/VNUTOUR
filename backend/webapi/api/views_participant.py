@@ -294,11 +294,13 @@ def _is_survey_station(station: Station) -> bool:
 
 
 def _station_form_payload(station: Station, team: Team | None = None) -> dict:
+    from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
     event = station.sub_event
     # Drawing here (rather than only on submit) is what pins the question set:
     # whichever member opens the form first fixes it for the whole team.
     drawn_items = variant_item_ids(station, team)
+    effective_items = effective_quiz_items(station)
     payload = {
         "station_id": station.id,
         "station_code": station.code,
@@ -308,7 +310,7 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "event_name": event.name,
         "phase_key": phase.key,
         "phase_label": phase.label,
-        "submission_config": public_submission_config(station.submission_config, drawn_items),
+        "submission_config": public_submission_config(station.submission_config, drawn_items, effective_quiz_items=effective_items),
         "closure": _form_closure_state(station, team),
         "is_survey": _is_survey_station(station),
     }
@@ -1463,7 +1465,14 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         submission = StationSubmission(team=team, station=station)
 
     # Same draw the team was served; answers to any other question are ignored.
-    quiz_result = grade_submission_quiz(config, response_payload, variant_item_ids(station, team))
+    from api.services.question_bank_service import effective_quiz_items
+    effective_items = effective_quiz_items(station)
+    quiz_result = grade_submission_quiz(
+        config, 
+        response_payload, 
+        variant_item_ids(station, team),
+        effective_quiz_items=effective_items
+    )
     if isinstance(response_payload, dict):
         # quiz_result is server-computed only; never trust a client-sent one
         response_payload.pop("quiz_result", None)
