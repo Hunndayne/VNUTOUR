@@ -1106,6 +1106,42 @@ function formatVnd(amount) {
 // team's captain scans/opens a VietQR to pay, then uploads a screenshot as
 // proof. The backend already tracks the proof file on the team, so all this
 // card owns is the VietQR display, the bank-app deeplinks, and the upload.
+function BankDropdown({ options, onSelect }) {
+  const [open, setOpen] = useState(false)
+  
+  return (
+    <div className="relative mt-2">
+      <button 
+        type="button" 
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm text-ink/80 transition hover:bg-[#F3F4F1]"
+      >
+        <span>Chọn ngân hàng...</span>
+        <Icon name="chevronD" className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-[#DCD8CC] bg-white shadow-lg">
+          {options.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => { setOpen(false); onSelect(option.key); }}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#20312B]/80 transition hover:bg-[#F3F4F1]"
+            >
+              {option.logo ? (
+                <img src={option.logo} alt={option.name} className="h-5 w-8 object-contain" />
+              ) : (
+                <div className="h-5 w-8" />
+              )}
+              <span className="font-semibold">{option.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -1353,7 +1389,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
           <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-white px-4 py-3">
             <p className="text-sm font-semibold text-ink">{info.bank.short_name}</p>
             <p className="mt-1 text-sm text-ink/60">
-              Số TK: <span className="font-mono font-semibold text-ink">{info.bank.account_no}</span>
+              Số TK: <span className="font-mono font-semibold text-ink break-all">{info.bank.account_no}</span>
             </p>
             <p className="mt-1 text-sm text-ink/60">Chủ TK: {info.bank.account_name}</p>
           </div>
@@ -1361,7 +1397,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
           <div className="mt-3">
             <span className="text-xs font-medium text-ink/50">Nội dung chuyển khoản</span>
             <div className="mt-1 flex items-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-3 py-2">
-              <span className="flex-1 truncate font-mono text-sm text-ink">{info.content}</span>
+              <span className="flex-1 min-w-0 truncate font-mono text-sm text-ink">{info.content}</span>
               <button type="button" onClick={handleCopyContent} className={SECONDARY_BUTTON}>
                 {copied ? 'Đã copy' : 'Copy'}
               </button>
@@ -1369,21 +1405,12 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             <p className="mt-1 text-xs leading-5 text-ink/45">Chuyển đúng nội dung để BTC đối soát nhanh.</p>
           </div>
 
-          <div className="mt-4">
-            <span className="text-xs font-medium text-ink/50">Mở app ngân hàng</span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {BANK_DEEPLINK_OPTIONS.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => handleDeeplink(option.key)}
-                  className="rounded-full border border-[#DCD8CC] bg-white px-3 py-1.5 text-xs font-semibold text-[#20312B]/65 transition hover:bg-[#F3F4F1] hover:text-[#20312B]"
-                >
-                  {option.name}
-                </button>
-              ))}
+          {/Android/i.test(navigator.userAgent) && (
+            <div className="mt-4">
+              <span className="text-xs font-medium text-ink/50">Mở app ngân hàng</span>
+              <BankDropdown options={BANK_DEEPLINK_OPTIONS} onSelect={handleDeeplink} />
             </div>
-          </div>
+          )}
 
           {notice && <p className="mt-2 text-xs leading-5 text-[#9A6B12]">{notice}</p>}
         </>
