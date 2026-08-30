@@ -41,7 +41,7 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
         throw new Error("Không tìm thấy câu hỏi hợp lệ trong file")
       }
       
-      await apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`, {
+      await apiRequest(`/program/sub-events/${eventId}/question-bank`, {
         method: 'POST',
         body: { items: parsed }
       })
@@ -50,7 +50,7 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
       if (fileInputRef.current) fileInputRef.current.value = ''
       
       // Refresh
-      const res = await apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`)
+      const res = await apiRequest(`/program/sub-events/${eventId}/question-bank`)
       setItems(res.items || [])
     } catch (err) {
       setImportError(err.message || 'Lỗi nhập dữ liệu')
