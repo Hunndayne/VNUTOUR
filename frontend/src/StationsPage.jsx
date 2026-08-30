@@ -234,6 +234,10 @@ function createSubmissionConfig(submission = {}) {
       randomCount: Math.max(0, Math.trunc(Number(submission.quiz?.randomCount)) || 0),
       randomizeOptions: submission.quiz?.randomizeOptions ?? false,
     },
+    bank: {
+      itemIds: submission.bank?.itemIds ?? [],
+      mixStationQuiz: submission.bank?.mixStationQuiz ?? false,
+    },
     limits: createSubmissionLimits(submission.limits),
     flow: {
       // Mặc định bật: mỗi lượt vào trạm nên có một lượt ra tương ứng, nếu không
@@ -1644,7 +1648,7 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
   )
 }
 
-function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false, draftKey }) {
+function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false, draftKey, eventId }) {
   // Soạn trạm (quiz, markdown, giới hạn nộp...) có thể mất cả chục phút — bọc cả
   // `form` lẫn `initialAssignment` trong một bản nháp duy nhất, khoá theo trạm
   // (hoặc theo phase/event khi đang tạo mới, do trạm mới chưa có id riêng).
@@ -1668,6 +1672,18 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   // hiện tại — không có ý nghĩa gì để khôi phục sau reload nên không đưa vào draft.
   const [dragIndex, setDragIndex] = useState(null)
   const [dropIndex, setDropIndex] = useState(null)
+
+  const [bankItems, setBankItems] = useState([])
+  useEffect(() => {
+    if (!eventId) return
+    let active = true
+    apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`)
+      .then(res => {
+        if (active) setBankItems(res.items || [])
+      })
+      .catch(console.error)
+    return () => { active = false }
+  }, [eventId])
 
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
   const updateSubmission = (updater) => {
@@ -1732,11 +1748,13 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     setDropIndex(null)
   }
 
-  const quizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
+  const inlineQuizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
+  const bankItemCount = form.submission.bank?.itemIds?.length || 0
+  const quizItemCount = inlineQuizItemCount + bankItemCount
   const hasQuizItem = quizItemCount > 0
   const hasAttachmentItem = form.submission.items.some(item => item.type === 'attachment')
   // Chỉ có form thì mới có chuyện "nộp xong rồi sao nữa".
-  const hasSubmissionItem = form.submission.items.length > 0
+  const hasSubmissionItem = form.submission.items.length > 0 || bankItemCount > 0
   const quizRandomCount = form.submission.quiz.randomCount ?? 0
 
 
@@ -1969,6 +1987,37 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           )}
         />
 
+        {bankItems.length > 0 && (
+          <div className={`${CARD} p-4 mb-4`}>
+            <p className="font-semibold text-sm text-ink mb-2">Bộ câu hỏi dùng chung</p>
+            <p className="text-xs text-ink/60 mb-3">Chọn các câu từ ngân hàng câu hỏi để đưa vào đề thi của trạm này.</p>
+            <div className="max-h-48 overflow-y-auto border border-stone rounded-lg divide-y divide-stone">
+              {bankItems.map(item => {
+                const checked = form.submission.bank?.itemIds?.includes(item.id)
+                return (
+                  <label key={item.id} className="flex items-start gap-3 p-3 hover:bg-paper cursor-pointer transition">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const newIds = e.target.checked
+                          ? [...(form.submission.bank?.itemIds || []), item.id]
+                          : (form.submission.bank?.itemIds || []).filter(id => id !== item.id)
+                        updateSubmission(sub => ({ ...sub, bank: { ...sub.bank, itemIds: newIds } }))
+                      }}
+                      className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+                    />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-ink">{item.question}</p>
+                      <p className="text-xs text-ink/40 mt-1 line-clamp-1">{item.options.join(' • ')}</p>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {form.submission.items.length === 0 ? (
           <div className={`${CARD} px-4 py-6 text-center text-sm italic text-ink/35`}>
             Chưa có mục nào. Thêm câu tự luận, câu trắc nghiệm hoặc ô nộp tệp — thứ tự bạn xếp ở đây
@@ -2045,14 +2094,35 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
                 className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
               />
               <p className="mt-1 text-xs leading-5 text-ink/45">
-                Bộ đề đang có {quizItemCount} câu. Mỗi đội nhận một bộ cố định, mọi thành viên trong
-                đội thấy cùng bộ câu.
+                Bộ đề đang có {quizItemCount} câu (gồm {inlineQuizItemCount} câu tự soạn, {bankItemCount} câu từ bộ chung). 
+                Mỗi đội nhận một bộ cố định, mọi thành viên trong đội thấy cùng bộ câu.
               </p>
+              
+              {bankItemCount > 0 && quizRandomCount > 0 && (
+                <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
+                  <input
+                    type="checkbox"
+                    checked={form.submission.bank?.mixStationQuiz ?? false}
+                    onChange={event => updateSubmission(submission => ({
+                      ...submission,
+                      bank: { ...submission.bank, mixStationQuiz: event.target.checked },
+                    }))}
+                    className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+                  />
+                  Ưu tiên lấy câu mới từ ngân hàng chung chưa thi ở trạm khác (mixStationQuiz)
+                </label>
+              )}
+
               {quizRandomCount > 0 && (
                 <p className="mt-1 text-xs leading-5 text-ink/45">
                   {quizRandomCount < quizItemCount
                     ? `Mỗi đội sẽ làm ${quizRandomCount}/${quizItemCount} câu.`
                     : `Số câu đặt ra lớn hơn hoặc bằng ${quizItemCount} câu hiện có — mỗi đội sẽ làm hết bộ đề.`}
+                </p>
+              )}
+              {form.submission.bank?.mixStationQuiz && quizRandomCount > bankItems.length && (
+                <p className="mt-2 text-xs font-semibold text-clay bg-clay/10 p-2 rounded">
+                  Lưu ý: N (các trạm) &gt; tổng số câu ngân hàng hiện có ({bankItems.length}). Trạm này có thể sẽ phải trộn lại các câu cũ nếu hết ngân hàng.
                 </p>
               )}
             </div>
@@ -2668,7 +2738,7 @@ function StationEditView({
           <div className="border-b border-stone px-5 py-3">
             <p className="font-display font-semibold text-ink">Cấu hình trạm</p>
           </div>
-          <StationForm initial={station} onSave={handleSave} onCancel={onBack} />
+          <StationForm initial={station} onSave={handleSave} onCancel={onBack} eventId={selectedEvent.id} />
         </div>
 
         <StationOpsColumn station={station} phase={phase} selectedEvent={selectedEvent} />
@@ -2703,6 +2773,7 @@ function StationCreateView({ phaseInfo, phaseMeta, selectedEvent, error, draftKe
           onCancel={onBack}
           allowInitialAssignment
           draftKey={draftKey}
+          eventId={selectedEvent.id}
         />
       </div>
     </div>

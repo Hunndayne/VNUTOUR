@@ -199,3 +199,97 @@ def sub_event_detail_view(request: HttpRequest, event_id: int):
             return JsonResponse({"error": "not_found"}, status=404)
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def question_bank_view(request: HttpRequest, event_id: int):
+    from api.models import QuestionBankItem
+    from api.services.question_bank_service import import_questions
+    acc, err = _require_role(request, "admin")
+    if err:
+        return err
+
+    try:
+        SubEvent.objects.get(id=event_id)
+    except SubEvent.DoesNotExist:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    if request.method == "GET":
+        qs = QuestionBankItem.objects.filter(sub_event_id=event_id).order_by("order", "id")
+        return JsonResponse({
+            "items": [
+                {
+                    "id": item.id,
+                    "question": item.question,
+                    "options": item.options,
+                    "correctOption": item.correct_option,
+                    "points": item.points,
+                    "order": item.order,
+                    "active": item.active,
+                    "tags": item.tags,
+                } for item in qs
+            ]
+        })
+
+    if request.method == "POST":
+        data = _json_body(request)
+        if not data or "items" not in data:
+            return JsonResponse({"error": "invalid_payload"}, status=400)
+        
+        # Replace or import? If we want full sync, we could update existing. 
+        # But import_questions just appends. 
+        # To support CRUD properly, we could just accept a full list and sync.
+        # But for now, we'll implement import as described in plan.
+        result = import_questions(event_id, data["items"])
+        return JsonResponse(result)
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def question_bank_item_view(request: HttpRequest, event_id: int, item_id: int):
+    from api.models import QuestionBankItem
+    from api.services.question_bank_service import update_question, delete_question
+
+    acc, err = _require_role(request, "admin")
+    if err:
+        return err
+
+    try:
+        SubEvent.objects.get(id=event_id)
+    except SubEvent.DoesNotExist:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    if request.method == "PUT":
+        data = _json_body(request)
+        if not isinstance(data, dict):
+            return JsonResponse({"error": "invalid_payload"}, status=400)
+        fields = {}
+        for key in ("question", "options", "correctOption", "points", "order", "tags", "active"):
+            if key in data:
+                fields[key] = data[key]
+        try:
+            item = update_question(event_id, item_id, **fields)
+        except QuestionBankItem.DoesNotExist:
+            return JsonResponse({"error": "not_found"}, status=404)
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        return JsonResponse({
+            "id": item.id,
+            "question": item.question,
+            "options": item.options,
+            "correctOption": item.correct_option,
+            "points": item.points,
+            "order": item.order,
+            "active": item.active,
+            "tags": item.tags,
+        })
+
+    if request.method == "DELETE":
+        try:
+            delete_question(event_id, item_id)
+        except QuestionBankItem.DoesNotExist:
+            return JsonResponse({"error": "not_found"}, status=404)
+        return JsonResponse({"status": "deleted"})
+
+    return JsonResponse({"error": "method_not_allowed"}, status=405)

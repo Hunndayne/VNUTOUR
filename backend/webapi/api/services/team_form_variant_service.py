@@ -17,48 +17,107 @@ import random
 from django.db import IntegrityError, transaction
 
 from api.models import TeamFormVariant
-from api.services.submission_config_service import draw_quiz_item_ids, random_count
+from api.services.submission_config_service import draw_quiz_item_ids, random_count, quiz_item_ids
+from api.services.question_bank_service import bank_item_id_of, effective_quiz_items
+from api.models import Team
 
 
 def variant_item_ids(station, team) -> list[str]:
-    """Quiz ids this team is served, drawing and storing them on first access.
-
-    Returns [] when the station serves every question, so callers can pass the
-    result straight through without special-casing.
-
-    Switching `randomCount` back to 0 leaves any stored draw alone rather than
-    spending a query per station to clear it — the read loop walks every station
-    on the roster. A row kept that way is inert, and turning randomisation on
-    again hands the team back the questions it already had.
-    """
-    if team is None or not random_count(station.submission_config):
+    """Quiz ids this team is served, drawing and storing them on first access."""
+    if team is None:
         return []
 
-    rng = random.SystemRandom()
+    effective_items = effective_quiz_items(station)
+    available_ids = [item["id"] for item in effective_items if item["type"] == "quiz"]
+    
+    if not available_ids:
+        # no quiz at all (bank or inline)
+        return []
+
+    # Check if we already have a materialized variant
     existing = TeamFormVariant.objects.filter(team=team, station=station).first()
-    kept = existing.item_ids if existing and isinstance(existing.item_ids, list) else []
-    drawn = draw_quiz_item_ids(station.submission_config, rng, keep=kept)
-
-    if not drawn:
-        # The bank shrank to at most the target, so everyone gets all of it now.
-        # Drop the row: it describes a draw that no longer means anything.
-        if existing:
-            existing.delete()
-        return []
-
     if existing:
-        if existing.item_ids != drawn:
+        kept = existing.item_ids if isinstance(existing.item_ids, list) else []
+        drawn = draw_quiz_item_ids(
+            config=station.submission_config,
+            rng=random.SystemRandom(),
+            keep=kept,
+            effective_quiz_items=effective_items,
+            seen_bank_ids=set()  # Already drawn, no dedup applied on replay
+        )
+        target = random_count(station.submission_config)
+        if target != 0 and len(drawn) >= len(available_ids):
+            # The bank shrank at or below the configured randomCount, so
+            # there is nothing left to filter — fall back to "no filtering"
+            # (the documented meaning of an empty draw) instead of pinning a
+            # now-meaningless stale variant row.
+            existing.delete()
+            return []
+
+        if drawn != kept:
             existing.item_ids = drawn
             existing.save(update_fields=["item_ids", "updated_at"])
-        return drawn
+        return existing.item_ids
 
-    try:
-        with transaction.atomic():
+    # Serialize allocation per-team
+    with transaction.atomic():
+        # Lock the team to prevent cross-station race conditions
+        _ = Team.objects.select_for_update().get(id=team.id)
+        
+        # Double check after lock
+        existing = TeamFormVariant.objects.filter(team=team, station=station).first()
+        if existing:
+            return existing.item_ids
+            
+        # Read other variants in the SAME SubEvent to find seen_bank_ids
+        other_variants = TeamFormVariant.objects.filter(
+            team=team, 
+            station__sub_event=station.sub_event
+        ).exclude(station=station)
+        
+        seen_bank_ids = set()
+        for v in other_variants:
+            for iid in (v.item_ids if isinstance(v.item_ids, list) else []):
+                bank_id = bank_item_id_of(iid)
+                if bank_id is not None:
+                    seen_bank_ids.add(bank_id)
+
+        target = random_count(station.submission_config)
+        if target == 0:
+            # Materialize all available, but still apply soft dedup: drop bank
+            # items the team has already seen elsewhere unless that would
+            # empty out this station's whole bank pool (never serve zero
+            # questions just because the pool is exhausted — repeat instead).
+            bank_item_id_map = {
+                item["id"]: item["bankItemId"]
+                for item in effective_items
+                if item.get("bankItemId") is not None
+            }
+            bank_ids = [item_id for item_id in available_ids if item_id in bank_item_id_map]
+            unseen_bank_ids = [
+                item_id for item_id in bank_ids
+                if bank_item_id_map[item_id] not in seen_bank_ids
+            ]
+            keep_bank_ids = set(unseen_bank_ids) if unseen_bank_ids or not bank_ids else set(bank_ids)
+            drawn = [
+                item_id for item_id in available_ids
+                if item_id not in bank_item_id_map or item_id in keep_bank_ids
+            ]
+        else:
+            drawn = draw_quiz_item_ids(
+                config=station.submission_config,
+                rng=random.SystemRandom(),
+                keep=[],
+                effective_quiz_items=effective_items,
+                seen_bank_ids=seen_bank_ids
+            )
+            
+        try:
             TeamFormVariant.objects.create(team=team, station=station, item_ids=drawn)
-    except IntegrityError:
-        # Two teammates opened the form at once; the row that landed first wins,
-        # so both of them end up looking at the same questions.
-        raced = TeamFormVariant.objects.filter(team=team, station=station).first()
-        if raced:
-            return raced.item_ids
-    return drawn
+        except IntegrityError:
+            # Fallback if somehow race happened despite lock
+            raced = TeamFormVariant.objects.filter(team=team, station=station).first()
+            if raced:
+                return raced.item_ids
+                
+        return drawn
