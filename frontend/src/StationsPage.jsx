@@ -4,7 +4,7 @@ import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, API_BASE_URL } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
-import { exportToJson, exportQuizToExcel, importFromFile } from './importExportUtils.js'
+import { exportToJson, exportQuizToExcel, importFromFile, downloadSampleExcel, downloadSampleJson } from './importExportUtils.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 
@@ -2065,7 +2065,13 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
 
         {importing && (
           <div className="border-b border-stone p-4 bg-paper/50 rounded-xl mt-2 border">
-            <p className="text-sm font-medium text-ink mb-2">Nhập từ file Excel/JSON</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-ink">Nhập từ file Excel/JSON</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={downloadSampleExcel} className="text-xs text-trail hover:underline font-medium">Mẫu Excel</button>
+                <button type="button" onClick={downloadSampleJson} className="text-xs text-trail hover:underline font-medium">Mẫu JSON</button>
+              </div>
+            </div>
             <p className="text-xs text-ink/60 mb-3">
               Hỗ trợ file <code>.xlsx</code> hoặc <code>.json</code>. Các câu hỏi sẽ được nối thêm vào danh sách trắc nghiệm.
             </p>

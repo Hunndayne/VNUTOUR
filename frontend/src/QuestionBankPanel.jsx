@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { apiRequest } from './api.js'
 import { Icon, CARD } from './ui.jsx'
-import { exportToJson, exportQuizToExcel, importFromFile } from './importExportUtils.js'
+import { exportToJson, exportQuizToExcel, importFromFile, downloadSampleExcel, downloadSampleJson } from './importExportUtils.js'
 
 export default function QuestionBankPanel({ eventId, canEdit }) {
   const [items, setItems] = useState([])
@@ -111,7 +111,13 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
 
       {importing && (
         <div className="border-b border-stone p-5 bg-paper/50">
-          <p className="text-sm font-medium text-ink mb-2">Nhập từ file Excel/JSON</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-ink">Nhập từ file Excel/JSON</p>
+            <div className="flex gap-2">
+              <button onClick={downloadSampleExcel} className="text-xs text-trail hover:underline font-medium">Mẫu Excel</button>
+              <button onClick={downloadSampleJson} className="text-xs text-trail hover:underline font-medium">Mẫu JSON</button>
+            </div>
+          </div>
           <p className="text-xs text-ink/60 mb-3">
             Hỗ trợ file <code>.xlsx</code> hoặc <code>.json</code>. Cấu trúc Excel cần các cột: Question, Points, Correct Option (0-indexed), Tags, Option 1, Option 2, ...
           </p>

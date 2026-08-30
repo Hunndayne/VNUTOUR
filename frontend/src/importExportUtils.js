@@ -77,3 +77,44 @@ export async function importFromFile(file) {
     throw new Error('Unsupported file format')
   }
 }
+
+export function downloadSampleJson() {
+  const sampleData = [
+    {
+      question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
+      options: ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng'],
+      correctOption: 0,
+      points: 1,
+      tags: ['dia-ly', 'de']
+    },
+    {
+      question: 'Câu hỏi mẫu 2 (1 + 1 bằng mấy?)',
+      options: ['1', '2', '3'],
+      correctOption: 1,
+      points: 2,
+      tags: ['toan-hoc']
+    }
+  ]
+  exportToJson(sampleData, 'mau_nhap_cau_hoi.json')
+}
+
+export function downloadSampleExcel() {
+  const sampleData = [
+    {
+      question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
+      options: ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng'],
+      correctOption: 0,
+      points: 1,
+      tags: ['dia-ly', 'de']
+    },
+    {
+      question: 'Câu hỏi mẫu 2 (1 + 1 bằng mấy?)',
+      options: ['1', '2', '3'],
+      correctOption: 1,
+      points: 2,
+      tags: ['toan-hoc']
+    }
+  ]
+  exportQuizToExcel(sampleData, 'mau_nhap_cau_hoi.xlsx')
+}
+
