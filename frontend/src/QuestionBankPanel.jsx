@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { apiRequest } from './api.js'
 import { Icon, CARD } from './ui.jsx'
+import { exportToJson, exportQuizToExcel, importFromFile } from './importExportUtils.js'
 
 export default function QuestionBankPanel({ eventId, canEdit }) {
   const [items, setItems] = useState([])
@@ -8,7 +9,6 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
   const [error, setError] = useState(null)
   
   const [importing, setImporting] = useState(false)
-  const [importText, setImportText] = useState('')
   const [importError, setImportError] = useState(null)
 
   useEffect(() => {
@@ -29,26 +29,41 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
     return () => { active = false }
   }, [eventId])
 
-  const handleImport = async () => {
+  const fileInputRef = useRef(null)
+
+  const handleFileImport = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
     try {
       setImportError(null)
-      const parsed = JSON.parse(importText)
-      if (!Array.isArray(parsed)) throw new Error("JSON phải là một mảng các câu hỏi")
+      const parsed = await importFromFile(file)
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Không tìm thấy câu hỏi hợp lệ trong file")
+      }
       
-      await apiRequest(`/program/sub-events/${eventId}/question-bank`, {
+      await apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`, {
         method: 'POST',
         body: { items: parsed }
       })
       
-      setImportText('')
       setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       
       // Refresh
-      const res = await apiRequest(`/program/sub-events/${eventId}/question-bank`)
+      const res = await apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`)
       setItems(res.items || [])
     } catch (err) {
       setImportError(err.message || 'Lỗi nhập dữ liệu')
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
+  }
+
+  const handleExportJSON = () => {
+    exportToJson(items, `question_bank_${eventId}.json`)
+  }
+
+  const handleExportExcel = () => {
+    exportQuizToExcel(items, `question_bank_${eventId}.xlsx`)
   }
 
   if (loading) {
@@ -64,40 +79,50 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
             Tổng cộng: {items.length} câu. Các trạm có thể lấy câu hỏi từ nguồn này.
           </p>
         </div>
-        <button
-          type="button"
-          disabled={!canEdit}
-          onClick={() => setImporting(!importing)}
-          className="rounded-lg bg-paper px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-stone/50 disabled:opacity-50"
-        >
-          {importing ? 'Đóng' : 'Nhập JSON'}
-        </button>
+        <div className="flex gap-2">
+          {items.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="rounded-lg border border-stone bg-white px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-paper"
+              >
+                Xuất Excel
+              </button>
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="rounded-lg border border-stone bg-white px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-paper"
+              >
+                Xuất JSON
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            disabled={!canEdit}
+            onClick={() => setImporting(!importing)}
+            className="rounded-lg bg-paper px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-stone/50 disabled:opacity-50"
+          >
+            {importing ? 'Đóng' : 'Nhập file'}
+          </button>
+        </div>
       </div>
 
       {importing && (
         <div className="border-b border-stone p-5 bg-paper/50">
-          <p className="text-sm font-medium text-ink mb-2">Nhập mảng JSON câu hỏi</p>
+          <p className="text-sm font-medium text-ink mb-2">Nhập từ file Excel/JSON</p>
           <p className="text-xs text-ink/60 mb-3">
-            Cấu trúc: <code>{`[{"question": "...", "options": ["A", "B"], "correctOption": 0, "points": 1}]`}</code>
+            Hỗ trợ file <code>.xlsx</code> hoặc <code>.json</code>. Cấu trúc Excel cần các cột: Question, Points, Correct Option (0-indexed), Tags, Option 1, Option 2, ...
           </p>
-          <textarea
-            className="w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm font-mono"
-            rows={5}
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-            placeholder={`[\n  {\n    "question": "Câu 1?",\n    "options": ["A", "B"],\n    "correctOption": 0\n  }\n]`}
+          <input
+            type="file"
+            accept=".json,.xlsx,.xls,.csv"
+            ref={fileInputRef}
+            onChange={handleFileImport}
+            className="block w-full text-sm text-ink/70 file:mr-4 file:rounded-lg file:border-0 file:bg-ink file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-ink/90 cursor-pointer"
           />
           {importError && <p className="text-xs text-clay mt-2">{importError}</p>}
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              onClick={handleImport}
-              disabled={!importText.trim()}
-              className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:brightness-90 disabled:opacity-50"
-            >
-              Thêm vào bộ
-            </button>
-          </div>
         </div>
       )}
 

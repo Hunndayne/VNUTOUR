@@ -4,6 +4,7 @@ import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, API_BASE_URL } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+import { exportToJson, exportQuizToExcel, importFromFile } from './importExportUtils.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 
@@ -1685,6 +1686,53 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     return () => { active = false }
   }, [eventId])
 
+  const fileInputRef = useRef(null)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState(null)
+
+  const handleFileImport = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      setImportError(null)
+      const parsed = await importFromFile(file)
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Không tìm thấy câu hỏi hợp lệ trong file")
+      }
+      
+      const newItems = parsed.map(item => ({
+        id: `quiz-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        type: 'quiz',
+        question: item.question,
+        options: item.options,
+        correctOption: item.correctOption,
+        points: item.points,
+        required: true,
+      }))
+      
+      updateSubmission(submission => ({
+        ...submission,
+        items: [...submission.items, ...newItems],
+      }))
+      
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    } catch (err) {
+      setImportError(err.message || 'Lỗi nhập dữ liệu')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleExportJSON = () => {
+    const quizItems = form.submission.items.filter(i => i.type === 'quiz')
+    exportToJson(quizItems, `station_${form.code || 'draft'}_quiz.json`)
+  }
+
+  const handleExportExcel = () => {
+    const quizItems = form.submission.items.filter(i => i.type === 'quiz')
+    exportQuizToExcel(quizItems, `station_${form.code || 'draft'}_quiz.xlsx`)
+  }
+
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
   const updateSubmission = (updater) => {
     setForm(current => ({
@@ -1986,6 +2034,51 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
             </div>
           )}
         />
+
+        <div className="flex gap-2 flex-wrap items-center">
+          <button
+            type="button"
+            onClick={() => setImporting(!importing)}
+            className="rounded-lg bg-paper px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-stone/50"
+          >
+            {importing ? 'Đóng' : 'Nhập file Excel/JSON'}
+          </button>
+          {form.submission.items.some(i => i.type === 'quiz') && (
+            <>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-paper"
+              >
+                Xuất Excel
+              </button>
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-paper"
+              >
+                Xuất JSON
+              </button>
+            </>
+          )}
+        </div>
+
+        {importing && (
+          <div className="border-b border-stone p-4 bg-paper/50 rounded-xl mt-2 border">
+            <p className="text-sm font-medium text-ink mb-2">Nhập từ file Excel/JSON</p>
+            <p className="text-xs text-ink/60 mb-3">
+              Hỗ trợ file <code>.xlsx</code> hoặc <code>.json</code>. Các câu hỏi sẽ được nối thêm vào danh sách trắc nghiệm.
+            </p>
+            <input
+              type="file"
+              accept=".json,.xlsx,.xls,.csv"
+              ref={fileInputRef}
+              onChange={handleFileImport}
+              className="block w-full text-xs text-ink/70 file:mr-4 file:rounded-lg file:border-0 file:bg-ink file:px-4 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-ink/90 cursor-pointer"
+            />
+            {importError && <p className="text-xs text-clay mt-2">{importError}</p>}
+          </div>
+        )}
 
         {bankItems.length > 0 && (
           <div className={`${CARD} p-4 mb-4`}>
