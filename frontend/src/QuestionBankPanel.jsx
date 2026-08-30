@@ -13,7 +13,7 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
 
   useEffect(() => {
     let active = true
-    apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`)
+    apiRequest(`/program/sub-events/${eventId}/question-bank`)
       .then((res) => {
         if (active) {
           setItems(res.items || [])
@@ -35,7 +35,7 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
       const parsed = JSON.parse(importText)
       if (!Array.isArray(parsed)) throw new Error("JSON phải là một mảng các câu hỏi")
       
-      await apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`, {
+      await apiRequest(`/program/sub-events/${eventId}/question-bank`, {
         method: 'POST',
         body: { items: parsed }
       })
@@ -44,7 +44,7 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
       setImporting(false)
       
       // Refresh
-      const res = await apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`)
+      const res = await apiRequest(`/program/sub-events/${eventId}/question-bank`)
       setItems(res.items || [])
     } catch (err) {
       setImportError(err.message || 'Lỗi nhập dữ liệu')

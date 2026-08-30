@@ -1677,7 +1677,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   useEffect(() => {
     if (!eventId) return
     let active = true
-    apiRequest(`/api/admin/program/sub-events/${eventId}/question-bank`)
+    apiRequest(`/program/sub-events/${eventId}/question-bank`)
       .then(res => {
         if (active) setBankItems(res.items || [])
       })
