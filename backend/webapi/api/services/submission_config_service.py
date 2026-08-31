@@ -213,10 +213,12 @@ def normalize_config(config: dict | None) -> dict:
         random_count = 0
 
     return {
+        "antiCheat": config.get("antiCheat", True) is not False,
         "brief": _clean_str(config.get("brief")),
         "items": items,
         "bank": {
             "itemIds": config.get("bank", {}).get("itemIds", []),
+            "useAll": bool(config.get("bank", {}).get("useAll", False)),
             "mixStationQuiz": bool(config.get("bank", {}).get("mixStationQuiz", False)),
         },
         "quiz": {

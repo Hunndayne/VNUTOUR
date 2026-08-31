@@ -140,8 +140,8 @@ function LandingPage() {
   }
 
   return (
-    <main className="landing-page min-h-[100dvh] bg-white font-display text-[#0c1d33]">
-      <section id="home" className="landing-flow-hero relative min-h-[100dvh] overflow-hidden">
+    <main className="landing-page min-h-screen min-h-[100dvh] bg-white font-display text-[#0c1d33]">
+      <section id="home" className="landing-flow-hero relative min-h-screen min-h-[100dvh] overflow-hidden">
         <div
           aria-hidden="true"
           className="landing-color-strip absolute inset-x-0 top-0 z-30 h-1"
@@ -155,7 +155,7 @@ function LandingPage() {
 
 <SiteHeader />
 
-<div className="relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] w-full max-w-[1400px] content-start items-start gap-2 px-5 pb-12 pt-4 md:px-8 lg:grid-cols-[minmax(240px,1fr)_minmax(0,880px)] lg:content-normal lg:items-center lg:gap-12 lg:pb-16 lg:pt-8 xl:px-0">
+<div className="relative z-10 mx-auto grid min-h-[calc(100vh-5rem)] min-h-[calc(100dvh-5rem)] w-full max-w-[1400px] content-start items-start gap-2 px-5 pb-12 pt-4 md:px-8 lg:grid-cols-[minmax(240px,1fr)_minmax(0,880px)] lg:content-normal lg:items-center lg:gap-12 lg:pb-16 lg:pt-8 xl:px-0">
 
   {/* VNU TOUR LOGO */}
   <Reveal className="order-1 flex w-full justify-center lg:border-r lg:border-[#1478D4]/20 lg:pr-12">

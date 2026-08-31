@@ -111,13 +111,31 @@ def effective_quiz_items(station: Station) -> list[dict[str, Any]]:
     inline_items = normalized.get("items", [])
 
     bank_config = normalized.get("bank", {})
-    bank_item_ids = bank_config.get("itemIds", [])
-    
+    use_all = bank_config.get("useAll", False)
+
+    if use_all:
+        # Dynamic: use the WHOLE event bank, in bank order. Newly imported
+        # questions show up automatically — no per-station re-selection needed.
+        qs = list(
+            QuestionBankItem.objects.filter(
+                sub_event=station.sub_event, active=True,
+            ).order_by("order", "id")
+        )
+        bank_item_ids = [obj.id for obj in qs]
+        items_by_id = {obj.id: obj for obj in qs}
+    else:
+        bank_item_ids = bank_config.get("itemIds", [])
+        items_by_id = {}
+        if bank_item_ids:
+            items_by_id = {
+                obj.id: obj
+                for obj in QuestionBankItem.objects.filter(
+                    id__in=bank_item_ids, active=True,
+                )
+            }
+
     bank_items = []
     if bank_item_ids:
-        # Fetch from DB and preserve order
-        qs = QuestionBankItem.objects.filter(id__in=bank_item_ids, active=True)
-        items_by_id = {item.id: item for item in qs}
         for b_id in bank_item_ids:
             if b_id in items_by_id:
                 obj = items_by_id[b_id]

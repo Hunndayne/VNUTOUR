@@ -228,7 +228,7 @@ function BenefitCell({ benefit, tierId }) {
 
 export default function TaiTro() {
   return (
-    <main className="min-h-[100dvh] bg-white font-display text-[#0c1d33]">
+    <main className="min-h-screen min-h-[100dvh] bg-white font-display text-[#0c1d33]">
       <SiteHeader />
       {/* ===== HERO ===== */}
       <section className="relative overflow-hidden bg-gradient-to-b from-[#D9F5FF] to-[#E8F8FF] px-5 pb-32 pt-20 text-center md:pb-40 md:pt-28 xl:pb-44 xl:pt-36">

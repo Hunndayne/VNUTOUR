@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import QrScanner from 'qr-scanner'
 import logoImage from './assets/vnutour-logo.png'
 import { FIXED_PHASES } from './adminProgram.js'
 import {
@@ -581,29 +580,42 @@ function CoopDashboard() {
   useEffect(() => {
     if (!videoRef.current) return undefined
 
-    const scanner = new QrScanner(
-      videoRef.current,
-      (result) => {
-        const value = typeof result === 'string' ? result : result?.data
-        if (value && scanHandlerRef.current) {
-          void scanHandlerRef.current(value)
-        }
-      },
-      {
-        preferredCamera: 'environment',
-        highlightScanRegion: true,
-        highlightCodeOutline: true,
-      },
-    )
+    let cancelled = false
+    let scanner = null
 
-    scannerRef.current = scanner
-    scanner.start().catch(() => {
-      setApiError('Không thể khởi động camera. Bạn vẫn có thể nhập tay mã đội.')
+    // qr-scanner is loaded on demand so it stays out of the main bundle.
+    import('qr-scanner').then(({ default: QrScanner }) => {
+      if (cancelled || !videoRef.current) return
+
+      scanner = new QrScanner(
+        videoRef.current,
+        (result) => {
+          const value = typeof result === 'string' ? result : result?.data
+          if (value && scanHandlerRef.current) {
+            void scanHandlerRef.current(value)
+          }
+        },
+        {
+          preferredCamera: 'environment',
+          highlightScanRegion: true,
+          highlightCodeOutline: true,
+        },
+      )
+
+      scannerRef.current = scanner
+      scanner.start().catch(() => {
+        setApiError('Không thể khởi động camera. Bạn vẫn có thể nhập tay mã đội.')
+      })
+    }).catch(() => {
+      if (!cancelled) setApiError('Không thể tải trình quét QR. Bạn vẫn có thể nhập tay mã đội.')
     })
 
     return () => {
-      scanner.stop()
-      scanner.destroy()
+      cancelled = true
+      if (scanner) {
+        scanner.stop()
+        scanner.destroy()
+      }
       scannerRef.current = null
     }
   }, [])
@@ -770,7 +782,7 @@ function CoopDashboard() {
                   </div>
                   <div className="space-y-4 px-5 py-4">
                     <div className="overflow-hidden rounded-xl border border-stone bg-ink">
-                      <video ref={videoRef} className="aspect-[4/3] h-full w-full object-cover" />
+                      <video ref={videoRef} playsInline muted className="aspect-[4/3] h-full w-full object-cover" />
                     </div>
 
                     <form onSubmit={handleManualSubmit} className="space-y-2">

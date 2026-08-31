@@ -1,4 +1,10 @@
-import * as XLSX from 'xlsx'
+// xlsx is heavy (~430 kB) and only needed for the admin import/export flows,
+// so it is loaded on demand rather than in the main bundle.
+let xlsxPromise = null
+function loadXLSX() {
+  if (!xlsxPromise) xlsxPromise = import('xlsx')
+  return xlsxPromise
+}
 
 export function exportToJson(data, filename) {
   const jsonStr = JSON.stringify(data, null, 2)
@@ -11,7 +17,8 @@ export function exportToJson(data, filename) {
   URL.revokeObjectURL(url)
 }
 
-export function exportQuizToExcel(items, filename) {
+export async function exportQuizToExcel(items, filename) {
+  const XLSX = await loadXLSX()
   // Map items to excel rows
   const rows = items.map(item => {
     const row = {
@@ -35,12 +42,35 @@ export function exportQuizToExcel(items, filename) {
   XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`)
 }
 
+/** FileReader fallback for Blob.text() — needed on iOS Safari < 14. */
+function readAsText(file) {
+  if (file.text) return file.text()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsText(file)
+  })
+}
+
+/** FileReader fallback for Blob.arrayBuffer() — needed on iOS Safari < 14. */
+function readAsArrayBuffer(file) {
+  if (file.arrayBuffer) return file.arrayBuffer()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsArrayBuffer(file)
+  })
+}
+
 export async function importFromFile(file) {
   if (file.name.endsWith('.json')) {
-    const text = await file.text()
+    const text = await readAsText(file)
     return JSON.parse(text)
   } else if (file.name.match(/\.(xlsx|xls|csv)$/)) {
-    const data = await file.arrayBuffer()
+    const data = await readAsArrayBuffer(file)
+    const XLSX = await loadXLSX()
     const wb = XLSX.read(data)
     const ws = wb.Sheets[wb.SheetNames[0]]
     const rows = XLSX.utils.sheet_to_json(ws)
@@ -98,7 +128,7 @@ export function downloadSampleJson() {
   exportToJson(sampleData, 'mau_nhap_cau_hoi.json')
 }
 
-export function downloadSampleExcel() {
+export async function downloadSampleExcel() {
   const sampleData = [
     {
       question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
@@ -115,6 +145,6 @@ export function downloadSampleExcel() {
       tags: ['toan-hoc']
     }
   ]
-  exportQuizToExcel(sampleData, 'mau_nhap_cau_hoi.xlsx')
+  await exportQuizToExcel(sampleData, 'mau_nhap_cau_hoi.xlsx')
 }
 

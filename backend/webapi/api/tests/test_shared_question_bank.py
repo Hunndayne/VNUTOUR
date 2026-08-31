@@ -388,3 +388,51 @@ def test_random_count_zero_soft_dedup_across_stations(event_fixture, team_fixtur
     draw_b = variant_item_ids(station_b, team)
     assert draw_b == [f"bank-{q1.id}"]
 
+
+
+def test_bank_use_all_serves_whole_event_bank(event_fixture, team_fixture, station_fixture):
+    """useAll=True → trạm dùng toàn bộ ngân hàng sự kiện, không cần liệt kê itemIds,
+    và câu import thêm về sau tự xuất hiện (động)."""
+    event = event_fixture
+    station = station_fixture(code="A", sub_event=event)
+    q1 = QuestionBankItem.objects.create(sub_event=event, question="Q1", options=["A", "B"], correct_option=0)
+    q2 = QuestionBankItem.objects.create(sub_event=event, question="Q2", options=["A", "B"], correct_option=0)
+
+    station.submission_config = {
+        "bank": {"useAll": True, "itemIds": []},
+        "quiz": {"randomCount": 0},
+        "items": [],
+    }
+    station.save()
+
+    ids = {item["id"] for item in effective_quiz_items(station)}
+    assert ids == {f"bank-{q1.id}", f"bank-{q2.id}"}
+
+    # Thêm câu mới vào ngân hàng → trạm tự có thêm mà không cần sửa cấu hình.
+    q3 = QuestionBankItem.objects.create(sub_event=event, question="Q3", options=["A", "B"], correct_option=0)
+    ids_after = {item["id"] for item in effective_quiz_items(station)}
+    assert f"bank-{q3.id}" in ids_after
+
+    # Câu bị tắt active thì rụng khỏi bộ hiệu lực.
+    q2.active = False
+    q2.save()
+    ids_final = {item["id"] for item in effective_quiz_items(station)}
+    assert f"bank-{q2.id}" not in ids_final
+
+
+def test_bank_use_all_random_draw_and_dedup(event_fixture, team_fixture, station_fixture):
+    """useAll + randomCount vẫn bốc ngẫu nhiên per-team và dedup chéo trạm."""
+    event = event_fixture
+    team = team_fixture
+    a = station_fixture(code="A", sub_event=event)
+    b = station_fixture(code="B", sub_event=event)
+    q1 = QuestionBankItem.objects.create(sub_event=event, question="Q1", options=["A", "B"], correct_option=0)
+    q2 = QuestionBankItem.objects.create(sub_event=event, question="Q2", options=["A", "B"], correct_option=0)
+    cfg = {"bank": {"useAll": True, "itemIds": []}, "quiz": {"randomCount": 1}, "items": []}
+    a.submission_config = cfg; a.save()
+    b.submission_config = dict(cfg); b.save()
+
+    da = variant_item_ids(a, team)
+    db = variant_item_ids(b, team)
+    assert len(da) == 1 and len(db) == 1
+    assert da[0] != db[0]  # dedup chéo trạm

@@ -10,6 +10,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      target: ['es2015', 'safari13'],
+      cssTarget: ['safari13'],
+    },
     server: {
       host: '0.0.0.0',
       port: 5173,

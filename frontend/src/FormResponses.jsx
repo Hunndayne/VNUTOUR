@@ -291,7 +291,7 @@ function inferFieldKind(field) {
   return 'text'
 }
 
-function FormFieldCard({ label, required, helper, children }) {
+function FormFieldCard({ label, required, helper, children, isAntiCheat = true }) {
   return (
     <div className={`${CARD} relative px-5 py-5 sm:px-6`}>
       <div className="mb-5 relative">
@@ -300,7 +300,7 @@ function FormFieldCard({ label, required, helper, children }) {
           {required ? <span className="ml-1 text-clay">*</span> : null}
         </h2>
         {helper ? <p className="mt-1 text-sm text-ink/55">{helper}</p> : null}
-        <AITrapPrompt />
+        {isAntiCheat && <AITrapPrompt />}
       </div>
       {children}
     </div>
@@ -335,7 +335,7 @@ function FieldInput({ field, value, onChange }) {
   )
 }
 
-function QuizChoice({ active, label, onClick, index = 0 }) {
+function QuizChoice({ active, label, onClick, index = 0, isAntiCheat = true }) {
   return (
     <button
       type="button"
@@ -344,7 +344,7 @@ function QuizChoice({ active, label, onClick, index = 0 }) {
         active ? 'border-trail bg-trail/10 shadow-[0_10px_24px_rgba(39,102,93,0.12)]' : 'border-stone bg-paper/50 hover:border-ink/25 hover:bg-white'
       }`}
     >
-      <TrapPattern index={index} />
+      {isAntiCheat && <TrapPattern index={index} />}
       <span className={`relative z-10 mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border transition ${active ? 'border-trail bg-trail text-white' : 'border-stone bg-white text-transparent'}`}>
         <Icon name="checkPlain" className="h-3.5 w-3.5" />
       </span>
@@ -458,7 +458,7 @@ function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
   )
 }
 
-function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
+function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions, isAntiCheat = true }) {
   const shuffledOptions = useMemo(() => {
     const opts = (item.options || []).map((label, originalIndex) => ({ label, originalIndex }))
     if (randomizeOptions) {
@@ -475,6 +475,7 @@ function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
       index={index + 1}
       label={item.question || `Cau hoi ${index + 1}`}
       helper="Chon mot dap an"
+      isAntiCheat={isAntiCheat}
     >
       <div className="grid gap-3">
         {shuffledOptions.map((opt, displayIndex) => (
@@ -484,6 +485,7 @@ function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
             label={opt.label || `Lua chon ${opt.originalIndex + 1}`}
             active={answer === opt.originalIndex}
             onClick={() => onAnswer(opt.originalIndex)}
+            isAntiCheat={isAntiCheat}
           />
         ))}
       </div>
@@ -643,6 +645,7 @@ function FormSubmissionPanel({
   // Deterrence, not prevention — the web cannot stop a screenshot. Hiding the
   // content while the tab is backgrounded or the window loses focus at least
   // keeps it out of the frame when someone alt-tabs to a capture tool.
+  const isAntiCheat = submissionConfig.antiCheat !== false
   const [contentHidden, setContentHidden] = useState(false)
   // Opening the attachment file dialog blurs the window too — that is the
   // participant uploading, not tabbing away to a capture tool — so a click on
@@ -655,6 +658,7 @@ function FormSubmissionPanel({
     window.setTimeout(() => { pickingFileRef.current = false }, 1500)
   }
   useEffect(() => {
+    if (!isAntiCheat) return
     const handleVisibilityChange = () => setContentHidden(document.hidden)
     const handleBlur = () => {
       if (pickingFileRef.current) {
@@ -666,18 +670,45 @@ function FormSubmissionPanel({
     const handleFocus = () => {
       if (!document.hidden) setContentHidden(false)
     }
+    const handleKeyDown = (e) => {
+      // F12
+      if (e.key === 'F12' || e.keyCode === 123) e.preventDefault()
+      // Ctrl+Shift+I / Cmd+Opt+I / Ctrl+Shift+J / Cmd+Opt+J
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) e.preventDefault()
+      // Ctrl+U / Cmd+U
+      if ((e.ctrlKey || e.metaKey) && ['U', 'u'].includes(e.key)) e.preventDefault()
+      // Ctrl+S / Cmd+S
+      if ((e.ctrlKey || e.metaKey) && ['S', 's'].includes(e.key)) e.preventDefault()
+      // Ctrl+P / Cmd+P
+      if ((e.ctrlKey || e.metaKey) && ['P', 'p'].includes(e.key)) e.preventDefault()
+    }
+    
+    // Anti-DevTools debugger loop
+    const devtoolsTimer = setInterval(() => {
+      const start = performance.now()
+      // eslint-disable-next-line no-debugger
+      debugger
+      // If devtools is open, debugger will pause execution, making the elapsed time much longer
+      if (performance.now() - start > 100) {
+        setContentHidden(true)
+      }
+    }, 2000)
+
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleBlur)
     window.addEventListener('focus', handleFocus)
+    window.addEventListener('keydown', handleKeyDown)
     return () => {
+      clearInterval(devtoolsTimer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [])
+  }, [isAntiCheat])
 
   const blockClipboardEvent = (event) => {
-    event.preventDefault()
+    if (isAntiCheat) event.preventDefault()
   }
 
   const setAnswer = (key, value) => {
@@ -828,7 +859,7 @@ function FormSubmissionPanel({
           )
         : null}
       <div
-        className={`space-y-5 transition-[filter] duration-200 select-none ${contentHidden ? 'blur-md' : ''}`}
+        className={`space-y-5 transition-[filter] duration-200 ${isAntiCheat ? 'select-none' : ''} ${contentHidden ? 'blur-md' : ''}`}
         onCopy={blockClipboardEvent}
         onCut={blockClipboardEvent}
         onContextMenu={blockClipboardEvent}
@@ -922,8 +953,12 @@ function FormSubmissionPanel({
               ) : (
                 <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
               )}
-              <span aria-hidden="true">·</span>
-              <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
+              {isAntiCheat && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
+                </>
+              )}
             </div>
 
             {submissionItems.map((item, index) => {
@@ -936,6 +971,7 @@ function FormSubmissionPanel({
                 answer={answers[`quiz:${item.id}`]}
                 onAnswer={(val) => setAnswer(`quiz:${item.id}`, val)}
                 randomizeOptions={submissionConfig.quiz?.randomizeOptions}
+                isAntiCheat={isAntiCheat}
               />
             )
           }
@@ -947,6 +983,7 @@ function FormSubmissionPanel({
                 index={index + 1}
                 label="Tep minh chung"
                 helper="Tai len theo cau hinh cua tram"
+                isAntiCheat={isAntiCheat}
               >
                 <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} />
               </FormFieldCard>
@@ -960,6 +997,7 @@ function FormSubmissionPanel({
               label={item.label || `Truong ${index + 1}`}
               required={item.required}
               helper={item.placeholder}
+              isAntiCheat={isAntiCheat}
             >
               <FieldInput
                 field={item}
@@ -1086,9 +1124,16 @@ export default function FormResponses() {
     return <div className="min-h-screen bg-paper px-6 py-16 text-center text-sm text-ink/45">Khong co bieu mau nao kha dung cho phase hien tai.</div>
   }
 
+  const isAntiCheat = selectedForm?.submission_config?.antiCheat !== false
+
   return (
     <div className="min-h-screen bg-paper text-ink selection:bg-gold/30">
-      <InvisibleWatermark text={teamCode} />
+      {isAntiCheat && (
+        <>
+          <InvisibleWatermark text={teamCode} />
+          <style>{`@media print { body { display: none !important; } }`}</style>
+        </>
+      )}
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <a href="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink">
           <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />

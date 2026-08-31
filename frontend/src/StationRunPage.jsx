@@ -916,7 +916,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   }
 
   return (
-    <div className="relative min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
+    <div className="relative min-h-screen min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
       <Contours />
       <InvisibleWatermark text={listPayload?.team_code} />
       {body}

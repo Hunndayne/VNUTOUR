@@ -672,7 +672,7 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
         role="dialog"
         aria-modal="true"
         aria-labelledby="member-modal-title"
-        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100dvh-3rem)]"
+        className="relative flex max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100vh-3rem)] sm:max-h-[calc(100dvh-3rem)]"
         onSubmit={onSave}
       >
         <div className="flex items-start justify-between border-b border-[#DCD8CC] bg-white px-5 py-4 sm:px-6">
@@ -769,7 +769,7 @@ function PaymentConfirmModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="payment-confirm-title"
-        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100dvh-3rem)]"
+        className="relative flex max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100vh-3rem)] sm:max-h-[calc(100dvh-3rem)]"
         onSubmit={onConfirm}
       >
         <div className="flex items-start justify-between border-b border-[#DCD8CC] bg-white px-5 py-4 sm:px-6">
@@ -1222,7 +1222,18 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const handleCopyContent = async () => {
     if (!info?.content) return
     try {
-      await navigator.clipboard.writeText(info.content)
+      try {
+        await navigator.clipboard.writeText(info.content)
+      } catch {
+        const ta = document.createElement('textarea')
+        ta.value = info.content
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {

@@ -227,6 +227,7 @@ function createSubmissionConfig(submission = {}) {
   }
 
   return {
+    antiCheat: submission.antiCheat ?? true,
     brief: submission.brief ?? '',
     items,
     quiz: {
@@ -237,6 +238,7 @@ function createSubmissionConfig(submission = {}) {
     },
     bank: {
       itemIds: submission.bank?.itemIds ?? [],
+      useAll: submission.bank?.useAll ?? false,
       mixStationQuiz: submission.bank?.mixStationQuiz ?? false,
     },
     limits: createSubmissionLimits(submission.limits),
@@ -281,10 +283,10 @@ function createStation(station = {}) {
       score: Number.isFinite(Number(team.score)) ? Number(team.score) : Math.max(5, 25 - index * 5),
     }))
     : []
-  next.checkinPolicy = Object.hasOwn(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
+  next.checkinPolicy = Object.prototype.hasOwnProperty.call(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
   next.capacityMode = station.capacityMode === 'limited' ? 'limited' : 'unlimited'
   next.maxConcurrentTeams = Math.max(1, Number(station.maxConcurrentTeams) || 2)
-  next.scoringMode = Object.hasOwn(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
+  next.scoringMode = Object.prototype.hasOwnProperty.call(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
   const rawThreshold = Number(station.passThreshold)
   next.passThreshold = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? Math.round(rawThreshold) : 0
   const rawPoints = Number(station.passPoints)
@@ -1797,7 +1799,10 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   }
 
   const inlineQuizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
-  const bankItemCount = form.submission.bank?.itemIds?.length || 0
+  const bankUseAll = form.submission.bank?.useAll ?? false
+  const bankItemCount = bankUseAll
+    ? bankItems.length
+    : (form.submission.bank?.itemIds?.length || 0)
   const quizItemCount = inlineQuizItemCount + bankItemCount
   const hasQuizItem = quizItemCount > 0
   const hasAttachmentItem = form.submission.items.some(item => item.type === 'attachment')
@@ -2088,32 +2093,24 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
 
         {bankItems.length > 0 && (
           <div className={`${CARD} p-4 mb-4`}>
-            <p className="font-semibold text-sm text-ink mb-2">Bộ câu hỏi dùng chung</p>
-            <p className="text-xs text-ink/60 mb-3">Chọn các câu từ ngân hàng câu hỏi để đưa vào đề thi của trạm này.</p>
-            <div className="max-h-48 overflow-y-auto border border-stone rounded-lg divide-y divide-stone">
-              {bankItems.map(item => {
-                const checked = form.submission.bank?.itemIds?.includes(item.id)
-                return (
-                  <label key={item.id} className="flex items-start gap-3 p-3 hover:bg-paper cursor-pointer transition">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        const newIds = e.target.checked
-                          ? [...(form.submission.bank?.itemIds || []), item.id]
-                          : (form.submission.bank?.itemIds || []).filter(id => id !== item.id)
-                        updateSubmission(sub => ({ ...sub, bank: { ...sub.bank, itemIds: newIds } }))
-                      }}
-                      className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-ink">{item.question}</p>
-                      <p className="text-xs text-ink/40 mt-1 line-clamp-1">{item.options.join(' • ')}</p>
-                    </div>
-                  </label>
-                )
-              })}
-            </div>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={bankUseAll}
+                onChange={(e) => updateSubmission(sub => ({
+                  ...sub,
+                  bank: { ...sub.bank, useAll: e.target.checked },
+                }))}
+                className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              />
+              <div className="flex-1">
+                <p className="font-semibold text-sm text-ink">Lấy câu hỏi từ ngân hàng dùng chung</p>
+                <p className="text-xs text-ink/60 mt-1">
+                  Dùng toàn bộ {bankItems.length} câu của sự kiện (thêm câu vào ngân hàng thì trạm tự có thêm).
+                  Số câu mỗi đội làm đặt ở ô “Số câu phát ngẫu nhiên” bên dưới.
+                </p>
+              </div>
+            </label>
           </div>
         )}
 
@@ -2301,6 +2298,29 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </label>
         </div>
       </div>
+
+      {hasSubmissionItem && (
+        <div className={`${CARD} p-4`}>
+          <SectionTitle title="Chống gian lận" />
+          <label className="mt-2 inline-flex items-start gap-3 text-sm text-ink/60 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.submission.antiCheat ?? true}
+              onChange={event => updateSubmission(submission => ({
+                ...submission,
+                antiCheat: event.target.checked,
+              }))}
+              className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            <div className="flex-1">
+              <span className="font-semibold text-ink">Bật hệ thống chống gian lận cho trạm này</span>
+              <p className="mt-1 text-xs leading-5 text-ink/45">
+                Chặn copy, vô hiệu hóa phím tắt (F12, In, DevTools), tự làm mờ màn hình khi rời tab, và chèn bẫy AI/OCR vào trang. Tắt khi dùng thiết bị lạ hoặc khi tính tương thích được ưu tiên.
+              </p>
+            </div>
+          </label>
+        </div>
+      )}
 
       {hasSubmissionItem && (
         <div className={`${CARD} p-4`}>

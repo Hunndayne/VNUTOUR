@@ -62,13 +62,13 @@ function applyPreviewTemplate(source, preview, { forHtml = false } = {}) {
     return () => (forHtml ? escapeHtml(raw) : raw)
   }
   return String(source || '')
-    .replaceAll('{{ten}}', value('name'))
-    .replaceAll('{{name}}', value('name'))
-    .replaceAll('{{full_name}}', value('name'))
-    .replaceAll('{{ho_ten}}', value('name'))
-    .replaceAll('{{email}}', value('email'))
-    .replaceAll('{{username}}', value('username'))
-    .replaceAll('{{role}}', value('role'))
+    .replace(/\{\{ten\}\}/g, value('name'))
+    .replace(/\{\{name\}\}/g, value('name'))
+    .replace(/\{\{full_name\}\}/g, value('name'))
+    .replace(/\{\{ho_ten\}\}/g, value('name'))
+    .replace(/\{\{email\}\}/g, value('email'))
+    .replace(/\{\{username\}\}/g, value('username'))
+    .replace(/\{\{role\}\}/g, value('role'))
 }
 
 export default function EmailPage() {
