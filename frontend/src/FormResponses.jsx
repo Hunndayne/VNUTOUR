@@ -307,12 +307,12 @@ function FormFieldCard({ label, required, helper, children, isAntiCheat = true }
   )
 }
 
-function FieldInput({ field, value, onChange }) {
+function FieldInput({ field, value, onChange, disabled }) {
   const kind = inferFieldKind(field)
   // `select-text` overrides the form-wide `select-none` guard (see
   // FormSubmissionPanel) so the participant can still select and edit their
   // own typed answer — only the question content itself is locked down.
-  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10'
+  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10 disabled:opacity-60 disabled:bg-stone/20 disabled:cursor-not-allowed'
   if (kind === 'textarea') {
     return (
       <textarea
@@ -321,6 +321,7 @@ function FieldInput({ field, value, onChange }) {
         onChange={(event) => onChange(event.target.value)}
         placeholder={field.placeholder || 'Nhap cau tra loi cua ban'}
         className={`${baseClass} leading-7`}
+        disabled={disabled}
       />
     )
   }
@@ -331,18 +332,20 @@ function FieldInput({ field, value, onChange }) {
       onChange={(event) => onChange(event.target.value)}
       placeholder={field.placeholder || 'Nhap cau tra loi cua ban'}
       className={baseClass}
+      disabled={disabled}
     />
   )
 }
 
-function QuizChoice({ active, label, onClick, index = 0, isAntiCheat = true }) {
+function QuizChoice({ active, label, onClick, index = 0, isAntiCheat = true, disabled }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`relative overflow-hidden flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition ${
         active ? 'border-trail bg-trail/10 shadow-[0_10px_24px_rgba(39,102,93,0.12)]' : 'border-stone bg-paper/50 hover:border-ink/25 hover:bg-white'
-      }`}
+      } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
     >
       {isAntiCheat && <TrapPattern index={index} />}
       <span className={`relative z-10 mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border transition ${active ? 'border-trail bg-trail text-white' : 'border-stone bg-white text-transparent'}`}>
@@ -353,14 +356,15 @@ function QuizChoice({ active, label, onClick, index = 0, isAntiCheat = true }) {
   )
 }
 
-function AttachmentBox({ attachment, files, onChange, onPickerOpen }) {
+function AttachmentBox({ attachment, files, onChange, onPickerOpen, disabled }) {
   return (
-    <label className="block cursor-pointer border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition hover:bg-gold/15" style={{ borderRadius: 26 }}>
+    <label className={`block border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-gold/15'}`} style={{ borderRadius: 26 }}>
       <input
         type="file"
         className="hidden"
         multiple={Number(attachment.maxFiles) > 1}
         onClick={onPickerOpen}
+        disabled={disabled}
         onChange={(event) => {
           onChange(Array.from(event.target.files || []))
           event.target.value = ''
@@ -458,7 +462,7 @@ function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
   )
 }
 
-function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions, isAntiCheat = true }) {
+function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions, isAntiCheat = true, disabled }) {
   const shuffledOptions = useMemo(() => {
     const opts = (item.options || []).map((label, originalIndex) => ({ label, originalIndex }))
     if (randomizeOptions) {
@@ -486,6 +490,7 @@ function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions, isAn
             active={answer === opt.originalIndex}
             onClick={() => onAnswer(opt.originalIndex)}
             isAntiCheat={isAntiCheat}
+            disabled={disabled}
           />
         ))}
       </div>
@@ -974,6 +979,7 @@ function FormSubmissionPanel({
                 onAnswer={(val) => setAnswer(`quiz:${item.id}`, val)}
                 randomizeOptions={submissionConfig.quiz?.randomizeOptions}
                 isAntiCheat={isAntiCheat}
+                disabled={locked || formClosed}
               />
             )
           }
@@ -987,7 +993,7 @@ function FormSubmissionPanel({
                 helper="Tai len theo cau hinh cua tram"
                 isAntiCheat={isAntiCheat}
               >
-                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} />
+                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} disabled={locked || formClosed} />
               </FormFieldCard>
             )
           }
@@ -1005,6 +1011,7 @@ function FormSubmissionPanel({
                 field={item}
                 value={answers[`form:${item.id}`] || ''}
                 onChange={(value) => setAnswer(`form:${item.id}`, value)}
+                disabled={locked || formClosed}
               />
             </FormFieldCard>
           )
@@ -1023,10 +1030,10 @@ function FormSubmissionPanel({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={submitState === 'submitting' || formClosed}
+              disabled={submitState === 'submitting' || formClosed || locked}
               className="rounded-xl bg-ink px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
+              {locked ? 'Đã nộp' : formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
             </button>
           </div>
           {submitMessage ? (

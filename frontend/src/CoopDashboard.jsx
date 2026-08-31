@@ -237,6 +237,7 @@ function CoopDashboard() {
   const [logFilter, setLogFilter] = useState('all') // 'all' | 'active' | 'exited' | 'unscored'
   const [hasTorch, setHasTorch] = useState(false)
   const [isTorchOn, setIsTorchOn] = useState(false)
+  const [cameras, setCameras] = useState([])
   const [cameraMode, setCameraMode] = useState('environment')
 
   const [nowTick, setNowTick] = useState(() => Date.now())
@@ -695,6 +696,10 @@ function CoopDashboard() {
     import('qr-scanner').then(({ default: QrScanner }) => {
       if (cancelled || !videoRef.current) return
 
+      QrScanner.listCameras(true).then((cams) => {
+        if (!cancelled) setCameras(cams)
+      }).catch(() => {})
+
       scanner = new QrScanner(
         videoRef.current,
         (result) => {
@@ -745,7 +750,23 @@ function CoopDashboard() {
   }
 
   const toggleCameraFacing = () => {
-    setCameraMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
+    // Trên máy nhiều camera sau, chỉ luân phiên giữa các ống KÍNH SAU để bỏ qua
+    // ống góc siêu rộng / camera ảo không lấy nét gần được, và không nhảy nhầm
+    // sang camera trước.
+    const isFront = (label = '') => /front|user|trươ|trướ|selfie|facing user/i.test(label)
+    const rearCameras = cameras.filter((c) => !isFront(c.label))
+    const pool = rearCameras.length > 1 ? rearCameras : cameras
+
+    if (pool.length > 1) {
+      const currentIndex = pool.findIndex((c) => c.id === cameraMode)
+      const next = currentIndex === -1 ? 0 : (currentIndex + 1) % pool.length
+      setCameraMode(pool[next].id)
+    } else if (cameras.length > 1) {
+      const currentIndex = cameras.findIndex((c) => c.id === cameraMode)
+      setCameraMode(cameras[currentIndex === -1 ? 0 : (currentIndex + 1) % cameras.length].id)
+    } else {
+      setCameraMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
+    }
   }
 
   const handleManualSubmit = async (e) => {
