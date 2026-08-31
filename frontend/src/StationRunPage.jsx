@@ -157,8 +157,13 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
   // sẵn trong `/my-team/stations` nên báo trước cho đội khỏi mất công quét hụt.
   if (station.replay_locked) return 'replay_locked'
   if (station.checkin_policy === 'free_play') {
-    if (station.has_form && !hasSubmitted(state.submission)) return 'form'
-    return 'closed'
+    if (station.has_form) {
+      // Có bài nộp: chưa nộp thì mở form, nộp xong mới coi là hoàn thành.
+      return hasSubmitted(state.submission) ? 'closed' : 'form'
+    }
+    // Không có bài nộp: trạm tự do thuần hoạt động, không có gì để "đóng" trên
+    // web — đừng báo hoàn thành khi đội chưa làm gì.
+    return 'free_play'
   }
 
   return qrReady ? 'entry_qr' : 'entry_disabled'
@@ -666,6 +671,19 @@ function StationStageScreen({
         >
           <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
             Chọn trạm tiếp theo
+          </button>
+        </StatusPanel>
+      )}
+
+      {step === 'free_play' && (
+        <StatusPanel
+          tone="trail"
+          eyebrow="Trạm tự do"
+          title="Tham gia hoạt động tại trạm"
+          body="Trạm này không cần quét QR hay nộp bài trên hệ thống. Cứ tham gia hoạt động tại trạm, CTV sẽ ghi nhận kết quả cho đội."
+        >
+          <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
+            Về danh sách trạm
           </button>
         </StatusPanel>
       )}

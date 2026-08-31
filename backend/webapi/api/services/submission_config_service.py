@@ -272,8 +272,37 @@ def submission_items(
 
 
 def has_items(config: dict | None) -> bool:
-    """Whether the station has a form worth showing to participants."""
+    """Whether the station has a form worth showing to participants.
+
+    Counts inline items only. Stations that draw their quiz from the shared
+    question bank (no inline items) look empty here — use `has_form(config,
+    event_bank_count)` for the participant-facing "is there a form" check.
+    """
     return bool(normalize_config(config)["items"])
+
+
+def references_bank(config: dict | None) -> bool:
+    """Whether the config pulls quiz questions from the shared bank."""
+    bank = normalize_config(config)["bank"]
+    return bool(bank["useAll"]) or bool(bank["itemIds"])
+
+
+def has_form(config: dict | None, event_bank_count: int = 0) -> bool:
+    """Whether a station has a form worth showing, bank questions included.
+
+    `event_bank_count` is the number of active questions in the station's
+    sub-event bank, used to decide whether `useAll` actually resolves to any
+    questions. Pass it in (computed once per sub-event) to avoid a query per
+    station.
+    """
+    if has_items(config):
+        return True
+    bank = normalize_config(config)["bank"]
+    if bank["itemIds"]:
+        return True
+    if bank["useAll"] and event_bank_count > 0:
+        return True
+    return False
 
 
 def attachment_item(config: dict | None) -> dict | None:

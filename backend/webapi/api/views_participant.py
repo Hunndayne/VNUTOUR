@@ -32,6 +32,8 @@ from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
     public_config as public_submission_config,
     has_items as has_submission_items,
+    has_form as submission_has_form,
+    references_bank as submission_references_bank,
     attachment_item as submission_attachment_item,
     grade_quiz as grade_submission_quiz,
     checkout_after_submit,
@@ -293,6 +295,31 @@ def _is_survey_station(station: Station) -> bool:
     return station.sub_event.type == SubEvent.TYPE_SURVEY
 
 
+def _station_has_form(station: Station, bank_counts: dict | None = None) -> bool:
+    """Whether a station has a form worth showing, shared-bank questions included.
+
+    `has_submission_items` only counts inline items, so a station that draws its
+    whole quiz from the shared bank (via `useAll`/`itemIds`) would look empty and
+    the participant would see "already completed" instead of the quiz. Pass a
+    shared `bank_counts` dict when looping over many stations so the per-sub-event
+    bank count is queried at most once.
+    """
+    config = station.submission_config
+    if has_submission_items(config):
+        return True
+    if not submission_references_bank(config):
+        return False
+    if bank_counts is None:
+        bank_counts = {}
+    sub_event_id = station.sub_event_id
+    if sub_event_id not in bank_counts:
+        from api.models import QuestionBankItem
+        bank_counts[sub_event_id] = QuestionBankItem.objects.filter(
+            sub_event_id=sub_event_id, active=True,
+        ).count()
+    return submission_has_form(config, bank_counts[sub_event_id])
+
+
 def _station_form_payload(station: Station, team: Team | None = None) -> dict:
     from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
@@ -335,7 +362,7 @@ def _team_form_station_or_none(team: Team, station_id: int) -> Station | None:
     station = Station.objects.select_related("sub_event__phase").filter(
         id=station_id, active=True,
     ).first()
-    if not station or not has_submission_items(station.submission_config):
+    if not station or not _station_has_form(station):
         return None
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -1188,6 +1215,7 @@ def my_team_stations_view(request: HttpRequest):
     all_visited = all(journey_sessions.get(station.id) for station in stations)
 
     station_payloads = []
+    bank_counts: dict = {}
     for station in stations:
         session = my_sessions.get(station.id)
         submission = my_submissions.get(station.id)
@@ -1228,7 +1256,7 @@ def my_team_stations_view(request: HttpRequest):
             # Tells the app whether to show a QR for a collab to scan, or to let
             # the team open the station on its own.
             "checkin_policy": station.checkin_policy,
-            "has_form": has_submission_items(station.submission_config),
+            "has_form": _station_has_form(station, bank_counts),
             "submission_brief": station.submission_config.get("brief", "") if isinstance(station.submission_config, dict) else "",
             # Only meaningful where `has_form` — whether submitting ends the visit.
             "checkout_after_submit": checkout_after_submit(station.submission_config),
@@ -1301,8 +1329,9 @@ def my_team_forms_view(request: HttpRequest):
     )
 
     accessible_forms = []
+    bank_counts: dict = {}
     for station in stations:
-        if not has_submission_items(station.submission_config):
+        if not _station_has_form(station, bank_counts):
             continue
 
         phase_key = station.sub_event.phase.key
@@ -1393,7 +1422,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         id=station_id,
         active=True,
     ).first()
-    if not station or not has_submission_items(station.submission_config):
+    if not station or not _station_has_form(station):
         return JsonResponse({"error": "form_not_found"}, status=404)
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -1605,8 +1634,9 @@ def my_experience_view(request: HttpRequest):
             active=True,
             checkin_policy=Station.POLICY_FREE_PLAY,
         ).order_by("order", "id")
+        bank_counts: dict = {}
         for station in stations:
-            if has_submission_items(station.submission_config):
+            if _station_has_form(station, bank_counts):
                 open_forms.append(_station_form_payload(station, team=team))
 
     return JsonResponse({
