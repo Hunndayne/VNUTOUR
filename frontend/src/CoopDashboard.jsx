@@ -697,7 +697,17 @@ function CoopDashboard() {
       if (cancelled || !videoRef.current) return
 
       QrScanner.listCameras(true).then((cams) => {
-        if (!cancelled) setCameras(cams)
+        if (cancelled) return
+        setCameras(cams)
+        let savedId = null
+        try {
+          savedId = localStorage.getItem('coop.cameraId')
+        } catch {
+          savedId = null
+        }
+        if (savedId && cameraMode === 'environment' && cams.some((c) => c.id === savedId)) {
+          setCameraMode(savedId)
+        }
       }).catch(() => {})
 
       scanner = new QrScanner(
@@ -766,6 +776,16 @@ function CoopDashboard() {
       setCameraMode(cameras[currentIndex === -1 ? 0 : (currentIndex + 1) % cameras.length].id)
     } else {
       setCameraMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
+    }
+  }
+
+  const handleCameraSelect = (e) => {
+    const id = e.target.value
+    setCameraMode(id)
+    try {
+      localStorage.setItem('coop.cameraId', id)
+    } catch {
+      // ignore
     }
   }
 
@@ -1098,14 +1118,32 @@ function CoopDashboard() {
                           🔦 {isTorchOn ? 'Tắt đèn' : 'Bật đèn'}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={toggleCameraFacing}
-                        title="Đổi camera"
-                        className="rounded-lg border border-stone bg-white p-1 text-ink/70 hover:text-ink"
-                      >
-                        🔄
-                      </button>
+                      {cameras.length > 1 ? (
+                        <select
+                          value={cameras.some((c) => c.id === cameraMode) ? cameraMode : ''}
+                          onChange={handleCameraSelect}
+                          title="Chọn camera"
+                          className="rounded-lg border border-stone bg-white px-2 py-1 text-xs text-ink/70"
+                        >
+                          {!cameras.some((c) => c.id === cameraMode) && (
+                            <option value="" disabled>Chọn camera…</option>
+                          )}
+                          {cameras.map((c, index) => (
+                            <option key={c.id} value={c.id}>
+                              {c.label || `Camera ${index + 1}`}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={toggleCameraFacing}
+                          title="Đổi camera"
+                          className="rounded-lg border border-stone bg-white p-1 text-ink/70 hover:text-ink"
+                        >
+                          🔄
+                        </button>
+                      )}
                     </div>
                   </div>
 
