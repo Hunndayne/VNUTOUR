@@ -8,7 +8,7 @@ import {
   logoutAndRedirect,
   normalizeProgramForFrontend,
 } from './api.js'
-import { Badge, CARD, Icon } from './ui.jsx'
+import { CARD, Icon } from './ui.jsx'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
 
@@ -1519,7 +1519,13 @@ function CoopDashboard() {
                       <h3 className="font-display text-base font-bold text-ink flex items-center gap-2">
                         <span>📋</span> Phân công ca trực của bạn
                       </h3>
-                      <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                      <div className="grid gap-3 sm:grid-cols-3 pt-1">
+                        <div className="rounded-xl border border-stone/80 bg-paper/60 p-3">
+                          <p className="text-xs font-medium text-ink/65">Phase hiện tại</p>
+                          <p className="mt-1 font-display text-base font-bold text-ink">
+                            {phaseInfo.label}
+                          </p>
+                        </div>
                         <div className="rounded-xl border border-stone/80 bg-paper/60 p-3">
                           <p className="text-xs font-medium text-ink/65">Trạm phụ trách</p>
                           <p className="mt-1 font-display text-base font-bold text-ink">
