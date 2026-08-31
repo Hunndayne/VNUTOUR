@@ -1212,7 +1212,7 @@ def my_team_stations_view(request: HttpRequest):
     total_stations = len(stations)
     visited_count = 0
     passed_count = 0
-    all_visited = all(journey_sessions.get(station.id) for station in stations)
+    all_visited = all(journey_sessions.get(station.id) or my_submissions.get(station.id) for station in stations)
 
     station_payloads = []
     bank_counts: dict = {}
@@ -1222,22 +1222,42 @@ def my_team_stations_view(request: HttpRequest):
         rows = journey_sessions.get(station.id, [])
 
         visit_count = len(rows)
-        if visit_count:
-            visited_count += 1
         has_active = any(r["status"] == StationSession.STATUS_ACTIVE for r in rows)
         has_closed = any(r["status"] == StationSession.STATUS_CLOSED for r in rows)
         has_passed = any(r["outcome"] == StationSession.OUTCOME_PASSED for r in rows)
+
+        if submission and not rows:
+            visit_count = 1
+            has_closed = True
+            
+            sub_score = submission.score if submission.score is not None else 0
+            if station.scoring_mode == Station.SCORING_THRESHOLD:
+                has_passed = sub_score >= station.pass_threshold
+            elif station.scoring_mode == Station.SCORING_SCORE_ONLY:
+                has_passed = submission.status == StationSubmission.STATUS_GRADED or sub_score > 0
+            elif station.scoring_mode == Station.SCORING_PASS_FAIL:
+                has_passed = sub_score == station.pass_points and sub_score > 0
+            
+            if station.scoring_mode == Station.SCORING_PASS_FAIL:
+                best_score = station.pass_points if has_passed else 0
+            elif station.scoring_mode == Station.SCORING_THRESHOLD:
+                best_score = sub_score if has_passed else 0
+            else:
+                best_score = sub_score
+        else:
+            if station.scoring_mode == Station.SCORING_PASS_FAIL:
+                best_score = station.pass_points if has_passed else 0
+            elif station.scoring_mode == Station.SCORING_THRESHOLD:
+                passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
+                best_score = max(passed_scores) if passed_scores else 0
+            else:  # score_only
+                scores = [r["score"] for r in rows]
+                best_score = max(scores) if scores else 0
+
+        if visit_count:
+            visited_count += 1
         if has_passed:
             passed_count += 1
-
-        if station.scoring_mode == Station.SCORING_PASS_FAIL:
-            best_score = station.pass_points if has_passed else 0
-        elif station.scoring_mode == Station.SCORING_THRESHOLD:
-            passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
-            best_score = max(passed_scores) if passed_scores else 0
-        else:  # score_only
-            scores = [r["score"] for r in rows]
-            best_score = max(scores) if scores else 0
 
         if has_active:
             journey_status = "active"
@@ -1258,6 +1278,7 @@ def my_team_stations_view(request: HttpRequest):
             "checkin_policy": station.checkin_policy,
             "has_form": _station_has_form(station, bank_counts),
             "submission_brief": station.submission_config.get("brief", "") if isinstance(station.submission_config, dict) else "",
+            "limits": station.submission_config.get("limits", {}) if isinstance(station.submission_config, dict) else {},
             # Only meaningful where `has_form` — whether submitting ends the visit.
             "checkout_after_submit": checkout_after_submit(station.submission_config),
             "capacity": {
@@ -1293,6 +1314,7 @@ def my_team_stations_view(request: HttpRequest):
     payload["passed_count"] = passed_count
     payload["all_visited"] = all_visited
     payload["replay_enabled"] = replay_enabled
+    payload["server_now"] = timezone.now().isoformat()
 
     return JsonResponse(payload)
 

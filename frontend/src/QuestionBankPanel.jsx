@@ -143,25 +143,41 @@ export default function QuestionBankPanel({ eventId, canEdit }) {
               <div className="flex items-start justify-between">
                 <div>
                   <span className="text-xs font-mono font-semibold text-ink/40 mr-2">#{idx + 1}</span>
+                  <span className="text-xs font-mono bg-stone px-1.5 py-0.5 rounded mr-2 text-ink/50 uppercase">
+                    {item.type === 'text' ? 'Tự luận' : 'Trắc nghiệm'}
+                  </span>
                   <span className="text-sm font-medium text-ink">{item.question}</span>
                 </div>
                 <span className="text-xs text-gold font-mono whitespace-nowrap ml-4">
                   {item.points} đ
                 </span>
               </div>
-              <ul className="mt-2 space-y-1">
-                {item.options.map((opt, oIdx) => (
-                  <li
-                    key={oIdx}
-                    className={`text-xs pl-6 relative ${oIdx === item.correctOption ? 'font-medium text-trail' : 'text-ink/60'}`}
-                  >
-                    {oIdx === item.correctOption && (
-                      <Icon name="check" className="w-3 h-3 absolute left-1 top-[1px]" />
-                    )}
-                    {String.fromCharCode(65 + oIdx)}. {opt}
-                  </li>
-                ))}
-              </ul>
+              {item.type === 'text' ? (
+                <div className="mt-2 text-xs pl-6 text-trail font-medium flex gap-1.5 flex-wrap">
+                  <Icon name="check" className="w-3 h-3 mt-[1px]" />
+                  {item.correctText && item.correctText.length > 0 ? (
+                    item.correctText.map((t, i) => (
+                      <span key={i} className="bg-trail/10 px-1.5 py-0.5 rounded">{t}</span>
+                    ))
+                  ) : (
+                    <span className="text-ink/40 font-normal italic">Chấm thủ công</span>
+                  )}
+                </div>
+              ) : (
+                <ul className="mt-2 space-y-1">
+                  {item.options.map((opt, oIdx) => (
+                    <li
+                      key={oIdx}
+                      className={`text-xs pl-6 relative ${oIdx === item.correctOption ? 'font-medium text-trail' : 'text-ink/60'}`}
+                    >
+                      {oIdx === item.correctOption && (
+                        <Icon name="check" className="w-3 h-3 absolute left-1 top-[1px]" />
+                      )}
+                      {String.fromCharCode(65 + oIdx)}. {opt}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           ))}
         </div>

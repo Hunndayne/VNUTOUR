@@ -124,8 +124,10 @@ def test_inline_items_not_deduped(event_fixture, team_fixture, station_fixture):
     assert draw_b == ["quiz-1"] # Should not be deduped across stations
 
 
-def test_effective_quiz_items_excludes_text_and_attachment(event_fixture, station_fixture):
-    """BLOCKER 2 regression: non-quiz inline items must not be duplicated."""
+def test_effective_quiz_items_includes_text_excludes_attachment(event_fixture, station_fixture):
+    """Free-response text items are gradable questions and belong in the effective
+    set alongside quiz; attachments never do. Non-quiz items must not be
+    duplicated (the original BLOCKER 2 guard)."""
     event = event_fixture
     station = station_fixture(code="A", sub_event=event)
     q1 = QuestionBankItem.objects.create(sub_event=event, question="Q1", options=["A", "B"], correct_option=0)
@@ -142,9 +144,11 @@ def test_effective_quiz_items_excludes_text_and_attachment(event_fixture, statio
     station.save()
 
     effective = effective_quiz_items(station)
-    assert all(it["type"] == "quiz" for it in effective)
-    # exactly 1 bank quiz + 1 inline quiz, no text/attachment leaked in
-    assert len(effective) == 2
+    # No attachment leaks into the question set.
+    assert all(it["type"] in ("quiz", "text") for it in effective)
+    # 1 bank quiz + 1 inline quiz + 1 inline text, each exactly once (no dupes).
+    assert len(effective) == 3
+    assert len(effective) == len({it["id"] for it in effective})
 
     conf = public_config(station.submission_config, effective_quiz_items=effective)
     text_items = [it for it in conf["items"] if it["type"] == "text"]

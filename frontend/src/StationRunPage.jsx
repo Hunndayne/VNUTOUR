@@ -108,6 +108,12 @@ function listStatusBadge(station) {
       cls: 'bg-[#3E7CA8]/14 text-[#3E7CA8]',
     }
   }
+  // Free-play: đội đã nộp bài nhưng chưa được chấm đậu — báo "Đã nộp bài"
+  // thay vì "Chưa ghé". (`passed` đã return ở trên nên khỏi loại trừ lại.)
+  if (station?.my_submission?.status === 'submitted') {
+    return { label: 'Đã nộp bài', cls: 'bg-[#E0A23A]/20 text-[#9A6B12]' }
+  }
+
   if (status === 'failed') return { label: 'Chưa qua', cls: 'bg-[#D6492B]/14 text-[#D6492B]' }
   if (status === 'not_visited') return { label: 'Chưa ghé', cls: 'bg-[#20312B]/[0.06] text-[#20312B]/45' }
 
@@ -484,11 +490,20 @@ function StationStageScreen({
   pollError,
   onBack,
   onOpenForm,
+  serverTimeOffset = 0,
 }) {
   const payload = state?.qr?.payload || ''
   const teamCode = state?.team_code || ''
   const cancelled = state?.session?.status === 'cancelled'
   const full = isStationFull(station)
+
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffset)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now() + serverTimeOffset)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [serverTimeOffset])
 
   return (
     <div className="space-y-4">
@@ -618,7 +633,37 @@ function StationStageScreen({
             ? "Mở phần thi của trạm này để làm và nộp bài."
             : "CTV đã quét QR vào trạm. Mở phần thi của trạm này để làm và nộp bài."}
         >
-          <button type="button" onClick={() => onOpenForm(stationId)} className={`w-full ${TRAIL_BUTTON}`}>
+          {(() => {
+            const openTime = station?.limits?.opensAt ? new Date(station.limits.opensAt).getTime() : 0
+            const closeTime = station?.limits?.closesAt ? new Date(station.limits.closesAt).getTime() : 0
+
+            if (openTime > 0 && now < openTime) {
+              const timeStr = new Date(station.limits.opensAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+              return (
+                <div className="mb-4 flex items-center justify-between rounded-xl border border-[#DCD8CC] bg-[#DCD8CC]/30 px-5 py-3 text-[#20312B]/70">
+                  <span className="text-sm font-semibold">Phần biểu mẫu chưa được mở. Thời gian mở:</span>
+                  <span className="font-mono text-lg font-bold tabular-nums">{timeStr}</span>
+                </div>
+              )
+            }
+            if (closeTime > 0 && now >= closeTime) {
+              return (
+                <div className="mb-4 flex items-center justify-between rounded-xl border border-[#D6492B]/30 bg-[#D6492B]/10 px-5 py-3 text-[#D6492B]">
+                  <span className="text-sm font-semibold">Biểu mẫu đã đóng thời gian làm bài.</span>
+                </div>
+              )
+            }
+            return null
+          })()}
+          <button 
+            type="button" 
+            onClick={() => onOpenForm(stationId)} 
+            className={`w-full ${TRAIL_BUTTON}`}
+            disabled={
+              (station?.limits?.opensAt && now < new Date(station.limits.opensAt).getTime()) ||
+              (station?.limits?.closesAt && now >= new Date(station.limits.closesAt).getTime())
+            }
+          >
             <Icon name="doc" className="h-5 w-5" />
             Mở phần thi của trạm
           </button>
@@ -721,6 +766,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   const [pollError, setPollError] = useState('')
   const [sessionExpired, setSessionExpired] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [serverTimeOffset, setServerTimeOffset] = useState(0)
 
   const stations = useMemo(() => listPayload?.stations || [], [listPayload])
 
@@ -728,6 +774,12 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     setListLoading(true)
     try {
       const payload = await apiRequest('/my-team/stations')
+      if (payload?.server_now) {
+        const serverNow = new Date(payload.server_now).getTime()
+        if (!isNaN(serverNow)) {
+          setServerTimeOffset(serverNow - Date.now())
+        }
+      }
       setListPayload(payload)
       setListError('')
     } catch (error) {
@@ -917,6 +969,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
             pollError={pollError}
             onBack={backToList}
             onOpenForm={handleOpenForm}
+            serverTimeOffset={serverTimeOffset}
           />
         )}
     </div>

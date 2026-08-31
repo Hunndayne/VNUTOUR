@@ -10,13 +10,25 @@ def import_questions(sub_event_id: int, items: list[dict[str, Any]]) -> dict[str
     to_create = []
     max_order = QuestionBankItem.objects.filter(sub_event_id=sub_event_id).count()
     for item in items:
-        if "question" not in item or "options" not in item or len(item["options"]) < 2:
+        if "question" not in item:
+            continue
+        
+        item_type = item.get("type", "quiz")
+        if item_type not in ("quiz", "text"):
+            item_type = "quiz"
+
+        options = item.get("options", [])
+        if item_type == "quiz" and len(options) < 2:
             continue
         
         correct_option = item.get("correctOption")
         if not isinstance(correct_option, int):
             correct_option = None
             
+        correct_text = item.get("correctText")
+        if not isinstance(correct_text, list):
+            correct_text = []
+
         try:
             points = int(item.get("points", 1))
         except (TypeError, ValueError):
@@ -25,9 +37,11 @@ def import_questions(sub_event_id: int, items: list[dict[str, Any]]) -> dict[str
         to_create.append(
             QuestionBankItem(
                 sub_event_id=sub_event_id,
+                type=item_type,
                 question=item["question"],
-                options=item["options"],
+                options=options,
                 correct_option=correct_option,
+                correct_text=correct_text,
                 points=points,
                 order=max_order,
                 tags=item.get("tags", [])
@@ -45,6 +59,10 @@ def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionB
     found or not belonging to sub_event_id; ValueError on bad correctOption."""
     item = QuestionBankItem.objects.get(id=item_id, sub_event_id=sub_event_id)
 
+    if "type" in fields:
+        new_type = fields["type"]
+        if new_type in ("quiz", "text"):
+            item.type = new_type
     if "question" in fields:
         item.question = str(fields["question"] or "").strip()
     if "options" in fields:
@@ -57,10 +75,14 @@ def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionB
         if correct is not None:
             if not isinstance(correct, int) or isinstance(correct, bool):
                 raise ValueError("invalid_correct_option")
-            options = item.options if isinstance(item.options, list) else []
-            if not (0 <= correct < len(options)):
-                raise ValueError("correct_option_out_of_range")
+            if item.type == "quiz":
+                options = item.options if isinstance(item.options, list) else []
+                if not (0 <= correct < len(options)):
+                    raise ValueError("correct_option_out_of_range")
         item.correct_option = correct
+    if "correctText" in fields:
+        correct_text = fields["correctText"]
+        item.correct_text = correct_text if isinstance(correct_text, list) else []
     if "points" in fields:
         try:
             item.points = int(fields["points"])
@@ -79,7 +101,7 @@ def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionB
 
     # Validate correct_option against (possibly just-updated) options even
     # when only options changed without correctOption in this call.
-    if "options" in fields and "correctOption" not in fields:
+    if item.type == "quiz" and "options" in fields and "correctOption" not in fields:
         options = item.options if isinstance(item.options, list) else []
         if item.correct_option is not None and not (0 <= item.correct_option < len(options)):
             raise ValueError("correct_option_out_of_range")
@@ -142,10 +164,11 @@ def effective_quiz_items(station: Station) -> list[dict[str, Any]]:
                 bank_items.append({
                     "id": f"bank-{obj.id}",
                     "bankItemId": obj.id,
-                    "type": "quiz",
+                    "type": obj.type,
                     "question": obj.question,
                     "options": obj.options,
                     "correctOption": obj.correct_option,
+                    "correctText": obj.correct_text,
                     "points": obj.points,
                     "required": True, # bank questions are implicitly required
                 })
@@ -156,7 +179,7 @@ def effective_quiz_items(station: Station) -> list[dict[str, Any]]:
     # in the same process would see the answers already stripped.
     inline_quiz = [
         dict(it) for it in inline_items
-        if isinstance(it, dict) and it.get("type") == "quiz"
+        if isinstance(it, dict) and it.get("type") in ("quiz", "text")
     ]
     return bank_items + inline_quiz
 

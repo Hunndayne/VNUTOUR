@@ -52,6 +52,7 @@ ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT)
 # Keys that would leak the right answer to participants.
 _ANSWER_KEYS = (
     "correctOption", "correct_option",
+    "correctText", "correct_text",
     "correctAnswer", "correct_answer", "answer",
 )
 
@@ -252,15 +253,15 @@ def submission_items(
         effective_by_id = {
             item["id"]: item for item in effective_quiz_items if isinstance(item, dict)
         }
-        inline_quiz_ids = {item["id"] for item in items if item["type"] == TYPE_QUIZ}
+        inline_effective_ids = {item["id"] for item in items if item["type"] in (TYPE_QUIZ, TYPE_TEXT)}
         bank_only = [
             item for item in effective_quiz_items
-            if isinstance(item, dict) and item.get("id") not in inline_quiz_ids
+            if isinstance(item, dict) and item.get("id") not in inline_effective_ids
         ]
 
         merged = list(bank_only)
         for item in items:
-            if item["type"] == TYPE_QUIZ:
+            if item["type"] in (TYPE_QUIZ, TYPE_TEXT):
                 merged.append(effective_by_id.get(item["id"], item))
             else:
                 merged.append(item)
@@ -356,7 +357,8 @@ def draw_quiz_item_ids(
     mix_station_quiz = normalized["bank"]["mixStationQuiz"]
     target = random_count(config)
     
-    available_items = submission_items(config, TYPE_QUIZ, effective_quiz_items)
+    all_available = submission_items(config, None, effective_quiz_items)
+    available_items = [item for item in all_available if item["type"] in (TYPE_QUIZ, TYPE_TEXT)]
     available = [item["id"] for item in available_items]
 
     # Map item ID -> bankItemId (if any)
@@ -457,7 +459,7 @@ def _served_items(items: list[dict], item_ids: list[str] | None) -> list[dict]:
     drawn = set(item_ids)
     return [
         item for item in items
-        if item["type"] != TYPE_QUIZ or item["id"] in drawn
+        if item["type"] not in (TYPE_QUIZ, TYPE_TEXT) or item["id"] in drawn
     ]
 
 
@@ -475,7 +477,7 @@ def public_config(
     public["items"] = _served_items(all_items, item_ids)
     
     for item in public["items"]:
-        if item["type"] == TYPE_QUIZ:
+        if item["type"] in (TYPE_QUIZ, TYPE_TEXT):
             for key in _ANSWER_KEYS:
                 item.pop(key, None)
     return public
@@ -488,10 +490,15 @@ def grade_quiz(
     effective_quiz_items: list[dict] | None = None,
 ) -> dict | None:
     """Grade quiz answers against the config; None when the form has no quiz."""
-    items = _served_items(
+    quiz_items = _served_items(
         submission_items(config, TYPE_QUIZ, effective_quiz_items),
         item_ids
     )
+    text_items = _served_items(
+        submission_items(config, TYPE_TEXT, effective_quiz_items),
+        item_ids
+    )
+    items = quiz_items + text_items
     if not items:
         return None
 
@@ -499,21 +506,42 @@ def grade_quiz(
     for answer in (response_payload or {}).get("quiz") or []:
         if isinstance(answer, dict):
             answers[str(answer.get("id"))] = answer.get("selectedOption")
+    for answer in (response_payload or {}).get("form") or []:
+        if isinstance(answer, dict):
+            answers[str(answer.get("id"))] = answer.get("value")
 
     correct_count = 0
     total = 0
     points = 0
     max_points = 0
     for item in items:
-        correct = item.get("correctOption")
-        if not isinstance(correct, int):
-            continue
         weight = item_points(item)
-        total += 1
-        max_points += weight
-        if answers.get(str(item["id"])) == correct:
-            correct_count += 1
-            points += weight
+        if item["type"] == TYPE_QUIZ:
+            correct = item.get("correctOption")
+            if not isinstance(correct, int):
+                continue
+            total += 1
+            max_points += weight
+            if answers.get(str(item["id"])) == correct:
+                correct_count += 1
+                points += weight
+        elif item["type"] == TYPE_TEXT:
+            correct_texts = item.get("correctText")
+            if not correct_texts or not isinstance(correct_texts, list):
+                continue
+            
+            user_answer = str(answers.get(str(item["id"]), "")).strip().lower()
+            is_correct = False
+            for ans in correct_texts:
+                if str(ans).strip().lower() == user_answer:
+                    is_correct = True
+                    break
+
+            total += 1
+            max_points += weight
+            if is_correct:
+                correct_count += 1
+                points += weight
 
     return {
         "correct_count": correct_count,

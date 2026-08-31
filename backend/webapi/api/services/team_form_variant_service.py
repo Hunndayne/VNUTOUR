@@ -28,10 +28,14 @@ def variant_item_ids(station, team) -> list[str]:
         return []
 
     effective_items = effective_quiz_items(station)
-    available_ids = [item["id"] for item in effective_items if item["type"] == "quiz"]
-    
+    # Text (free-response) items are drawn and served alongside quiz items — the
+    # rest of the pipeline (_served_items, draw_quiz_item_ids, grade_quiz) treats
+    # both types together, so the variant draw must too or text items never land
+    # in `item_ids` and get stripped out of every served form.
+    available_ids = [item["id"] for item in effective_items if item["type"] in ("quiz", "text")]
+
     if not available_ids:
-        # no quiz at all (bank or inline)
+        # no quiz/text at all (bank or inline)
         return []
 
     # Check if we already have a materialized variant

@@ -291,9 +291,11 @@ class QuestionBankItem(models.Model):
     sub_event = models.ForeignKey(
         SubEvent, on_delete=models.CASCADE, related_name="question_bank",
     )
+    type = models.CharField(max_length=20, default="quiz")
     question = models.TextField()
     options = models.JSONField(default=list)
     correct_option = models.IntegerField(null=True, blank=True)
+    correct_text = models.JSONField(default=list, blank=True)
     points = models.IntegerField(default=1)
     order = models.IntegerField(default=0)
     active = models.BooleanField(default=True)

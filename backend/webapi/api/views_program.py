@@ -220,9 +220,11 @@ def question_bank_view(request: HttpRequest, event_id: int):
             "items": [
                 {
                     "id": item.id,
+                    "type": item.type,
                     "question": item.question,
                     "options": item.options,
                     "correctOption": item.correct_option,
+                    "correctText": item.correct_text,
                     "points": item.points,
                     "order": item.order,
                     "active": item.active,
@@ -265,7 +267,7 @@ def question_bank_item_view(request: HttpRequest, event_id: int, item_id: int):
         if not isinstance(data, dict):
             return JsonResponse({"error": "invalid_payload"}, status=400)
         fields = {}
-        for key in ("question", "options", "correctOption", "points", "order", "tags", "active"):
+        for key in ("type", "question", "options", "correctOption", "correctText", "points", "order", "tags", "active"):
             if key in data:
                 fields[key] = data[key]
         try:
@@ -276,9 +278,11 @@ def question_bank_item_view(request: HttpRequest, event_id: int, item_id: int):
             return JsonResponse({"error": str(exc)}, status=400)
         return JsonResponse({
             "id": item.id,
+            "type": item.type,
             "question": item.question,
             "options": item.options,
             "correctOption": item.correct_option,
+            "correctText": item.correct_text,
             "points": item.points,
             "order": item.order,
             "active": item.active,

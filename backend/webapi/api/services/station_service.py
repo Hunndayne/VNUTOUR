@@ -88,16 +88,31 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
     sessions = StationSession.objects.filter(
         station_id=station_id,
     ).select_related("team").order_by("-entered_at")[:limit]
-    return [
-        {
+
+    submissions = StationSubmission.objects.filter(
+        station_id=station_id,
+        station_session__isnull=True,
+    ).select_related("team").order_by("-created_at")[:limit]
+
+    out = []
+    for s in sessions:
+        out.append({
             "id": s.id, "team_code": s.team.code, "team_name": s.team.name,
             "status": s.status,
             "entered_at": s.entered_at.isoformat(),
             "exited_at": s.exited_at.isoformat() if s.exited_at else None,
             "score": s.score, "note": s.note,
-        }
-        for s in sessions
-    ]
+        })
+    for sub in submissions:
+        out.append({
+            "id": f"sub-{sub.id}", "team_code": sub.team.code, "team_name": sub.team.name,
+            "status": "closed",
+            "entered_at": sub.created_at.isoformat(),
+            "exited_at": sub.submitted_at.isoformat() if sub.submitted_at else sub.created_at.isoformat(),
+            "score": sub.score, "note": None,
+        })
+    out.sort(key=lambda x: x["entered_at"], reverse=True)
+    return out[:limit]
 
 
 # =====================================================================

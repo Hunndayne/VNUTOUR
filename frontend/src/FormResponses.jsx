@@ -772,7 +772,7 @@ function FormSubmissionPanel({
     const responsePayload = {
       form: activeFormFields.map((field) => ({
         id: field.id,
-        label: field.label || '',
+        label: field.label || field.question || '',
         value: answers[`form:${field.id}`] || '',
       })),
       quiz: activeQuizItems.map((item) => ({
@@ -937,31 +937,33 @@ function FormSubmissionPanel({
           </div>
         ) : (
           <>
-            <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
-            {answersDraft.restored && attachmentConfig ? (
-              <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
-            ) : null}
+            {!(formClosed && !mySubmission) && (
+              <>
+                <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
+                {answersDraft.restored && attachmentConfig ? (
+                  <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
+                ) : null}
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
-              {isSurvey ? (
-                <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
-              ) : teamSync.updatedAt ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
-                  Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
-                </span>
-              ) : (
-                <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
-              )}
-              {isAntiCheat && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
-                </>
-              )}
-            </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
+                  {isSurvey ? (
+                    <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
+                  ) : teamSync.updatedAt ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
+                      Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
+                    </span>
+                  ) : (
+                    <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
+                  )}
+                  {isAntiCheat && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
+                    </>
+                  )}
+                </div>
 
-            {submissionItems.map((item, index) => {
+                {submissionItems.map((item, index) => {
           if (item.type === 'quiz') {
             return (
               <QuizItemDisplay
@@ -994,7 +996,7 @@ function FormSubmissionPanel({
             <FormFieldCard
               key={item.id}
               index={index + 1}
-              label={item.label || `Truong ${index + 1}`}
+              label={item.label || item.question || `Trường ${index + 1}`}
               required={item.required}
               helper={item.placeholder}
               isAntiCheat={isAntiCheat}
@@ -1007,6 +1009,8 @@ function FormSubmissionPanel({
             </FormFieldCard>
           )
         })}
+            </>
+          )}
 
         <div className={`${CARD} bg-paper px-5 py-5 sm:px-6`}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

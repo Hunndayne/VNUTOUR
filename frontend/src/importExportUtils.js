@@ -22,9 +22,11 @@ export async function exportQuizToExcel(items, filename) {
   // Map items to excel rows
   const rows = items.map(item => {
     const row = {
+      Type: item.type || 'quiz',
       Question: item.question,
       Points: item.points || 1,
       'Correct Option (0-indexed)': item.correctOption ?? '',
+      'Correct Text (comma separated)': Array.isArray(item.correctText) ? item.correctText.join(', ') : '',
       Tags: (item.tags || []).join(', ')
     }
     // Add options
@@ -38,7 +40,7 @@ export async function exportQuizToExcel(items, filename) {
 
   const ws = XLSX.utils.json_to_sheet(rows)
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Quiz')
+  XLSX.utils.book_append_sheet(wb, ws, 'Bank')
   XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`)
 }
 
@@ -87,6 +89,11 @@ export async function importFromFile(file) {
       let correctOption = parseInt(row['Correct Option (0-indexed)'], 10)
       if (isNaN(correctOption)) correctOption = null
       
+      let correctText = []
+      if (row['Correct Text (comma separated)']) {
+        correctText = String(row['Correct Text (comma separated)']).split(',').map(s => s.trim()).filter(Boolean)
+      }
+
       let points = parseInt(row['Points'], 10)
       if (isNaN(points)) points = 1
 
@@ -95,14 +102,19 @@ export async function importFromFile(file) {
         tags = String(row['Tags']).split(',').map(s => s.trim()).filter(Boolean)
       }
 
+      let type = (row['Type'] || 'quiz').toLowerCase().trim()
+      if (type !== 'quiz' && type !== 'text') type = 'quiz'
+
       return {
+        type,
         question: row['Question'] || '',
         options,
         correctOption,
+        correctText,
         points,
         tags
       }
-    }).filter(item => item.question && item.options.length > 0)
+    }).filter(item => item.question && (item.type === 'text' || item.options.length > 1))
   } else {
     throw new Error('Unsupported file format')
   }
@@ -111,6 +123,7 @@ export async function importFromFile(file) {
 export function downloadSampleJson() {
   const sampleData = [
     {
+      type: 'quiz',
       question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
       options: ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng'],
       correctOption: 0,
@@ -118,11 +131,11 @@ export function downloadSampleJson() {
       tags: ['dia-ly', 'de']
     },
     {
-      question: 'Câu hỏi mẫu 2 (1 + 1 bằng mấy?)',
-      options: ['1', '2', '3'],
-      correctOption: 1,
+      type: 'text',
+      question: 'Thủ đô của Việt Nam là gì? (Tự luận)',
+      correctText: ['Hà Nội', 'Thủ đô Hà Nội'],
       points: 2,
-      tags: ['toan-hoc']
+      tags: ['dia-ly', 'tu-luan']
     }
   ]
   exportToJson(sampleData, 'mau_nhap_cau_hoi.json')
@@ -131,6 +144,7 @@ export function downloadSampleJson() {
 export async function downloadSampleExcel() {
   const sampleData = [
     {
+      type: 'quiz',
       question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
       options: ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng'],
       correctOption: 0,
@@ -138,13 +152,12 @@ export async function downloadSampleExcel() {
       tags: ['dia-ly', 'de']
     },
     {
-      question: 'Câu hỏi mẫu 2 (1 + 1 bằng mấy?)',
-      options: ['1', '2', '3'],
-      correctOption: 1,
+      type: 'text',
+      question: 'Thủ đô của Việt Nam là gì? (Tự luận)',
+      correctText: ['Hà Nội', 'Thủ đô Hà Nội'],
       points: 2,
-      tags: ['toan-hoc']
+      tags: ['dia-ly', 'tu-luan']
     }
   ]
   await exportQuizToExcel(sampleData, 'mau_nhap_cau_hoi.xlsx')
 }
-
