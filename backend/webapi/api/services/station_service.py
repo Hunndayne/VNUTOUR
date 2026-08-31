@@ -15,7 +15,6 @@ from api.models import (
     ProgramPhase, ScoreEntry, PhaseRoster, StationSubmission,
 )
 from api.services.result_lock_service import results_are_locked
-from api.services.checkin_qr_service import get_checkin_qr_state
 from api.services import scan_token_service
 
 
@@ -271,12 +270,10 @@ def enter_station(
     except (ProgramPhase.DoesNotExist, SubEvent.DoesNotExist):
         return None, "event_not_found"
 
-    if str(team_ref or "").strip().lower().startswith("t:"):
-        qr_state = get_checkin_qr_state()
-        if not qr_state["enabled"]:
-            return None, "checkin_qr_disabled"
-        if qr_state.get("phase_key") != phase.key:
-            return None, "checkin_qr_phase_mismatch"
+    # No global "BTC opens check-in" switch: in the per-station model a running
+    # sub-event is the open signal, matching what the participant's QR screen now
+    # shows (see `_team_qr_enabled_for_event`). Eligibility below (roster/phase,
+    # station-in-event) still applies; the QR stays single-use via `consume`.
 
     if results_are_locked():
         return None, "results_locked"
