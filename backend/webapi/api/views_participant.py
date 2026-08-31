@@ -19,7 +19,7 @@ from api.models import (
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
 )
-from api.services.program_service import get_current_sub_event
+from api.services.program_service import get_current_sub_event, get_current_phase
 from api.services.checkin_qr_service import team_qr_visible
 
 from api.services.station_service import set_submission_score, replay_lock_reason
@@ -1740,6 +1740,36 @@ def my_team_captain_vote_view(request: HttpRequest):
     })
 
 
+def _team_qr_enabled_for_event(team, station_id) -> bool:
+    """Is this team's station QR live right now?
+
+    True when a sub-event is running and the team is eligible for it — the same
+    phase/roster gate `my_team_stations_view` uses to decide which stations the
+    team may even see. A named station must additionally be active and belong to
+    the running event. There is no separate BTC toggle: a running sub-event is
+    the open signal.
+    """
+    current_event = get_current_sub_event()  # phase is select_related, no extra query
+    if not current_event:
+        return False
+
+    # A named station must be a live station of the running event.
+    if station_id is not None and not Station.objects.filter(
+        id=station_id, sub_event=current_event, active=True,
+    ).exists():
+        return False
+
+    # Eligibility: a phase that has a roster admits only the teams on it; a phase
+    # without one is open to whoever is in the current phase (mirrors stations view).
+    # The common qualifying case — team on this phase's roster — settles in one query.
+    if PhaseRoster.objects.filter(phase=current_event.phase, team=team).exists():
+        return True
+    if PhaseRoster.objects.filter(phase=current_event.phase).exists():
+        return False  # phase is roster-gated and this team is not on it
+    current_phase = get_current_phase()
+    return bool(current_phase and current_event.phase_id == current_phase.id)
+
+
 def my_team_station_state_view(request: HttpRequest):
     """GET the one thing the QR screen polls for: has anything changed yet?
 
@@ -1802,18 +1832,27 @@ def my_team_station_state_view(request: HttpRequest):
     # station it is a check-in code, already inside it is a check-out code — so
     # the check-in and check-out QR for a station are genuinely different codes,
     # not one string the coop reinterprets.
+    #
+    # No global "BTC opens check-in" switch gates this any more: in the
+    # per-station model the QR is live automatically as soon as a sub-event is
+    # running and the team is eligible for it. Making a sub-event current *is*
+    # the act of opening the round. Eligibility (approved + on the phase roster,
+    # or in the current phase when that phase has no roster) still applies, and a
+    # named station must be active and belong to the running event.
     qr = {"enabled": False}
-    if team.approval_status == Team.APPROVAL_APPROVED and team_qr_visible(team):
-        if not team.qr_token:
-            rotate_qr_token(team)
-            team.refresh_from_db(fields=["qr_token"])
-        payload = f"t:{team.qr_token}"
-        direction = None
-        if station_id is not None:
-            inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
-            direction = "out" if inside else "in"
-            payload = f"{payload}|s:{station_id}|d:{direction}"
-        qr = {"enabled": True, "payload": payload, "direction": direction}
+    if team.approval_status == Team.APPROVAL_APPROVED:
+        enabled = _team_qr_enabled_for_event(team, station_id)
+        if enabled:
+            if not team.qr_token:
+                rotate_qr_token(team)
+                team.refresh_from_db(fields=["qr_token"])
+            payload = f"t:{team.qr_token}"
+            direction = None
+            if station_id is not None:
+                inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
+                direction = "out" if inside else "in"
+                payload = f"{payload}|s:{station_id}|d:{direction}"
+            qr = {"enabled": True, "payload": payload, "direction": direction}
 
     return JsonResponse({
         "team_code": team.code,

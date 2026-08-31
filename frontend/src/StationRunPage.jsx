@@ -283,9 +283,9 @@ function QrDisabledBlock() {
       <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#E0A23A]/20 text-[#9A6B12]">
         <Icon name="clock" className="h-6 w-6" />
       </span>
-      <p className="mt-4 text-base font-semibold text-ink">BTC chưa mở điểm danh</p>
+      <p className="mt-4 text-base font-semibold text-ink">Trạm chưa nhận check-in</p>
       <p className="mt-2 text-sm leading-6 text-ink/50">
-        Mã QR sẽ tự hiện ở đây ngay khi BTC bật điểm danh. Cứ để nguyên màn hình này, không cần tải lại trang.
+        Mã QR sẽ tự hiện ở đây ngay khi trạm bắt đầu nhận check-in. Cứ để nguyên màn hình này, không cần tải lại trang.
       </p>
     </div>
   )
@@ -595,8 +595,8 @@ function StationStageScreen({
         <StatusPanel
           tone="gold"
           eyebrow="Điểm danh"
-          title="Chờ BTC mở điểm danh"
-          body="Trạm này chưa nhận check-in. Màn hình vẫn đang theo dõi, QR sẽ hiện ngay khi BTC bật."
+          title="Trạm chưa mở điểm danh"
+          body="Trạm này chưa nhận check-in. Màn hình vẫn đang theo dõi, QR sẽ hiện ngay khi trạm mở."
         >
           <QrDisabledBlock />
         </StatusPanel>
@@ -700,8 +700,8 @@ function StationStageScreen({
         <StatusPanel
           tone="gold"
           eyebrow="Bước cuối"
-          title="Chờ BTC mở điểm danh"
-          body="Đội vẫn đang trong trạm. QR rời trạm sẽ hiện ngay khi BTC bật lại điểm danh — báo CTV nếu chờ quá lâu."
+          title="Chưa hiện được QR rời trạm"
+          body="Đội vẫn đang trong trạm. QR rời trạm sẽ hiện lại ngay — báo CTV nếu chờ quá lâu."
         >
           <QrDisabledBlock />
         </StatusPanel>

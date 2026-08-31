@@ -14,13 +14,15 @@ from api.models import (
 )
 from api.services.auth_service import generate_session
 
-# What one poll costs, itemised so an accidental eighth query is obvious:
-#   1 auth token → account          5 SystemSetting "checkin_qr"   ┐
-#   2 membership + team             6 current ProgramPhase         ├ QR visibility
-#   3 latest StationSession         7 PhaseRoster EXISTS           ┘
-#   4 latest StationSubmission
-# Three of the seven are the organisers' show/hide-QR toggle rather than state.
-EXPECTED_POLL_QUERIES = 7
+# What one poll costs, itemised so an accidental extra query is obvious:
+#   1 auth token → account          5 SystemSetting current_sub_event_id ┐
+#   2 membership + team             6 SubEvent (+phase select_related)    ├ QR
+#   3 latest StationSession         7 Station EXISTS (live in event)      │ visibility
+#   4 latest StationSubmission      8 PhaseRoster EXISTS (team eligible)  ┘
+# Four of the eight decide whether the per-station QR is live: there is no global
+# BTC toggle any more, so visibility is "a sub-event is running and this team is
+# eligible for this live station" — settled here in one roster query.
+EXPECTED_POLL_QUERIES = 8
 
 
 class StationStateTestBase(TestCase):
@@ -165,15 +167,44 @@ class StationStatePayloadTests(StationStateTestBase):
             self._get(self.station)["qr"]["payload"], f"t:tok-2|s:{self.station.id}|d:in",
         )
 
-    def test_the_qr_is_hidden_when_the_organisers_switch_check_in_off(self):
+    def test_the_qr_is_live_without_any_global_check_in_toggle(self):
+        """The per-station model has no BTC master switch: a running sub-event and
+        an eligible team are enough, even with the legacy `checkin_qr` flag off."""
         SystemSetting.objects.filter(key="checkin_qr").update(
             value={"enabled": False, "phase_key": self.phase.key},
         )
 
         payload = self._get(self.station)
 
+        self.assertTrue(payload["qr"]["enabled"])
+        self.assertEqual(payload["qr"]["payload"], f"t:tok-1|s:{self.station.id}|d:in")
+
+    def test_the_qr_is_hidden_between_events(self):
+        """No sub-event running means there is nothing to check into yet."""
+        SystemSetting.objects.filter(key="current_sub_event_id").update(value="")
+
+        payload = self._get(self.station)
+
         self.assertFalse(payload["qr"]["enabled"])
         self.assertNotIn("payload", payload["qr"])
+
+    def test_the_qr_is_hidden_for_an_inactive_station(self):
+        self.station.active = False
+        self.station.save(update_fields=["active"])
+
+        payload = self._get(self.station)
+
+        self.assertFalse(payload["qr"]["enabled"])
+
+    def test_the_qr_is_hidden_for_a_team_off_a_rostered_phase(self):
+        # Keep the phase roster-gated (another team stays on it) but drop this team.
+        other = Team.objects.create(code="T999", name="Doi khac")
+        PhaseRoster.objects.create(phase=self.phase, team=other)
+        PhaseRoster.objects.filter(phase=self.phase, team=self.team).delete()
+
+        payload = self._get(self.station)
+
+        self.assertFalse(payload["qr"]["enabled"])
 
     def test_an_unapproved_team_gets_no_qr_but_still_gets_its_state(self):
         self.team.approval_status = Team.APPROVAL_PENDING
