@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
+import { useSearchParam } from './router.js'
 import { MarkdownBlock, InvisibleWatermark, TrapPattern } from './FormResponses.jsx'
 
 const POLL_MS = 2000
@@ -759,7 +760,14 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   const [listPayload, setListPayload] = useState(null)
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState('')
-  const [openStationId, setOpenStationId] = useState(null)
+  // The open station rides in the URL (`?station=<id>`) so a redirect back from
+  // the form — and a plain reload — reopens the same station instead of dropping
+  // the team on the list. openStation/backToList keep this in sync.
+  const [stationParam, setStationParam] = useSearchParam('station', '')
+  const [openStationId, setOpenStationId] = useState(() => {
+    const parsed = Number(stationParam)
+    return stationParam && !Number.isNaN(parsed) ? parsed : null
+  })
   const [stationState, setStationState] = useState(null)
   // `undefined` = chưa hỏi bao giờ, `null` = đội không mở phiên ở đâu cả.
   const [globalSession, setGlobalSession] = useState(undefined)
@@ -920,12 +928,14 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     setStationState(null)
     setPollError('')
     setOpenStationId(stationId)
+    setStationParam(String(stationId), { replace: true })
   }
 
   const backToList = () => {
     setOpenStationId(null)
     setStationState(null)
     setPollError('')
+    setStationParam('', { replace: true })
     loadStations()
     loadGlobalSession()
   }

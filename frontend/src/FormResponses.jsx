@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
-import { useSearchParam } from './router.js'
+import { useSearchParam, navigate, buildUrl } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
 
 // Cheap deep-equality stand-in for the plain string/number/index answer maps
@@ -814,6 +814,14 @@ function FormSubmissionPanel({
       // this so the draft (and the answers) survive for a retry.
       answersDraft.clear()
       onSubmitted(form.station_id)
+      // Station flow: once the bài is in, leave the form and hand the team back
+      // to the station screen, which then shows the checkout QR (or the done /
+      // closed state) for this station instead of stranding them on the form.
+      if (stationId && !isSurvey) {
+        window.setTimeout(() => {
+          navigate(buildUrl('/stations', { station: stationId }))
+        }, 1200)
+      }
     } catch (submitError) {
       if (submitError?.status === 401) {
         logoutAndRedirect('/')
