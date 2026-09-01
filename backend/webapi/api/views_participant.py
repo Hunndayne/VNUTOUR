@@ -342,9 +342,13 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
-        mine = StationSubmission.objects.filter(
+        session = StationSession.objects.filter(
             team=team, station=station,
-        ).order_by("-created_at").first()
+        ).order_by("-entered_at").first()
+        qs = StationSubmission.objects.filter(team=team, station=station)
+        if session:
+            qs = qs.filter(station_session=session)
+        mine = qs.order_by("-created_at").first()
         payload["my_submission"] = {
             "status": mine.status,
             "submitted_at": mine.submitted_at.isoformat() if mine.submitted_at else None,
@@ -1508,10 +1512,10 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         station=station,
     ).order_by("-entered_at").first()
 
-    submission = StationSubmission.objects.filter(
-        team=team,
-        station=station,
-    ).order_by("-created_at").first()
+    qs = StationSubmission.objects.filter(team=team, station=station)
+    if session:
+        qs = qs.filter(station_session=session)
+    submission = qs.order_by("-created_at").first()
     if not submission:
         submission = StationSubmission(team=team, station=station)
 
@@ -1817,8 +1821,10 @@ def my_team_station_state_view(request: HttpRequest):
         sessions = sessions.filter(status=StationSession.STATUS_ACTIVE)
 
     session = sessions.order_by("-entered_at").values(
-        "station_id", "status", "entered_at", "exited_at",
+        "station_id", "status", "entered_at", "exited_at", "id",
     ).first()
+    if session:
+        submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
         "station_id", "status", "submitted_at",
     ).first()

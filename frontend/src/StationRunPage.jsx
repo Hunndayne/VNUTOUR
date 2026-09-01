@@ -156,7 +156,12 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
     return qrReady ? 'exit_qr' : 'exit_disabled'
   }
 
-  if (status === 'closed') return 'closed'
+  if (status === 'closed') {
+    if (station.replay_locked === false) {
+      return qrReady ? 'entry_qr' : 'entry_disabled'
+    }
+    return 'closed'
+  }
 
   // `null` (chưa vào) hoặc `cancelled` (CTV đã huỷ phiên): đội đang đứng ngoài.
   if (blockedStationId != null) return 'blocked'

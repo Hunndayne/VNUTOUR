@@ -81,7 +81,14 @@ def variant_item_ids(station, team) -> list[str]:
         
         seen_bank_ids = set()
         for v in other_variants:
-            for iid in (v.item_ids if isinstance(v.item_ids, list) else []):
+            v_items = v.item_ids
+            if isinstance(v_items, str):
+                import json
+                try:
+                    v_items = json.loads(v_items)
+                except ValueError:
+                    v_items = []
+            for iid in (v_items if isinstance(v_items, list) else []):
                 bank_id = bank_item_id_of(iid)
                 if bank_id is not None:
                     seen_bank_ids.add(bank_id)
