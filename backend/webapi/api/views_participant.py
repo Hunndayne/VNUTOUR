@@ -265,12 +265,24 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
                     reason = "time_closed"
 
         if limits.get("duration_minutes") and team and not reason:
-            session = TeamFormSession.objects.filter(
-                team=team, station=station
-            ).order_by("-started_at").first()
-            if session:
-                session_started_at = session.started_at
-                session_closes_at = session.started_at + datetime.timedelta(minutes=limits["duration_minutes"])
+            # The countdown starts when the attempt starts. For a scan-gated
+            # station that is the active StationSession's check-in (so a replay,
+            # which opens a new session, gets a fresh clock); for a free-play
+            # station it is the team's explicit TeamFormSession start.
+            if station.checkin_policy != Station.POLICY_FREE_PLAY:
+                active = StationSession.objects.filter(
+                    team=team, station=station, status=StationSession.STATUS_ACTIVE,
+                ).order_by("-entered_at").first()
+                started_at = active.entered_at if active else None
+            else:
+                form_session = TeamFormSession.objects.filter(
+                    team=team, station=station,
+                ).order_by("-started_at").first()
+                started_at = form_session.started_at if form_session else None
+
+            if started_at:
+                session_started_at = started_at
+                session_closes_at = started_at + datetime.timedelta(minutes=limits["duration_minutes"])
                 if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
                     dynamic_closes_at = session_closes_at
                 # 15s grace period for auto-submission due to network latency
@@ -342,12 +354,17 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
+        # Scope to the current attempt: the active session for a scan-gated
+        # station, so a replay (new session) opens a clean form instead of
+        # showing the previous attempt's answers as already submitted.
         session = StationSession.objects.filter(
-            team=team, station=station,
+            team=team, station=station, status=StationSession.STATUS_ACTIVE,
         ).order_by("-entered_at").first()
         qs = StationSubmission.objects.filter(team=team, station=station)
         if session:
             qs = qs.filter(station_session=session)
+        else:
+            qs = qs.filter(station_session__isnull=True)
         mine = qs.order_by("-created_at").first()
         payload["my_submission"] = {
             "status": mine.status,
@@ -1410,14 +1427,25 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
     if closure["closed"] and closure.get("reason") != "not_started":
         return JsonResponse({"error": "form_closed"}, status=403)
 
-    session, created = TeamFormSession.objects.get_or_create(
-        team=team, station=station,
-        defaults={"started_by": acc},
-    )
+    # Scan-gated stations start their clock at check-in, so "start" here only
+    # confirms the team is actually checked in; free-play stations self-start.
+    if station.checkin_policy != Station.POLICY_FREE_PLAY:
+        active = StationSession.objects.filter(
+            team=team, station=station, status=StationSession.STATUS_ACTIVE,
+        ).order_by("-entered_at").first()
+        if active is None:
+            return JsonResponse({"error": "not_checked_in"}, status=403)
+        started_at = active.entered_at
+    else:
+        session, _created = TeamFormSession.objects.get_or_create(
+            team=team, station=station,
+            defaults={"started_by": acc},
+        )
+        started_at = session.started_at
 
     return JsonResponse({
         "status": "started",
-        "started_at": session.started_at.isoformat(),
+        "started_at": started_at.isoformat(),
         "server_now": timezone.now().isoformat(),
     })
 
@@ -1507,15 +1535,28 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
             return JsonResponse({"error": str(exc)}, status=400)
         attachment_payload = {"files": stored_files}
 
+    # Hard gate: a station that needs a coop scan only accepts a submission while
+    # the team holds an ACTIVE session there — i.e. a coop/admin actually scanned
+    # them in for this attempt. Without it a team could open any form from the
+    # list and submit without ever being checked in.
+    is_scan_gated = station.checkin_policy != Station.POLICY_FREE_PLAY
     session = StationSession.objects.filter(
-        team=team,
-        station=station,
+        team=team, station=station, status=StationSession.STATUS_ACTIVE,
     ).order_by("-entered_at").first()
+    if is_scan_gated and session is None:
+        return JsonResponse({"error": "not_checked_in"}, status=403)
 
-    qs = StationSubmission.objects.filter(team=team, station=station)
-    if session:
-        qs = qs.filter(station_session=session)
-    submission = qs.order_by("-created_at").first()
+    # Scope the submission to THIS attempt. A replay opens a fresh session, so it
+    # gets its own submission row — a later attempt never overwrites an earlier
+    # attempt's answers. Free-play stations have no session and keep one row.
+    if session is not None:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session=session,
+        ).order_by("-created_at").first()
+    else:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session__isnull=True,
+        ).order_by("-created_at").first()
     if not submission:
         submission = StationSubmission(team=team, station=station)
 

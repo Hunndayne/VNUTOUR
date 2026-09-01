@@ -1159,8 +1159,8 @@ export default function FormResponses() {
           Quay lại trang chủ
         </a>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_320px] lg:items-start">
-          <main className="space-y-5">
+        <div className="mt-6">
+          <main className="mx-auto max-w-2xl space-y-5">
             <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
@@ -1198,29 +1198,6 @@ export default function FormResponses() {
               }}
             />
           </main>
-
-          <aside className="space-y-5 lg:sticky lg:top-6">
-            <div className={`${CARD} p-5`}>
-              <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Biểu mẫu khả dụng</p>
-              <div className="mt-4 space-y-3">
-                {forms.map((item) => (
-                  <button
-                    key={item.station_id}
-                    type="button"
-                    onClick={() => setSelectedId(String(item.station_id))}
-                    className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                      String(item.station_id) === String(selectedId)
-                        ? 'border-trail bg-trail/10'
-                        : 'border-stone bg-white hover:bg-paper'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold text-ink">{item.station_name}</p>
-                    <p className="mt-1 text-xs text-ink/50">{item.event_name} · {item.phase_label}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
         </div>
       </div>
     </div>

@@ -138,7 +138,7 @@ function explainReplayLock(reason) {
  * `lockRemaining` được truyền từ ngoài vào (đã tính từ `entered_at`) để hàm này
  * thuần tuý và không phụ thuộc đồng hồ.
  */
-function deriveStep({ station, state, blockedStationId, lockRemaining }) {
+function deriveStep({ station, state, blockedStationId, lockRemaining, replayArmed }) {
   if (!station) return 'station_gone'
   if (!state) return 'loading'
 
@@ -157,7 +157,11 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
   }
 
   if (status === 'closed') {
-    if (station.replay_locked === false) {
+    // A finished visit stays on the "hoàn thành" screen by default. Re-entry is
+    // never automatic: showing the entry QR the instant a checkout lands lets the
+    // coop's camera re-read it and check the team straight back in. The team must
+    // tap "Chơi lại" (only offered when replay is unlocked), which arms this.
+    if (replayArmed && station.replay_locked === false) {
       return qrReady ? 'entry_qr' : 'entry_disabled'
     }
     return 'closed'
@@ -496,6 +500,7 @@ function StationStageScreen({
   pollError,
   onBack,
   onOpenForm,
+  onReplay,
   serverTimeOffset = 0,
 }) {
   const payload = state?.qr?.payload || ''
@@ -744,8 +749,16 @@ function StationStageScreen({
           tone="trail"
           eyebrow="Hoàn tất"
           title="Đã hoàn thành trạm này"
-          body="Lượt chơi tại trạm đã được đóng. Chúc đội may mắn ở trạm tiếp theo."
+          body={station?.replay_locked === false
+            ? 'Lượt chơi tại trạm đã đóng. Đội đã đi hết các trạm nên có thể chơi lại trạm này — bấm "Chơi lại" rồi đưa QR cho CTV quét.'
+            : 'Lượt chơi tại trạm đã được đóng. Chúc đội may mắn ở trạm tiếp theo.'}
         >
+          {station?.replay_locked === false && typeof onReplay === 'function' && (
+            <button type="button" onClick={onReplay} className={`mb-3 w-full ${TRAIL_BUTTON}`}>
+              <Icon name="doc" className="h-5 w-5" />
+              Chơi lại trạm này
+            </button>
+          )}
           <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
             Chọn trạm tiếp theo
           </button>
@@ -774,6 +787,9 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     return stationParam && !Number.isNaN(parsed) ? parsed : null
   })
   const [stationState, setStationState] = useState(null)
+  // Đã bấm "Chơi lại" cho trạm đang mở? Chỉ khi armed thì màn hoàn thành mới cho
+  // hiện lại QR vào trạm — tránh việc checkout xong QR vào tự hiện và bị quét lại.
+  const [replayArmed, setReplayArmed] = useState(false)
   // `undefined` = chưa hỏi bao giờ, `null` = đội không mở phiên ở đâu cả.
   const [globalSession, setGlobalSession] = useState(undefined)
   const [pollError, setPollError] = useState('')
@@ -925,13 +941,21 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     [stations, blockedStationId],
   )
 
-  const step = deriveStep({ station, state: stationState, blockedStationId, lockRemaining })
+  const step = deriveStep({ station, state: stationState, blockedStationId, lockRemaining, replayArmed })
+
+  // Once a re-entry actually lands (a fresh active session), disarm — otherwise
+  // the next checkout would auto-show the entry QR again and reopen the loop.
+  const sessionStatus = stationState?.session?.status
+  useEffect(() => {
+    if (sessionStatus === 'active') setReplayArmed(false)
+  }, [sessionStatus])
 
   const openStation = (stationId) => {
     // Không mang theo payload của trạm cũ: QR xoay sau mỗi lần quét nên một mã
     // cũ hiện ra ở đây chỉ dẫn tới 409 ở máy CTV.
     setStationState(null)
     setPollError('')
+    setReplayArmed(false)
     setOpenStationId(stationId)
     setStationParam(String(stationId), { replace: true })
   }
@@ -940,6 +964,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     setOpenStationId(null)
     setStationState(null)
     setPollError('')
+    setReplayArmed(false)
     setStationParam('', { replace: true })
     loadStations()
     loadGlobalSession()
@@ -984,6 +1009,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
             pollError={pollError}
             onBack={backToList}
             onOpenForm={handleOpenForm}
+            onReplay={() => setReplayArmed(true)}
             serverTimeOffset={serverTimeOffset}
           />
         )}
