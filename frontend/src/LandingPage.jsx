@@ -6,6 +6,7 @@ import youthUnionLogo from './assets/organizer-youth-union.webp'
 import facultyLogo from './assets/organizer-faculty.webp'
 import vnu2025 from './assets/vnutour-hero.jpg'
 import SiteHeader, { NavLinks } from './SiteHeader.jsx'
+import VNUTourJourneyMap from './VNUTourJourneyMap.jsx'
 
 const organizerLogos = [
   { src: universityLogo, alt: 'Trường Đại học Công nghệ Thông tin' },
@@ -81,7 +82,7 @@ const faqItems = [
   },
 ]
 
-function Reveal({ as = 'div', children, className = '', delay = 0, direction = 'up' }) {
+export function Reveal({ as = 'div', children, className = '', delay = 0, direction = 'up' }) {
   const ref = useRef(null)
   const [isVisible, setIsVisible] = useState(false)
   const Component = as
@@ -398,18 +399,10 @@ function LandingPage() {
 </div>
 </section>
 
+
 {/* Đã thu hẹp padding-top (pt-4 md:pt-6) để bức ảnh kéo sát lên trên */}
 <section id="tour" className="landing-flow-tour landing-tour-section relative isolate overflow-visible pt-4 pb-16 md:pt-6 md:pb-24">
-  <div className="mx-auto flex w-full max-w-[1200px] justify-center px-5 md:px-8 xl:px-0">
-    <Reveal className="w-full overflow-hidden rounded-2xl shadow-xl">
-      <img
-        src={vnu2025}
-        alt="Khoảnh khắc tập thể tại VNUTour"
-        loading="lazy"
-        className="aspect-[16/9] h-full w-full object-cover object-center transition-transform duration-700 hover:scale-[1.02] motion-reduce:transform-none"
-      />
-    </Reveal>
-  </div>
+  <VNUTourJourneyMap />
         <div className="landing-accent-grid mt-14 grid gap-px lg:grid-cols-[1.15fr_0.85fr]">
           {prizeHighlights.map((item, index) => (
             <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
@@ -432,12 +425,41 @@ function LandingPage() {
             </Reveal>
           ))}
         </div>
+
+             <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
+          <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-end lg:gap-20">
+            <Reveal>
+              <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
+              <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
+                Nhà tài trợ
+              </h2>
+            </Reveal>
+
+            <Reveal delay={100}>
+              <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
+                Chưa công bố
+              </p>
+              <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
+                Trở thành nhà tài trợ của chương trình
+              </h3>
+              <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
+                Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
+              </p>
+              <a
+                href="mailto:vnutour@suctremmt.com"
+                className="landing-focus landing-accent mt-7 inline-flex border-b border-[#1478D4] pb-1 text-base font-bold text-[#1478D4] transition-opacity duration-200 hover:opacity-75"
+              >
+                vnutour@suctremmt.com
+              </a>
+            </Reveal>
+          </div>
+        </div>
       </section>
   <section id="faq" className="landing-faq-section relative isolate overflow-hidden bg-[#083348] pb-20 pt-16 md:pb-28 md:pt-24 xl:pb-36">
   
   {/* ĐƯỜNG CHUYỂN SÓNG BIỂN NỐI LIỀN NỀN TRẮNG PHÍA TRÊN */}
   <div className="absolute left-0 right-0 top-0 w-full overflow-hidden leading-none">
-    <svg className="relative block h-10 w-full text-white md:h-16 lg:h-20" viewBox="0 0 1200 120" preserveAspectRatio="none">
+    <svg className="relative block h-10 w-full text-[#d9f5ff] md:h-16 lg:h-20" viewBox="0 0 1200 120" preserveAspectRatio="none">
       <path d="M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z" fill="currentColor"></path>
     </svg>
   </div>

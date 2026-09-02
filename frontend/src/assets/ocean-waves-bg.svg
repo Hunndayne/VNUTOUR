@@ -64,11 +64,11 @@
         stroke="#39D5F4" stroke-width="2" fill="none" opacity="0.3"/>
   
   <!-- Wave Layer 3 - Background (Deepest, Teal) -->
-  <path d="M 0,520 Q 100,490 200,520 T 400,520 T 600,500 T 800,530 T 1000,500 T 1200,530 T 1440,500 L 1440,1024 L 0,1024 Z" 
+  <path d="M 0,450 Q 100,420 200,450 T 400,450 T 600,430 T 800,460 T 1000,430 T 1200,460 T 1440,430 L 1440,1024 L 0,1024 Z" 
         fill="url(#waveGradient3)" opacity="0.7" filter="url(#softShadow)"/>
   
   <!-- Wave detail lines - Layer 3 -->
-  <path d="M 0,520 Q 100,490 200,520 T 400,520 T 600,500 T 800,530 T 1000,500 T 1200,530 T 1440,500" 
+  <path d="M 0,450 Q 100,420 200,450 T 400,450 T 600,430 T 800,460 T 1000,430 T 1200,460 T 1440,430" 
         stroke="#18C2A3" stroke-width="2" fill="none" opacity="0.25"/>
   
   <!-- Accent wave elements with warm colors (subtle) -->
