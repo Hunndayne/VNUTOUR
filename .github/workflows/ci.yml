@@ -129,17 +129,14 @@ jobs:
         run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Install kustomize
+        # Pin an exact version for reproducible CI (no "latest" surprises).
         run: |
-          curl -sLo /usr/local/bin/kustomize \
-            "$(curl -s https://api.github.com/repos/kubernetes-sigs/kustomize/releases/latest \
-              | grep -o 'https://.*linux_amd64.*tar.gz' | head -1)"
-          # Fallback: use the version bundled with kubectl
-          if ! kustomize version &>/dev/null 2>&1; then
-            curl -sLo kustomize.tar.gz \
-              "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
-            tar -xzf kustomize.tar.gz -C /usr/local/bin/
-          fi
+          KUSTOMIZE_VERSION=v5.4.3
+          curl -sLo kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz -C /usr/local/bin/
           chmod +x /usr/local/bin/kustomize
+          kustomize version
 
       - name: Update Kustomize image tags
         run: |

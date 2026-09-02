@@ -23,6 +23,17 @@ metadata:
 spec:
   ingressClassName: nginx
 
+  # TLS to the origin. The secret holds the same Cloudflare Origin Certificate
+  # as prod (its SANs cover this host), copied across namespaces because
+  # secrets are namespace-scoped:
+  #   kubectl -n vnutour get secret vnutour-tls -o yaml \
+  #     | sed 's/namespace: vnutour/namespace: vnutour-staging/' | kubectl apply -f -
+  # Not managed by ArgoCD (created out-of-band, same as backend-secret).
+  tls:
+    - hosts:
+        - vnutour.hunn.io.vn
+      secretName: vnutour-tls
+
   rules:
     - host: vnutour.hunn.io.vn
       http:
