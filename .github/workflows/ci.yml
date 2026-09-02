@@ -117,10 +117,11 @@ jobs:
   #            overlays/prod (Zone 1 homelab) and overlays/prod-standby (Zone 2
   #            Linode) — one bump keeps both prod zones on the same version.
   # Commits back to the SAME branch with [skip ci] so it does not re-trigger.
-  # NOTE: on main this pushes a bot commit to main; main must allow
-  # github-actions[bot] to push (branch protection). If main is protected against
-  # direct pushes, point the prod Applications at a dedicated `deploy` branch and
-  # push there instead.
+  # NOTE: on main this pushes a bot commit to main by design. The `main` ruleset
+  # only restricts deletion (not updates / not require-PR), so the bot push is
+  # allowed. If main is ever tightened (Restrict updates / Require a PR), either
+  # add github-actions[bot] to the ruleset bypass list or move the prod
+  # Applications to a dedicated `deploy` branch and push there instead.
   update-manifest:
     needs: [build-push]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
