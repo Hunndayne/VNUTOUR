@@ -26,9 +26,3 @@ spec:
     syncOptions:
       - CreateNamespace=true   # create vnutour-staging if it doesn't exist
       - ServerSideApply=true   # avoids annotation size limits on large manifests
-
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      jsonPointers:
-        - /spec/template/spec/containers/0/env

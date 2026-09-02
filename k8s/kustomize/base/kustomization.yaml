@@ -12,5 +12,6 @@ resources:
   - 06.backend.yaml
   - 09.frontend.yaml
   - 10.ingress.yaml
-  # 02.secret.yaml NOT here - secret is created manually outside Git to avoid
-  # ArgoCD overwriting real values with placeholders (see overlays/staging/secret-note.md)
+  # 02.secret.yaml NOT here - the backend-secret (and the vnutour-tls cert
+  # secret) are created manually outside Git so ArgoCD never overwrites real
+  # values with placeholders. Create them once with kubectl before the first sync.
