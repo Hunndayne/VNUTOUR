@@ -1,4 +1,4 @@
-# Staging Postgres — own StatefulSet + PVC, fully isolated from the prod database
+# Staging Postgres - own StatefulSet + PVC, fully isolated from the prod database
 # in the vnutour namespace. Trimmed vs prod: no postgres-exporter sidecar and no
 # prometheus annotations (staging has no monitoring stack).
 apiVersion: v1
@@ -35,9 +35,8 @@ spec:
         app: postgres
 
     spec:
-      # Same as prod: local-path volume binds to one node, so pin to the storage
-      # node that stays powered on. Label it first:
-      #   kubectl label node <worker> vnutour/storage=true
+      # local-path volume binds to one node, so pin to the storage node.
+      # Label it first: kubectl label node <worker> vnutour/storage=true
       nodeSelector:
         vnutour/storage: "true"
 

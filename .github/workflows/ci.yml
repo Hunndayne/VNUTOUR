@@ -59,8 +59,8 @@ jobs:
   # are green and only on a push to a deploy branch — main or staging. Pull
   # requests still run the checks above without publishing anything. Uses the
   # built-in GITHUB_TOKEN, so no PAT is stored. Images are tagged with the short
-  # commit SHA (immutable, what the deploy references) plus a rolling tag per
-  # branch: latest tracks main, staging tracks the staging branch.
+  # commit SHA (immutable, what ArgoCD deploys) plus a rolling tag per branch:
+  # latest tracks main, staging tracks the staging branch.
   build-push:
     needs: [backend, frontend]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
@@ -110,3 +110,66 @@ jobs:
             VITE_GOOGLE_CLIENT_ID=${{ vars.VITE_GOOGLE_CLIENT_ID }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Update the Kustomize image tag with the new SHA so ArgoCD picks it up.
+  # staging -> overlays/staging/kustomization.yaml (staging cluster only).
+  # main    -> components/images/kustomization.yaml, the SINGLE source shared by
+  #            overlays/prod (Zone 1 homelab) and overlays/prod-standby (Zone 2
+  #            Linode) — one bump keeps both prod zones on the same version.
+  # Commits back to the SAME branch with [skip ci] so it does not re-trigger.
+  # NOTE: on main this pushes a bot commit to main; main must allow
+  # github-actions[bot] to push (branch protection). If main is protected against
+  # direct pushes, point the prod Applications at a dedicated `deploy` branch and
+  # push there instead.
+  update-manifest:
+    needs: [build-push]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to push the manifest commit back to the repo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref_name }}
+
+      - name: Compute short SHA
+        id: meta
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Install kustomize
+        # Pin an exact version for reproducible CI (no "latest" surprises).
+        run: |
+          KUSTOMIZE_VERSION=v5.4.3
+          curl -sLo kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz -C /usr/local/bin/
+          chmod +x /usr/local/bin/kustomize
+          kustomize version
+
+      - name: Pick target directory
+        id: target
+        run: |
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            echo "dir=k8s/kustomize/overlays/staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=k8s/kustomize/components/images" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update Kustomize image tags
+        run: |
+          SHA="${{ steps.meta.outputs.sha }}"
+          cd "${{ steps.target.outputs.dir }}"
+          kustomize edit set image \
+            ghcr.io/hunndayne/vnutour-backend:${SHA} \
+            ghcr.io/hunndayne/vnutour-frontend:${SHA}
+
+      - name: Commit and push manifest update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ steps.target.outputs.dir }}/kustomization.yaml"
+          # Skip commit if nothing changed (e.g. re-run on same SHA)
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "ci: update ${{ github.ref_name }} image tags to ${{ steps.meta.outputs.sha }} [skip ci]"
+          git push origin "${{ github.ref_name }}"

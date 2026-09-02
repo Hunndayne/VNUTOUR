@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# PROD — Zone 1 (homelab), namespace vnutour, host vnutour.suctremmt.com.
+#
+# NOTE: this overlay currently renders the APP TIER ONLY (postgres + backend +
+# frontend + ingress + migrate). The live homelab prod also runs the Discord
+# bot, email-worker, monitoring (11-15) and the backup CronJob (16). Those are
+# NOT here yet, so DO NOT point an auto-sync/prune ArgoCD Application at the
+# homelab cluster from this overlay — it would prune those workloads. Port them
+# into a homelab-only component first (see k8s/argocd/prod-app.yaml).
+namespace: vnutour
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/prod-config
+  - ../../components/images
