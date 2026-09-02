@@ -14,7 +14,8 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "react-router-dom": "^7.18.3"
+    "react-router-dom": "^7.18.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
@@ -29,5 +30,11 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.13",
     "vite": "^7.1.2"
-  }
+  },
+  "browserslist": [
+    "iOS >= 13",
+    "Safari >= 13",
+    "> 0.2%",
+    "not dead"
+  ]
 }

@@ -19,7 +19,7 @@ from api.models import (
 from api.services.registration_service import (
     get_schema, validate_account_mssv_claim, validate_person_submission,
 )
-from api.services.program_service import get_current_sub_event
+from api.services.program_service import get_current_sub_event, get_current_phase
 from api.services.checkin_qr_service import team_qr_visible
 
 from api.services.station_service import set_submission_score, replay_lock_reason
@@ -32,6 +32,8 @@ from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
     public_config as public_submission_config,
     has_items as has_submission_items,
+    has_form as submission_has_form,
+    references_bank as submission_references_bank,
     attachment_item as submission_attachment_item,
     grade_quiz as grade_submission_quiz,
     checkout_after_submit,
@@ -263,12 +265,24 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
                     reason = "time_closed"
 
         if limits.get("duration_minutes") and team and not reason:
-            session = TeamFormSession.objects.filter(
-                team=team, station=station
-            ).order_by("-started_at").first()
-            if session:
-                session_started_at = session.started_at
-                session_closes_at = session.started_at + datetime.timedelta(minutes=limits["duration_minutes"])
+            # The countdown starts when the attempt starts. For a scan-gated
+            # station that is the active StationSession's check-in (so a replay,
+            # which opens a new session, gets a fresh clock); for a free-play
+            # station it is the team's explicit TeamFormSession start.
+            if station.checkin_policy != Station.POLICY_FREE_PLAY:
+                active = StationSession.objects.filter(
+                    team=team, station=station, status=StationSession.STATUS_ACTIVE,
+                ).order_by("-entered_at").first()
+                started_at = active.entered_at if active else None
+            else:
+                form_session = TeamFormSession.objects.filter(
+                    team=team, station=station,
+                ).order_by("-started_at").first()
+                started_at = form_session.started_at if form_session else None
+
+            if started_at:
+                session_started_at = started_at
+                session_closes_at = started_at + datetime.timedelta(minutes=limits["duration_minutes"])
                 if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
                     dynamic_closes_at = session_closes_at
                 # 15s grace period for auto-submission due to network latency
@@ -293,12 +307,39 @@ def _is_survey_station(station: Station) -> bool:
     return station.sub_event.type == SubEvent.TYPE_SURVEY
 
 
+def _station_has_form(station: Station, bank_counts: dict | None = None) -> bool:
+    """Whether a station has a form worth showing, shared-bank questions included.
+
+    `has_submission_items` only counts inline items, so a station that draws its
+    whole quiz from the shared bank (via `useAll`/`itemIds`) would look empty and
+    the participant would see "already completed" instead of the quiz. Pass a
+    shared `bank_counts` dict when looping over many stations so the per-sub-event
+    bank count is queried at most once.
+    """
+    config = station.submission_config
+    if has_submission_items(config):
+        return True
+    if not submission_references_bank(config):
+        return False
+    if bank_counts is None:
+        bank_counts = {}
+    sub_event_id = station.sub_event_id
+    if sub_event_id not in bank_counts:
+        from api.models import QuestionBankItem
+        bank_counts[sub_event_id] = QuestionBankItem.objects.filter(
+            sub_event_id=sub_event_id, active=True,
+        ).count()
+    return submission_has_form(config, bank_counts[sub_event_id])
+
+
 def _station_form_payload(station: Station, team: Team | None = None) -> dict:
+    from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
     event = station.sub_event
     # Drawing here (rather than only on submit) is what pins the question set:
     # whichever member opens the form first fixes it for the whole team.
     drawn_items = variant_item_ids(station, team)
+    effective_items = effective_quiz_items(station)
     payload = {
         "station_id": station.id,
         "station_code": station.code,
@@ -308,14 +349,23 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "event_name": event.name,
         "phase_key": phase.key,
         "phase_label": phase.label,
-        "submission_config": public_submission_config(station.submission_config, drawn_items),
+        "submission_config": public_submission_config(station.submission_config, drawn_items, effective_quiz_items=effective_items),
         "closure": _form_closure_state(station, team),
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
-        mine = StationSubmission.objects.filter(
-            team=team, station=station,
-        ).order_by("-created_at").first()
+        # Scope to the current attempt: the active session for a scan-gated
+        # station, so a replay (new session) opens a clean form instead of
+        # showing the previous attempt's answers as already submitted.
+        session = StationSession.objects.filter(
+            team=team, station=station, status=StationSession.STATUS_ACTIVE,
+        ).order_by("-entered_at").first()
+        qs = StationSubmission.objects.filter(team=team, station=station)
+        if session:
+            qs = qs.filter(station_session=session)
+        else:
+            qs = qs.filter(station_session__isnull=True)
+        mine = qs.order_by("-created_at").first()
         payload["my_submission"] = {
             "status": mine.status,
             "submitted_at": mine.submitted_at.isoformat() if mine.submitted_at else None,
@@ -333,7 +383,7 @@ def _team_form_station_or_none(team: Team, station_id: int) -> Station | None:
     station = Station.objects.select_related("sub_event__phase").filter(
         id=station_id, active=True,
     ).first()
-    if not station or not has_submission_items(station.submission_config):
+    if not station or not _station_has_form(station):
         return None
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -1183,31 +1233,52 @@ def my_team_stations_view(request: HttpRequest):
     total_stations = len(stations)
     visited_count = 0
     passed_count = 0
-    all_visited = all(journey_sessions.get(station.id) for station in stations)
+    all_visited = all(journey_sessions.get(station.id) or my_submissions.get(station.id) for station in stations)
 
     station_payloads = []
+    bank_counts: dict = {}
     for station in stations:
         session = my_sessions.get(station.id)
         submission = my_submissions.get(station.id)
         rows = journey_sessions.get(station.id, [])
 
         visit_count = len(rows)
-        if visit_count:
-            visited_count += 1
         has_active = any(r["status"] == StationSession.STATUS_ACTIVE for r in rows)
         has_closed = any(r["status"] == StationSession.STATUS_CLOSED for r in rows)
         has_passed = any(r["outcome"] == StationSession.OUTCOME_PASSED for r in rows)
+
+        if submission and not rows:
+            visit_count = 1
+            has_closed = True
+            
+            sub_score = submission.score if submission.score is not None else 0
+            if station.scoring_mode == Station.SCORING_THRESHOLD:
+                has_passed = sub_score >= station.pass_threshold
+            elif station.scoring_mode == Station.SCORING_SCORE_ONLY:
+                has_passed = submission.status == StationSubmission.STATUS_GRADED or sub_score > 0
+            elif station.scoring_mode == Station.SCORING_PASS_FAIL:
+                has_passed = sub_score == station.pass_points and sub_score > 0
+            
+            if station.scoring_mode == Station.SCORING_PASS_FAIL:
+                best_score = station.pass_points if has_passed else 0
+            elif station.scoring_mode == Station.SCORING_THRESHOLD:
+                best_score = sub_score if has_passed else 0
+            else:
+                best_score = sub_score
+        else:
+            if station.scoring_mode == Station.SCORING_PASS_FAIL:
+                best_score = station.pass_points if has_passed else 0
+            elif station.scoring_mode == Station.SCORING_THRESHOLD:
+                passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
+                best_score = max(passed_scores) if passed_scores else 0
+            else:  # score_only
+                scores = [r["score"] for r in rows]
+                best_score = max(scores) if scores else 0
+
+        if visit_count:
+            visited_count += 1
         if has_passed:
             passed_count += 1
-
-        if station.scoring_mode == Station.SCORING_PASS_FAIL:
-            best_score = station.pass_points if has_passed else 0
-        elif station.scoring_mode == Station.SCORING_THRESHOLD:
-            passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
-            best_score = max(passed_scores) if passed_scores else 0
-        else:  # score_only
-            scores = [r["score"] for r in rows]
-            best_score = max(scores) if scores else 0
 
         if has_active:
             journey_status = "active"
@@ -1226,8 +1297,9 @@ def my_team_stations_view(request: HttpRequest):
             # Tells the app whether to show a QR for a collab to scan, or to let
             # the team open the station on its own.
             "checkin_policy": station.checkin_policy,
-            "has_form": has_submission_items(station.submission_config),
+            "has_form": _station_has_form(station, bank_counts),
             "submission_brief": station.submission_config.get("brief", "") if isinstance(station.submission_config, dict) else "",
+            "limits": station.submission_config.get("limits", {}) if isinstance(station.submission_config, dict) else {},
             # Only meaningful where `has_form` — whether submitting ends the visit.
             "checkout_after_submit": checkout_after_submit(station.submission_config),
             "capacity": {
@@ -1263,6 +1335,7 @@ def my_team_stations_view(request: HttpRequest):
     payload["passed_count"] = passed_count
     payload["all_visited"] = all_visited
     payload["replay_enabled"] = replay_enabled
+    payload["server_now"] = timezone.now().isoformat()
 
     return JsonResponse(payload)
 
@@ -1299,8 +1372,9 @@ def my_team_forms_view(request: HttpRequest):
     )
 
     accessible_forms = []
+    bank_counts: dict = {}
     for station in stations:
-        if not has_submission_items(station.submission_config):
+        if not _station_has_form(station, bank_counts):
             continue
 
         phase_key = station.sub_event.phase.key
@@ -1353,14 +1427,25 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
     if closure["closed"] and closure.get("reason") != "not_started":
         return JsonResponse({"error": "form_closed"}, status=403)
 
-    session, created = TeamFormSession.objects.get_or_create(
-        team=team, station=station,
-        defaults={"started_by": acc},
-    )
+    # Scan-gated stations start their clock at check-in, so "start" here only
+    # confirms the team is actually checked in; free-play stations self-start.
+    if station.checkin_policy != Station.POLICY_FREE_PLAY:
+        active = StationSession.objects.filter(
+            team=team, station=station, status=StationSession.STATUS_ACTIVE,
+        ).order_by("-entered_at").first()
+        if active is None:
+            return JsonResponse({"error": "not_checked_in"}, status=403)
+        started_at = active.entered_at
+    else:
+        session, _created = TeamFormSession.objects.get_or_create(
+            team=team, station=station,
+            defaults={"started_by": acc},
+        )
+        started_at = session.started_at
 
     return JsonResponse({
         "status": "started",
-        "started_at": session.started_at.isoformat(),
+        "started_at": started_at.isoformat(),
         "server_now": timezone.now().isoformat(),
     })
 
@@ -1391,7 +1476,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         id=station_id,
         active=True,
     ).first()
-    if not station or not has_submission_items(station.submission_config):
+    if not station or not _station_has_form(station):
         return JsonResponse({"error": "form_not_found"}, status=404)
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -1450,20 +1535,40 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
             return JsonResponse({"error": str(exc)}, status=400)
         attachment_payload = {"files": stored_files}
 
+    # Hard gate: a station that needs a coop scan only accepts a submission while
+    # the team holds an ACTIVE session there — i.e. a coop/admin actually scanned
+    # them in for this attempt. Without it a team could open any form from the
+    # list and submit without ever being checked in.
+    is_scan_gated = station.checkin_policy != Station.POLICY_FREE_PLAY
     session = StationSession.objects.filter(
-        team=team,
-        station=station,
+        team=team, station=station, status=StationSession.STATUS_ACTIVE,
     ).order_by("-entered_at").first()
+    if is_scan_gated and session is None:
+        return JsonResponse({"error": "not_checked_in"}, status=403)
 
-    submission = StationSubmission.objects.filter(
-        team=team,
-        station=station,
-    ).order_by("-created_at").first()
+    # Scope the submission to THIS attempt. A replay opens a fresh session, so it
+    # gets its own submission row — a later attempt never overwrites an earlier
+    # attempt's answers. Free-play stations have no session and keep one row.
+    if session is not None:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session=session,
+        ).order_by("-created_at").first()
+    else:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session__isnull=True,
+        ).order_by("-created_at").first()
     if not submission:
         submission = StationSubmission(team=team, station=station)
 
     # Same draw the team was served; answers to any other question are ignored.
-    quiz_result = grade_submission_quiz(config, response_payload, variant_item_ids(station, team))
+    from api.services.question_bank_service import effective_quiz_items
+    effective_items = effective_quiz_items(station)
+    quiz_result = grade_submission_quiz(
+        config, 
+        response_payload, 
+        variant_item_ids(station, team),
+        effective_quiz_items=effective_items
+    )
     if isinstance(response_payload, dict):
         # quiz_result is server-computed only; never trust a client-sent one
         response_payload.pop("quiz_result", None)
@@ -1596,8 +1701,9 @@ def my_experience_view(request: HttpRequest):
             active=True,
             checkin_policy=Station.POLICY_FREE_PLAY,
         ).order_by("order", "id")
+        bank_counts: dict = {}
         for station in stations:
-            if has_submission_items(station.submission_config):
+            if _station_has_form(station, bank_counts):
                 open_forms.append(_station_form_payload(station, team=team))
 
     return JsonResponse({
@@ -1679,6 +1785,36 @@ def my_team_captain_vote_view(request: HttpRequest):
     })
 
 
+def _team_qr_enabled_for_event(team, station_id) -> bool:
+    """Is this team's station QR live right now?
+
+    True when a sub-event is running and the team is eligible for it — the same
+    phase/roster gate `my_team_stations_view` uses to decide which stations the
+    team may even see. A named station must additionally be active and belong to
+    the running event. There is no separate BTC toggle: a running sub-event is
+    the open signal.
+    """
+    current_event = get_current_sub_event()  # phase is select_related, no extra query
+    if not current_event:
+        return False
+
+    # A named station must be a live station of the running event.
+    if station_id is not None and not Station.objects.filter(
+        id=station_id, sub_event=current_event, active=True,
+    ).exists():
+        return False
+
+    # Eligibility: a phase that has a roster admits only the teams on it; a phase
+    # without one is open to whoever is in the current phase (mirrors stations view).
+    # The common qualifying case — team on this phase's roster — settles in one query.
+    if PhaseRoster.objects.filter(phase=current_event.phase, team=team).exists():
+        return True
+    if PhaseRoster.objects.filter(phase=current_event.phase).exists():
+        return False  # phase is roster-gated and this team is not on it
+    current_phase = get_current_phase()
+    return bool(current_phase and current_event.phase_id == current_phase.id)
+
+
 def my_team_station_state_view(request: HttpRequest):
     """GET the one thing the QR screen polls for: has anything changed yet?
 
@@ -1726,8 +1862,10 @@ def my_team_station_state_view(request: HttpRequest):
         sessions = sessions.filter(status=StationSession.STATUS_ACTIVE)
 
     session = sessions.order_by("-entered_at").values(
-        "station_id", "status", "entered_at", "exited_at",
+        "station_id", "status", "entered_at", "exited_at", "id",
     ).first()
+    if session:
+        submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
         "station_id", "status", "submitted_at",
     ).first()
@@ -1741,18 +1879,27 @@ def my_team_station_state_view(request: HttpRequest):
     # station it is a check-in code, already inside it is a check-out code — so
     # the check-in and check-out QR for a station are genuinely different codes,
     # not one string the coop reinterprets.
+    #
+    # No global "BTC opens check-in" switch gates this any more: in the
+    # per-station model the QR is live automatically as soon as a sub-event is
+    # running and the team is eligible for it. Making a sub-event current *is*
+    # the act of opening the round. Eligibility (approved + on the phase roster,
+    # or in the current phase when that phase has no roster) still applies, and a
+    # named station must be active and belong to the running event.
     qr = {"enabled": False}
-    if team.approval_status == Team.APPROVAL_APPROVED and team_qr_visible(team):
-        if not team.qr_token:
-            rotate_qr_token(team)
-            team.refresh_from_db(fields=["qr_token"])
-        payload = f"t:{team.qr_token}"
-        direction = None
-        if station_id is not None:
-            inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
-            direction = "out" if inside else "in"
-            payload = f"{payload}|s:{station_id}|d:{direction}"
-        qr = {"enabled": True, "payload": payload, "direction": direction}
+    if team.approval_status == Team.APPROVAL_APPROVED:
+        enabled = _team_qr_enabled_for_event(team, station_id)
+        if enabled:
+            if not team.qr_token:
+                rotate_qr_token(team)
+                team.refresh_from_db(fields=["qr_token"])
+            payload = f"t:{team.qr_token}"
+            direction = None
+            if station_id is not None:
+                inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
+                direction = "out" if inside else "in"
+                payload = f"{payload}|s:{station_id}|d:{direction}"
+            qr = {"enabled": True, "payload": payload, "direction": direction}
 
     return JsonResponse({
         "team_code": team.code,

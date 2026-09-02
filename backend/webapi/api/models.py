@@ -284,6 +284,34 @@ class SubEvent(models.Model):
 
 
 # =====================================================================
+# 6a. QuestionBankItem
+# =====================================================================
+
+class QuestionBankItem(models.Model):
+    sub_event = models.ForeignKey(
+        SubEvent, on_delete=models.CASCADE, related_name="question_bank",
+    )
+    type = models.CharField(max_length=20, default="quiz")
+    question = models.TextField()
+    options = models.JSONField(default=list)
+    correct_option = models.IntegerField(null=True, blank=True)
+    correct_text = models.JSONField(default=list, blank=True)
+    points = models.IntegerField(default=1)
+    order = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+    tags = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "question_bank_item"
+        ordering = ["sub_event", "order", "id"]
+
+    def __str__(self) -> str:
+        return f"BankItem {self.id} (SubEvent {self.sub_event_id})"
+
+
+# =====================================================================
 # 7. PhaseRoster
 # =====================================================================
 

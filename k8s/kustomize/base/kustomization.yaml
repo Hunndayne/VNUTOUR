@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base resources for staging. Overlays (k8s/kustomize/overlays/staging/) adds
+# namespace-scoping and specific image tags.
+resources:
+  - 00.namespace.yaml
+  - 01.configmap.yaml
+  - 03.storage.yaml
+  - 04.postgres.yaml
+  - 05.migrate-job.yaml
+  - 06.backend.yaml
+  - 09.frontend.yaml
+  - 10.ingress.yaml
+  # 02.secret.yaml NOT here - secret is created manually outside Git to avoid
+  # ArgoCD overwriting real values with placeholders (see overlays/staging/secret-note.md)

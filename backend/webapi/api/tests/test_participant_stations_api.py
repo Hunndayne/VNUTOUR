@@ -140,6 +140,43 @@ class StationVisibilityTests(StationsApiTestBase):
         self.assertFalse(stations["S01"]["has_form"])
         self.assertTrue(stations["S02"]["has_form"])
 
+    def test_a_free_play_station_drawing_from_the_shared_bank_has_form_true(self):
+        """Regression: a station whose quiz comes entirely from the shared bank
+        (no inline items) must still report has_form, or the participant sees
+        "already completed" instead of the quiz."""
+        from api.models import QuestionBankItem
+
+        QuestionBankItem.objects.create(
+            sub_event=self.event, question="Thu do VN?",
+            options=["Ha Noi", "TP HCM"], correct_option=0, order=0,
+        )
+        Station.objects.create(
+            sub_event=self.event,
+            code="S03",
+            name="Tram ngan hang",
+            order=3,
+            checkin_policy=Station.POLICY_FREE_PLAY,
+            submission_config={"items": [], "bank": {"useAll": True}},
+        )
+
+        stations = self._stations_by_code()
+        self.assertTrue(stations["S03"]["has_form"])
+
+    def test_use_all_with_an_empty_bank_reports_has_form_false(self):
+        """useAll on a sub-event with no active bank questions resolves to no
+        quiz, so the station has nothing to show."""
+        Station.objects.create(
+            sub_event=self.event,
+            code="S04",
+            name="Tram rong",
+            order=4,
+            checkin_policy=Station.POLICY_FREE_PLAY,
+            submission_config={"items": [], "bank": {"useAll": True}},
+        )
+
+        stations = self._stations_by_code()
+        self.assertFalse(stations["S04"]["has_form"])
+
     def test_an_inactive_station_is_hidden(self):
         Station.objects.create(
             sub_event=self.event, code="S99", name="Tram tat", order=3, active=False,

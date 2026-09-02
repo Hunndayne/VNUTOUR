@@ -1,13 +1,19 @@
-# Staging migrate + seed. The deploy-staging workflow rewrites the image tag
-# before applying, same as prod.
+# Migration job — runs BEFORE the backend/frontend rollout via ArgoCD PreSync Hook.
+# ArgoCD deletes the Job after a successful sync, so it re-runs on every deploy.
+# Image tag is managed by Kustomize (overlays/staging/kustomization.yaml).
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: vnutour-migrate
   namespace: vnutour-staging
+  annotations:
+    # PreSync: ArgoCD runs this Job before syncing any other resource.
+    # The sync is blocked (and rolled back) if this Job fails.
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
 spec:
-  backoffLimit: 10
-  activeDeadlineSeconds: 600
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
   ttlSecondsAfterFinished: 3600
 
   template:
@@ -46,7 +52,8 @@ spec:
 
       containers:
         - name: migrate
-          image: ghcr.io/hunndayne/vnutour-backend:staging
+          image: ghcr.io/hunndayne/vnutour-backend
+          # Tag is injected by Kustomize overlay — do NOT hardcode here.
 
           command:
             - sh

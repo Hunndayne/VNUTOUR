@@ -563,7 +563,7 @@ function MergeTeamsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="merge-teams-title"
-        className="relative flex h-[calc(100dvh-2rem)] max-h-[820px] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-stone bg-paper shadow-2xl sm:h-[calc(100dvh-3rem)]"
+        className="relative flex h-[calc(100vh-2rem)] h-[calc(100dvh-2rem)] max-h-[820px] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-stone bg-paper shadow-2xl sm:h-[calc(100vh-3rem)] sm:h-[calc(100dvh-3rem)]"
       >
         <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
           <div>

@@ -3,6 +3,7 @@ import { Badge, CARD, Icon } from './ui.jsx'
 import { FIXED_PHASES, SUB_EVENT_TYPE_META, createSubEvent, getPhaseInfo } from './adminProgram.js'
 import { buildUrl, navigate, useLocation, useSearchParam } from './router.js'
 import { DraftNotice, useDraftState } from './drafts.jsx'
+import QuestionBankPanel from './QuestionBankPanel.jsx'
 
 const PHASE_KEYS = FIXED_PHASES.map(phase => phase.key)
 
@@ -532,6 +533,13 @@ function EventManagementPage({
             )}
           </div>
         </div>
+
+        {!isCreate && (
+          <QuestionBankPanel 
+            eventId={selectedSubEvent.id} 
+            canEdit={canEditProgram} 
+          />
+        )}
       </div>
     )
   }

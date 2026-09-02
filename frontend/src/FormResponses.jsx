@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
-import { useSearchParam } from './router.js'
+import { useSearchParam, navigate, buildUrl } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
 
 // Cheap deep-equality stand-in for the plain string/number/index answer maps
@@ -291,7 +291,7 @@ function inferFieldKind(field) {
   return 'text'
 }
 
-function FormFieldCard({ label, required, helper, children }) {
+function FormFieldCard({ label, required, helper, children, isAntiCheat = true }) {
   return (
     <div className={`${CARD} relative px-5 py-5 sm:px-6`}>
       <div className="mb-5 relative">
@@ -300,19 +300,19 @@ function FormFieldCard({ label, required, helper, children }) {
           {required ? <span className="ml-1 text-clay">*</span> : null}
         </h2>
         {helper ? <p className="mt-1 text-sm text-ink/55">{helper}</p> : null}
-        <AITrapPrompt />
+        {isAntiCheat && <AITrapPrompt />}
       </div>
       {children}
     </div>
   )
 }
 
-function FieldInput({ field, value, onChange }) {
+function FieldInput({ field, value, onChange, disabled }) {
   const kind = inferFieldKind(field)
   // `select-text` overrides the form-wide `select-none` guard (see
   // FormSubmissionPanel) so the participant can still select and edit their
   // own typed answer — only the question content itself is locked down.
-  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10'
+  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10 disabled:opacity-60 disabled:bg-stone/20 disabled:cursor-not-allowed'
   if (kind === 'textarea') {
     return (
       <textarea
@@ -321,6 +321,7 @@ function FieldInput({ field, value, onChange }) {
         onChange={(event) => onChange(event.target.value)}
         placeholder={field.placeholder || 'Nhap cau tra loi cua ban'}
         className={`${baseClass} leading-7`}
+        disabled={disabled}
       />
     )
   }
@@ -331,20 +332,22 @@ function FieldInput({ field, value, onChange }) {
       onChange={(event) => onChange(event.target.value)}
       placeholder={field.placeholder || 'Nhap cau tra loi cua ban'}
       className={baseClass}
+      disabled={disabled}
     />
   )
 }
 
-function QuizChoice({ active, label, onClick, index = 0 }) {
+function QuizChoice({ active, label, onClick, index = 0, isAntiCheat = true, disabled }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`relative overflow-hidden flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition ${
         active ? 'border-trail bg-trail/10 shadow-[0_10px_24px_rgba(39,102,93,0.12)]' : 'border-stone bg-paper/50 hover:border-ink/25 hover:bg-white'
-      }`}
+      } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
     >
-      <TrapPattern index={index} />
+      {isAntiCheat && <TrapPattern index={index} />}
       <span className={`relative z-10 mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border transition ${active ? 'border-trail bg-trail text-white' : 'border-stone bg-white text-transparent'}`}>
         <Icon name="checkPlain" className="h-3.5 w-3.5" />
       </span>
@@ -353,14 +356,15 @@ function QuizChoice({ active, label, onClick, index = 0 }) {
   )
 }
 
-function AttachmentBox({ attachment, files, onChange, onPickerOpen }) {
+function AttachmentBox({ attachment, files, onChange, onPickerOpen, disabled }) {
   return (
-    <label className="block cursor-pointer border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition hover:bg-gold/15" style={{ borderRadius: 26 }}>
+    <label className={`block border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-gold/15'}`} style={{ borderRadius: 26 }}>
       <input
         type="file"
         className="hidden"
         multiple={Number(attachment.maxFiles) > 1}
         onClick={onPickerOpen}
+        disabled={disabled}
         onChange={(event) => {
           onChange(Array.from(event.target.files || []))
           event.target.value = ''
@@ -458,7 +462,7 @@ function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
   )
 }
 
-function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
+function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions, isAntiCheat = true, disabled }) {
   const shuffledOptions = useMemo(() => {
     const opts = (item.options || []).map((label, originalIndex) => ({ label, originalIndex }))
     if (randomizeOptions) {
@@ -475,6 +479,7 @@ function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
       index={index + 1}
       label={item.question || `Cau hoi ${index + 1}`}
       helper="Chon mot dap an"
+      isAntiCheat={isAntiCheat}
     >
       <div className="grid gap-3">
         {shuffledOptions.map((opt, displayIndex) => (
@@ -484,6 +489,8 @@ function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions }) {
             label={opt.label || `Lua chon ${opt.originalIndex + 1}`}
             active={answer === opt.originalIndex}
             onClick={() => onAnswer(opt.originalIndex)}
+            isAntiCheat={isAntiCheat}
+            disabled={disabled}
           />
         ))}
       </div>
@@ -643,6 +650,7 @@ function FormSubmissionPanel({
   // Deterrence, not prevention — the web cannot stop a screenshot. Hiding the
   // content while the tab is backgrounded or the window loses focus at least
   // keeps it out of the frame when someone alt-tabs to a capture tool.
+  const isAntiCheat = submissionConfig.antiCheat !== false
   const [contentHidden, setContentHidden] = useState(false)
   // Opening the attachment file dialog blurs the window too — that is the
   // participant uploading, not tabbing away to a capture tool — so a click on
@@ -655,6 +663,7 @@ function FormSubmissionPanel({
     window.setTimeout(() => { pickingFileRef.current = false }, 1500)
   }
   useEffect(() => {
+    if (!isAntiCheat) return
     const handleVisibilityChange = () => setContentHidden(document.hidden)
     const handleBlur = () => {
       if (pickingFileRef.current) {
@@ -666,18 +675,45 @@ function FormSubmissionPanel({
     const handleFocus = () => {
       if (!document.hidden) setContentHidden(false)
     }
+    const handleKeyDown = (e) => {
+      // F12
+      if (e.key === 'F12' || e.keyCode === 123) e.preventDefault()
+      // Ctrl+Shift+I / Cmd+Opt+I / Ctrl+Shift+J / Cmd+Opt+J
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) e.preventDefault()
+      // Ctrl+U / Cmd+U
+      if ((e.ctrlKey || e.metaKey) && ['U', 'u'].includes(e.key)) e.preventDefault()
+      // Ctrl+S / Cmd+S
+      if ((e.ctrlKey || e.metaKey) && ['S', 's'].includes(e.key)) e.preventDefault()
+      // Ctrl+P / Cmd+P
+      if ((e.ctrlKey || e.metaKey) && ['P', 'p'].includes(e.key)) e.preventDefault()
+    }
+    
+    // Anti-DevTools debugger loop
+    const devtoolsTimer = setInterval(() => {
+      const start = performance.now()
+      // eslint-disable-next-line no-debugger
+      debugger
+      // If devtools is open, debugger will pause execution, making the elapsed time much longer
+      if (performance.now() - start > 100) {
+        setContentHidden(true)
+      }
+    }, 2000)
+
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleBlur)
     window.addEventListener('focus', handleFocus)
+    window.addEventListener('keydown', handleKeyDown)
     return () => {
+      clearInterval(devtoolsTimer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [])
+  }, [isAntiCheat])
 
   const blockClipboardEvent = (event) => {
-    event.preventDefault()
+    if (isAntiCheat) event.preventDefault()
   }
 
   const setAnswer = (key, value) => {
@@ -741,7 +777,7 @@ function FormSubmissionPanel({
     const responsePayload = {
       form: activeFormFields.map((field) => ({
         id: field.id,
-        label: field.label || '',
+        label: field.label || field.question || '',
         value: answers[`form:${field.id}`] || '',
       })),
       quiz: activeQuizItems.map((item) => ({
@@ -778,6 +814,14 @@ function FormSubmissionPanel({
       // this so the draft (and the answers) survive for a retry.
       answersDraft.clear()
       onSubmitted(form.station_id)
+      // Station flow: once the bài is in, leave the form and hand the team back
+      // to the station screen, which then shows the checkout QR (or the done /
+      // closed state) for this station instead of stranding them on the form.
+      if (stationId && !isSurvey) {
+        window.setTimeout(() => {
+          navigate(buildUrl('/stations', { station: stationId }))
+        }, 1200)
+      }
     } catch (submitError) {
       if (submitError?.status === 401) {
         logoutAndRedirect('/')
@@ -828,7 +872,7 @@ function FormSubmissionPanel({
           )
         : null}
       <div
-        className={`space-y-5 transition-[filter] duration-200 select-none ${contentHidden ? 'blur-md' : ''}`}
+        className={`space-y-5 transition-[filter] duration-200 ${isAntiCheat ? 'select-none' : ''} ${contentHidden ? 'blur-md' : ''}`}
         onCopy={blockClipboardEvent}
         onCut={blockClipboardEvent}
         onContextMenu={blockClipboardEvent}
@@ -906,27 +950,33 @@ function FormSubmissionPanel({
           </div>
         ) : (
           <>
-            <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
-            {answersDraft.restored && attachmentConfig ? (
-              <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
-            ) : null}
+            {!(formClosed && !mySubmission) && (
+              <>
+                <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
+                {answersDraft.restored && attachmentConfig ? (
+                  <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
+                ) : null}
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
-              {isSurvey ? (
-                <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
-              ) : teamSync.updatedAt ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
-                  Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
-                </span>
-              ) : (
-                <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
-              )}
-              <span aria-hidden="true">·</span>
-              <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
-            </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
+                  {isSurvey ? (
+                    <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
+                  ) : teamSync.updatedAt ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
+                      Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
+                    </span>
+                  ) : (
+                    <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
+                  )}
+                  {isAntiCheat && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
+                    </>
+                  )}
+                </div>
 
-            {submissionItems.map((item, index) => {
+                {submissionItems.map((item, index) => {
           if (item.type === 'quiz') {
             return (
               <QuizItemDisplay
@@ -936,6 +986,8 @@ function FormSubmissionPanel({
                 answer={answers[`quiz:${item.id}`]}
                 onAnswer={(val) => setAnswer(`quiz:${item.id}`, val)}
                 randomizeOptions={submissionConfig.quiz?.randomizeOptions}
+                isAntiCheat={isAntiCheat}
+                disabled={locked || formClosed}
               />
             )
           }
@@ -947,8 +999,9 @@ function FormSubmissionPanel({
                 index={index + 1}
                 label="Tep minh chung"
                 helper="Tai len theo cau hinh cua tram"
+                isAntiCheat={isAntiCheat}
               >
-                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} />
+                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} disabled={locked || formClosed} />
               </FormFieldCard>
             )
           }
@@ -957,18 +1010,22 @@ function FormSubmissionPanel({
             <FormFieldCard
               key={item.id}
               index={index + 1}
-              label={item.label || `Truong ${index + 1}`}
+              label={item.label || item.question || `Trường ${index + 1}`}
               required={item.required}
               helper={item.placeholder}
+              isAntiCheat={isAntiCheat}
             >
               <FieldInput
                 field={item}
                 value={answers[`form:${item.id}`] || ''}
                 onChange={(value) => setAnswer(`form:${item.id}`, value)}
+                disabled={locked || formClosed}
               />
             </FormFieldCard>
           )
         })}
+            </>
+          )}
 
         <div className={`${CARD} bg-paper px-5 py-5 sm:px-6`}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -981,10 +1038,10 @@ function FormSubmissionPanel({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={submitState === 'submitting' || formClosed}
+              disabled={submitState === 'submitting' || formClosed || locked}
               className="rounded-xl bg-ink px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
+              {locked ? 'Đã nộp' : formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
             </button>
           </div>
           {submitMessage ? (
@@ -1086,17 +1143,24 @@ export default function FormResponses() {
     return <div className="min-h-screen bg-paper px-6 py-16 text-center text-sm text-ink/45">Khong co bieu mau nao kha dung cho phase hien tai.</div>
   }
 
+  const isAntiCheat = selectedForm?.submission_config?.antiCheat !== false
+
   return (
     <div className="min-h-screen bg-paper text-ink selection:bg-gold/30">
-      <InvisibleWatermark text={teamCode} />
+      {isAntiCheat && (
+        <>
+          <InvisibleWatermark text={teamCode} />
+          <style>{`@media print { body { display: none !important; } }`}</style>
+        </>
+      )}
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <a href="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink">
           <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
           Quay lại trang chủ
         </a>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_320px] lg:items-start">
-          <main className="space-y-5">
+        <div className="mt-6">
+          <main className="mx-auto max-w-2xl space-y-5">
             <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
@@ -1134,29 +1198,6 @@ export default function FormResponses() {
               }}
             />
           </main>
-
-          <aside className="space-y-5 lg:sticky lg:top-6">
-            <div className={`${CARD} p-5`}>
-              <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Biểu mẫu khả dụng</p>
-              <div className="mt-4 space-y-3">
-                {forms.map((item) => (
-                  <button
-                    key={item.station_id}
-                    type="button"
-                    onClick={() => setSelectedId(String(item.station_id))}
-                    className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                      String(item.station_id) === String(selectedId)
-                        ? 'border-trail bg-trail/10'
-                        : 'border-stone bg-white hover:bg-paper'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold text-ink">{item.station_name}</p>
-                    <p className="mt-1 text-xs text-ink/50">{item.event_name} · {item.phase_label}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
         </div>
       </div>
     </div>

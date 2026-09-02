@@ -75,7 +75,7 @@ body {
   left: 8%;
   height: 12rem;
   border-radius: 50%;
-  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-about-end) 72%, var(--fade-tour-mid)) 0%, transparent 72%);
+  background: radial-gradient(ellipse at center, #f1fcff 0%, transparent 72%);
   filter: blur(38px);
   content: '';
   pointer-events: none;
@@ -156,7 +156,7 @@ body {
   left: 8%;
   height: 13rem;
   border-radius: 50%;
-  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-hero-end) 82%, var(--fade-organizers-end)) 0%, transparent 72%);
+  background: radial-gradient(ellipse at center, #42c2be 0%, transparent 72%);
   filter: blur(40px);
   content: '';
   pointer-events: none;
@@ -170,7 +170,7 @@ body {
   left: 4%;
   height: 19rem;
   border-radius: 50%;
-  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-organizers-end) 78%, var(--fade-about-end)) 0%, color-mix(in srgb, var(--fade-organizers-end) 42%, transparent) 42%, transparent 74%);
+  background: radial-gradient(ellipse at center, #72d3cd 0%, rgba(79, 199, 194, 0.42) 42%, transparent 74%);
   filter: blur(42px);
   content: '';
   pointer-events: none;
@@ -188,7 +188,7 @@ body {
   left: 10%;
   height: 17rem;
   border-radius: 50%;
-  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fade-organizers-end) 76%, var(--fade-about-end)) 0%, color-mix(in srgb, var(--fade-organizers-end) 38%, transparent) 38%, transparent 74%);
+  background: radial-gradient(ellipse at center, #77d4cf 0%, rgba(79, 199, 194, 0.38) 38%, transparent 74%);
   filter: blur(48px);
   content: '';
   pointer-events: none;

@@ -248,9 +248,11 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
     # here, so they keep the config exactly as stored.
     hide_answers = acc.role == Account.ROLE_COLLAB
 
+    from api.services.question_bank_service import effective_quiz_items
+    
     def station_config(station):
         if hide_answers:
-            return public_config(station.submission_config)
+            return public_config(station.submission_config, effective_quiz_items=effective_quiz_items(station))
         return station.submission_config
 
     return JsonResponse({
@@ -293,6 +295,15 @@ def station_create_view(request: HttpRequest, event_id: int):
     if err:
         return JsonResponse({"error": err}, status=400)
 
+    cfg = _stored_submission_config(data.get("submission_config"))
+    if cfg and "bank" in cfg and cfg["bank"].get("itemIds"):
+        from api.models import QuestionBankItem
+        valid_ids = list(QuestionBankItem.objects.filter(
+            sub_event_id=event_id,
+            id__in=cfg["bank"]["itemIds"]
+        ).values_list("id", flat=True))
+        cfg["bank"]["itemIds"] = [i for i in cfg["bank"]["itemIds"] if i in valid_ids]
+
     try:
         station = create_station(
             event_id, code, name,
@@ -302,7 +313,7 @@ def station_create_view(request: HttpRequest, event_id: int):
             checkin_policy=data.get("checkin_policy", "staff_scan"),
             capacity_mode=data.get("capacity_mode", "unlimited"),
             max_concurrent_teams=data.get("max_concurrent_teams"),
-            submission_config=_stored_submission_config(data.get("submission_config")),
+            submission_config=cfg,
             **scoring_kwargs,
         )
     except ValueError as exc:
@@ -333,7 +344,18 @@ def station_detail_view(request: HttpRequest, station_id: int):
             if f in data:
                 kwargs[f] = data[f]
         if "submission_config" in kwargs:
-            kwargs["submission_config"] = _stored_submission_config(kwargs["submission_config"])
+            cfg = _stored_submission_config(kwargs["submission_config"])
+            if cfg and "bank" in cfg and cfg["bank"].get("itemIds"):
+                from api.models import QuestionBankItem, Station
+                # We need the station's sub_event_id
+                st = Station.objects.get(id=station_id)
+                valid_ids = list(QuestionBankItem.objects.filter(
+                    sub_event_id=st.sub_event_id,
+                    id__in=cfg["bank"]["itemIds"]
+                ).values_list("id", flat=True))
+                # preserve order but filter valid
+                cfg["bank"]["itemIds"] = [i for i in cfg["bank"]["itemIds"] if i in valid_ids]
+            kwargs["submission_config"] = cfg
         scoring_kwargs, err = _clean_scoring_kwargs(data, require_defaults=False)
         if err:
             return JsonResponse({"error": err}, status=400)
