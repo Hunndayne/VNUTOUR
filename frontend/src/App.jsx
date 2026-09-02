@@ -17,7 +17,7 @@ import { navigate, useLocation } from './router.js'
 // bookmarked. Each screen owns a path now.
 const ROUTES = {
   '/admin': { render: () => <AdminDashboard />, allows: isAdminRole },
-  '/coop': { render: () => <CoopDashboard />, allows: (role) => role === 'collab' },
+  '/coop': { render: () => <CoopDashboard />, allows: (role) => role === 'collab' || isAdminRole(role) },
   '/participant': { render: () => <ParticipantDashboard />, allows: (role) => role === 'participant' },
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
   '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
