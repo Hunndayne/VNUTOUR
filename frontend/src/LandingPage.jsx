@@ -4,7 +4,6 @@ import logoImage from './assets/vnutour-logo.png'
 import universityLogo from './assets/organizer-university.webp'
 import youthUnionLogo from './assets/organizer-youth-union.webp'
 import facultyLogo from './assets/organizer-faculty.webp'
-import vnu2025 from './assets/vnutour-hero.jpg'
 import SiteHeader, { NavLinks } from './SiteHeader.jsx'
 import VNUTourJourneyMap from './VNUTourJourneyMap.jsx'
 
