@@ -1,22 +1,27 @@
 # =============================================================================
-# Zone 1 (homelab) prod Application — DO NOT APPLY YET.
+# Zone 1 (homelab) prod Application — DO NOT SYNC YET.
 #
-# Two prerequisites are still open before this is safe to sync:
+# WireGuard mesh is UP: ArgoCD on Zone 2 reaches the homelab API at
+# 192.168.1.110:6443 (destination.server below). Register it once with:
+#   argocd cluster add zone1 --name zone1-homelab   # see wg runbook §10
 #
-#   1. WireGuard up + homelab cluster registered in this ArgoCD:
-#        argocd cluster add <homelab-context>   # over the WG link to :6443
-#      Then set spec.destination.server below to the URL that
-#        argocd cluster list
-#      prints for the homelab cluster (replace the REPLACE_ME placeholder).
+# STILL OPEN before a first sync is safe — pick one:
 #
-#   2. overlays/prod must render the FULL homelab stack (Discord bot,
-#      email-worker, monitoring 11-15, backup CronJob 16) BEFORE this syncs.
-#      Right now overlays/prod is app-tier only; syncing it at the homelab with
-#      prune on would DELETE those live workloads. Port them into a
-#      homelab-only kustomize component and add it to overlays/prod first.
+#   (A) Port the FULL homelab stack (Discord bot, email-worker, monitoring
+#       11-15, backup CronJob 16) into a homelab-only component added to
+#       overlays/prod, so ArgoCD is authoritative for everything. Then prune is
+#       safe. Most complete; more work.
 #
-# Kept manual (no automated block) on purpose: the first homelab sync should be
-# a deliberate, reviewed `argocd app sync`, not a push-button auto-sync.
+#   (B) Adopt app-tier only with prune DISABLED (remove/omit automated.prune):
+#       ArgoCD manages backend/frontend/postgres/ingress and leaves the
+#       imperative bot/email/monitoring/backup untouched. Faster path to
+#       version parity. REQUIRED SAFEGUARD: pin components/images to the CURRENT
+#       live prod SHA first, or the first sync rolls prod to whatever tag is in
+#       git (currently `latest`).
+#
+# Kept manual (no automated block) on purpose: the first homelab sync must be a
+# deliberate, reviewed `argocd app sync`. PVCs/StatefulSet also carry
+# Prune=false (components/prod-config) as a second line of defence.
 # =============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -34,7 +39,7 @@ spec:
     path: k8s/kustomize/overlays/prod
 
   destination:
-    server: REPLACE_ME   # homelab cluster URL from `argocd cluster list` (see header)
+    server: https://192.168.1.110:6443   # homelab k3s API over the wg mesh (must be `argocd cluster add`-ed first)
     namespace: vnutour
 
   # No `automated:` block — sync manually until the full stack is in the overlay
