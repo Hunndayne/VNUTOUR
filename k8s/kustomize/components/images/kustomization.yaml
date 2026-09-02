@@ -11,7 +11,7 @@ kind: Component
 # CI updates newTag after a successful image push (do NOT edit by hand once CI
 # is wired). Until then it tracks `latest`.
 images:
-  - name: ghcr.io/hunndayne/vnutour-backend
-    newTag: latest
-  - name: ghcr.io/hunndayne/vnutour-frontend
-    newTag: latest
+- name: ghcr.io/hunndayne/vnutour-backend
+  newTag: fa87deb
+- name: ghcr.io/hunndayne/vnutour-frontend
+  newTag: fa87deb
