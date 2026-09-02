@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# PROD STANDBY — Zone 2 (Linode), namespace vnutour, warm copy of the app tier.
+#
+# Deliberately app-tier only: NO Discord bot, NO email-worker, NO backup CronJob.
+# Those are cluster-wide singletons — running a second bot with the same token
+# would open a duplicate gateway session and every slash command would fire
+# twice. The standby exists to hold the SAME application version as Zone 1 (via
+# the shared components/images) and to be promotable after a DB restore.
+#
+# It shares components/prod-config and components/images with overlays/prod, so
+# the backend/frontend image tag here is always identical to Zone 1's.
+namespace: vnutour
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/prod-config
+  - ../../components/images

@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vnutour-prod-standby
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # Zone 2 warm standby. Runs on the SAME cluster ArgoCD lives in (Linode), so
+  # it needs no external cluster registration or WireGuard — safe to apply now.
+  source:
+    repoURL: https://github.com/Hunndayne/VNUTOUR.git
+    targetRevision: main
+    path: k8s/kustomize/overlays/prod-standby
+
+  destination:
+    server: https://kubernetes.default.svc   # the Linode cluster itself
+    namespace: vnutour
+
+  syncPolicy:
+    automated:
+      prune: true      # standby is disposable; PVCs are opted out via Prune=false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
