@@ -4,12 +4,12 @@ kind: Kustomization
 namespace: vnutour-staging
 
 resources:
-  - ../../base
+- ../../base
 
 # Image tags are updated automatically by the CI pipeline after a successful
 # image push to GHCR. Do NOT edit newTag manually.
 images:
-  - name: ghcr.io/hunndayne/vnutour-backend
-    newTag: latest  # CI will replace this with the short commit SHA (e.g. a3f9c12)
-  - name: ghcr.io/hunndayne/vnutour-frontend
-    newTag: latest  # CI will replace this with the short commit SHA
+- name: ghcr.io/hunndayne/vnutour-backend
+  newTag: 5574b6f
+- name: ghcr.io/hunndayne/vnutour-frontend
+  newTag: 5574b6f
