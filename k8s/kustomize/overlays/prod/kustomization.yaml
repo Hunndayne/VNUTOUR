@@ -3,12 +3,16 @@ kind: Kustomization
 
 # PROD — Zone 1 (homelab), namespace vnutour, host vnutour.suctremmt.com.
 #
-# NOTE: this overlay currently renders the APP TIER ONLY (postgres + backend +
-# frontend + ingress + migrate). The live homelab prod also runs the Discord
-# bot, email-worker, monitoring (11-15) and the backup CronJob (16). Those are
-# NOT here yet, so DO NOT point an auto-sync/prune ArgoCD Application at the
-# homelab cluster from this overlay — it would prune those workloads. Port them
-# into a homelab-only component first (see k8s/argocd/prod-app.yaml).
+# NOTE: renders the APP TIER + the Patroni HA database engine (db-patroni) as
+# the HOMELAB PRIMARY member. The live homelab prod also runs the Discord bot,
+# email-worker, monitoring (11-15) and the backup CronJob (16). Those are NOT
+# here yet, so DO NOT point an auto-sync/prune ArgoCD Application at the homelab
+# cluster from this overlay — it would prune those workloads. Port them into a
+# homelab-only component first (see k8s/argocd/prod-app.yaml).
+#
+# db-patroni prerequisites (DB HA runbook): external 3-site etcd up, node
+# vnutour-w1 labelled vnutour/storage=true, Secret patroni-secret present. The
+# member advertises 192.168.1.111 (the db-patroni default = homelab primary).
 namespace: vnutour
 
 resources:
@@ -17,3 +21,4 @@ resources:
 components:
   - ../../components/prod-config
   - ../../components/images
+  - ../../components/db-patroni
