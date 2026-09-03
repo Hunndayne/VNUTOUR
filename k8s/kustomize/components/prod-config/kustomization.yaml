@@ -15,6 +15,13 @@ patches:
       kind: ConfigMap
       name: backend-config
     patch: |-
+      # Point the app at the Patroni HA database via the primary-following
+      # HAProxy (pg-primary) instead of the old single-node postgres Service.
+      # The base ships DB_HOST=postgres; both prod zones now have their own
+      # pg-primary (db-patroni), so this one line retargets both.
+      - op: replace
+        path: /data/DB_HOST
+        value: pg-primary
       - op: replace
         path: /data/DJANGO_ALLOWED_HOSTS
         value: vnutour.suctremmt.com,localhost,127.0.0.1
