@@ -16,7 +16,7 @@ spec:
     path: k8s/kustomize/overlays/staging
 
   destination:
-    server: https://kubernetes.default.svc 
+    server: https://192.168.1.110:6443
     namespace: vnutour-staging
 
   syncPolicy:
