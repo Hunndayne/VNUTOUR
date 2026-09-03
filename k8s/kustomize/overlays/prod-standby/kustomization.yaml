@@ -11,6 +11,14 @@ kind: Kustomization
 #
 # It shares components/prod-config and components/images with overlays/prod, so
 # the backend/frontend image tag here is always identical to Zone 1's.
+#
+# db-patroni here = the Linode REPLICA member of the vnutour-pg cluster. The
+# inline patch flips the homelab-primary defaults to advertise the Linode mesh
+# IP 10.88.0.2 and a distinct member name. It streams async from the homelab
+# primary and is promotable on failover. Prereqs: etcd 3-site up, the Linode
+# node labelled vnutour/storage=true, Secret patroni-secret present (identical
+# to homelab). The patch is inline (not a file path) on purpose — kustomize's
+# load-restrictor forbids a patch file outside the overlay dir.
 namespace: vnutour
 
 resources:
@@ -19,3 +27,23 @@ resources:
 components:
   - ../../components/prod-config
   - ../../components/images
+  - ../../components/db-patroni
+
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres-ha
+      spec:
+        template:
+          spec:
+            containers:
+              - name: patroni
+                env:
+                  - name: PATRONI_NAME
+                    value: linode
+                  - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
+                    value: "10.88.0.2:5432"
+                  - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+                    value: "10.88.0.2:8008"
