@@ -1,27 +1,21 @@
 # =============================================================================
-# Zone 1 (homelab) prod Application — DO NOT SYNC YET.
+# Zone 1 (homelab) prod Application.
 #
-# WireGuard mesh is UP: ArgoCD on Zone 2 reaches the homelab API at
-# 192.168.1.110:6443 (destination.server below). Register it once with:
-#   argocd cluster add zone1 --name zone1-homelab   # see wg runbook §10
+# Model B hub: this ArgoCD runs on Zone 2 (Linode) and manages the homelab
+# cluster over the WireGuard mesh (destination.server below; the cluster is
+# registered as zone1-homelab).
 #
-# STILL OPEN before a first sync is safe — pick one:
+# Scope = APP TIER ONLY (postgres + backend + frontend + ingress + migrate),
+# with prune DISABLED. ArgoCD keeps backend/frontend on the tag in
+# components/images (the same tag Zone 2 runs, so the two zones stay in sync),
+# and never deletes anything it does not own. The Discord bot, email-worker,
+# monitoring (11-15) and backup CronJob stay OUTSIDE GitOps for now — they keep
+# running as deployed and are handed to a later automation phase. With prune off
+# ArgoCD will not touch or remove them.
 #
-#   (A) Port the FULL homelab stack (Discord bot, email-worker, monitoring
-#       11-15, backup CronJob 16) into a homelab-only component added to
-#       overlays/prod, so ArgoCD is authoritative for everything. Then prune is
-#       safe. Most complete; more work.
-#
-#   (B) Adopt app-tier only with prune DISABLED (remove/omit automated.prune):
-#       ArgoCD manages backend/frontend/postgres/ingress and leaves the
-#       imperative bot/email/monitoring/backup untouched. Faster path to
-#       version parity. REQUIRED SAFEGUARD: pin components/images to the CURRENT
-#       live prod SHA first, or the first sync rolls prod to whatever tag is in
-#       git (currently `latest`).
-#
-# Kept manual (no automated block) on purpose: the first homelab sync must be a
-# deliberate, reviewed `argocd app sync`. PVCs/StatefulSet also carry
-# Prune=false (components/prod-config) as a second line of defence.
+# selfHeal is on so out-of-band kubectl drift on the app tier is reverted; prune
+# is off so nothing gets deleted. PVCs/StatefulSet also carry Prune=false
+# (components/prod-config) as a second line of defence.
 # =============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -39,12 +33,12 @@ spec:
     path: k8s/kustomize/overlays/prod
 
   destination:
-    server: https://192.168.1.110:6443   # homelab k3s API over the wg mesh (must be `argocd cluster add`-ed first)
+    server: https://192.168.1.110:6443   # homelab k3s API over the wg mesh (registered as zone1-homelab)
     namespace: vnutour
 
-  # No `automated:` block — sync manually until the full stack is in the overlay
-  # and the first cutover has been verified. PVCs/StatefulSet already carry
-  # Prune=false (components/prod-config) as a second line of defence.
   syncPolicy:
+    automated:
+      prune: false     # app-tier only; never delete the imperative bot/email/monitoring/backup
+      selfHeal: true   # revert out-of-band drift on the resources ArgoCD owns
     syncOptions:
       - ServerSideApply=true
