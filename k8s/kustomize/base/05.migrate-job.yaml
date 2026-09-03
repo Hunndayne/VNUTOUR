@@ -10,7 +10,11 @@ metadata:
     # PreSync: ArgoCD runs this Job before syncing any other resource.
     # The sync is blocked (and rolled back) if this Job fails.
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    # BeforeHookCreation: delete the previous migrate Job before creating the
+    # new one. A Job's pod template is immutable, so without this a re-sync at a
+    # new image tag fails to apply over a lingering Job (e.g. when an earlier
+    # sync stalled after PreSync and never ran the HookSucceeded cleanup).
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
 spec:
   backoffLimit: 3
   # 20 min: homelab pulls each new image tag fresh over a slow link; 300s
