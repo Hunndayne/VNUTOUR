@@ -84,21 +84,23 @@ spec:
             - name: ETCD3_HOSTS
               value: "192.168.1.111:2379,10.88.0.2:2379,10.88.0.3:2379"
 
-            # Unique member name per cluster. HOMELAB default; the Linode overlay
-            # patches this to "linode" (two members must not share a name).
+            # Member name: Spilo derives it from the pod hostname, so under
+            # hostNetwork it ends up as the node name (homelab -> vnutour-w1,
+            # Linode -> localhost). PATRONI_NAME is effectively ignored; kept for
+            # documentation. Both are unique, so this is fine.
             - name: PATRONI_NAME
               value: homelab
 
-            # --- Advertised addresses (node IP; patched per cluster) -----------
-            # With hostNetwork the pod's status.podIP is the node IP, but which
-            # node IP k8s reports is not guaranteed to be the mesh/LAN one we
-            # need, so pin it explicitly. HOMELAB default = 192.168.1.111.
-            # VERIFY AT BRING-UP that Spilo honors these under hostNetwork; if it
-            # overwrites them from status.podIP, set PATRONI_KUBERNETES_POD_IP.
-            - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
-              value: "192.168.1.111:5432"
-            - name: PATRONI_RESTAPI_CONNECT_ADDRESS
-              value: "192.168.1.111:8008"
+            # --- Advertised address (THE lever under hostNetwork) --------------
+            # Spilo computes postgresql/restapi connect_address from POD_IP, and
+            # IGNORES PATRONI_*_CONNECT_ADDRESS. Without POD_IP it falls back to
+            # resolving the hostname: on w1 that gives 192.168.1.111 (correct),
+            # but on the Linode node (hostname "localhost") it gives ::1 — which
+            # breaks failover TO Linode. So pin POD_IP to the routable mesh/LAN
+            # IP. HOMELAB default = 192.168.1.111; the Linode overlay patches it
+            # to 10.88.0.2. (Verified on the live cluster 2026-09-04.)
+            - name: POD_IP
+              value: "192.168.1.111"
 
             # --- Credentials ---------------------------------------------------
             - name: PATRONI_SUPERUSER_USERNAME
