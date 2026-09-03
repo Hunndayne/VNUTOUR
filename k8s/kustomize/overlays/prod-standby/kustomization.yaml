@@ -53,9 +53,8 @@ patches:
             containers:
               - name: patroni
                 env:
-                  - name: PATRONI_NAME
-                    value: linode
-                  - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
-                    value: "10.88.0.2:5432"
-                  - name: PATRONI_RESTAPI_CONNECT_ADDRESS
-                    value: "10.88.0.2:8008"
+                  # Spilo advertises from POD_IP (ignores PATRONI_*_CONNECT_ADDRESS).
+                  # The Linode node hostname is "localhost" -> resolves to ::1, so
+                  # POD_IP must be pinned to the mesh IP or failover to Linode breaks.
+                  - name: POD_IP
+                    value: "10.88.0.2"
