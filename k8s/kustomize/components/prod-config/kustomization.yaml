@@ -77,6 +77,10 @@ patches:
   # --- Data-safety: never let ArgoCD prune the database / media volumes ------
   # If one of these ever falls out of Git (rename, refactor) ArgoCD with
   # prune enabled would delete the PVC and take the data with it. Opt them out.
+  # Prod/standby volumes are provisioned at 10Gi (base ships 5Gi for the
+  # disposable staging env). local-path cannot shrink a bound PVC, so Git MUST
+  # request the live size or every sync fails with "can not be less than
+  # status.capacity" and blocks the whole app (image rollout included).
   - target:
       kind: PersistentVolumeClaim
       name: postgres-data
@@ -85,6 +89,9 @@ patches:
         path: /metadata/annotations
         value:
           argocd.argoproj.io/sync-options: Prune=false
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 10Gi
   - target:
       kind: PersistentVolumeClaim
       name: media-data
@@ -93,6 +100,9 @@ patches:
         path: /metadata/annotations
         value:
           argocd.argoproj.io/sync-options: Prune=false
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 10Gi
   - target:
       kind: StatefulSet
       name: postgres
