@@ -1,0 +1,159 @@
+# Patroni-managed Postgres 16 (Zalando Spilo), the HA prod database engine.
+#
+# Runs as a hostNetwork StatefulSet pinned to a node, so it advertises the
+# NODE's routable IP (LAN/mesh) instead of a pod IP — the two prod clusters have
+# overlapping pod CIDRs (10.42.0.0/16), so cross-cluster streaming replication +
+# Patroni REST must go node-IP to node-IP over the WireGuard mesh.
+#
+# DCS is an EXTERNAL 3-site etcd (homelab .111, Linode 10.88.0.2, RackNerd
+# 10.88.0.3 vote-only) — NOT in k8s, to avoid a DCS living inside the very
+# cluster it makes HA. etcd must be up on all sites before this rolls out or the
+# pod crash-loops trying to reach the DCS.
+#
+# Defaults below describe the HOMELAB PRIMARY member. The Linode standby overlay
+# applies linode-patch.yaml to flip the member name and advertised address.
+#
+# Validated on a Linode drill (2026-09-04): Spilo-16 + ETCD3_HOSTS boots, async
+# streaming replication works, leader kill -> replica auto-promotes, old leader
+# auto-rejoins via pg_rewind. Key gotcha proven: Spilo reads its OWN vars SCOPE
+# and ETCD3_HOSTS (the PATRONI_SCOPE / PATRONI_ETCD3_HOSTS forms are ignored /
+# mis-routed to the etcd v2 client).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha
+  labels:
+    app: postgres-ha
+spec:
+  clusterIP: None
+  selector:
+    app: postgres-ha
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+    - name: patroni-rest
+      port: 8008
+      targetPort: 8008
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-ha
+spec:
+  serviceName: postgres-ha
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-ha
+  template:
+    metadata:
+      labels:
+        app: postgres-ha
+    spec:
+      serviceAccountName: patroni
+
+      # Advertise the node's routable IP, not a pod IP (see file header).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # local-path PVC binds to one node; also this is where the DB must live.
+      # Pin to the storage node (homelab: the vnutour/storage=true worker).
+      nodeSelector:
+        vnutour/storage: "true"
+
+      # Give Patroni time to gracefully demote/hand off on shutdown.
+      terminationGracePeriodSeconds: 120
+
+      securityContext:
+        fsGroup: 103   # spilo 'postgres' group, so the PVC is writable
+
+      containers:
+        - name: patroni
+          image: ghcr.io/zalando/spilo-16:3.3-p1
+
+          ports:
+            - { name: postgresql, containerPort: 5432 }
+            - { name: patroni-rest, containerPort: 8008 }
+
+          env:
+            # --- DCS + cluster identity (Spilo's OWN vars, not PATRONI_*) ------
+            - name: SCOPE
+              value: vnutour-pg
+            - name: ETCD3_HOSTS
+              value: "192.168.1.111:2379,10.88.0.2:2379,10.88.0.3:2379"
+
+            # Unique member name per cluster. HOMELAB default; the Linode overlay
+            # patches this to "linode" (two members must not share a name).
+            - name: PATRONI_NAME
+              value: homelab
+
+            # --- Advertised addresses (node IP; patched per cluster) -----------
+            # With hostNetwork the pod's status.podIP is the node IP, but which
+            # node IP k8s reports is not guaranteed to be the mesh/LAN one we
+            # need, so pin it explicitly. HOMELAB default = 192.168.1.111.
+            # VERIFY AT BRING-UP that Spilo honors these under hostNetwork; if it
+            # overwrites them from status.podIP, set PATRONI_KUBERNETES_POD_IP.
+            - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
+              value: "192.168.1.111:5432"
+            - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+              value: "192.168.1.111:8008"
+
+            # --- Credentials ---------------------------------------------------
+            - name: PATRONI_SUPERUSER_USERNAME
+              value: postgres
+            - name: PATRONI_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: patroni-secret
+                  key: superuser-password
+            - name: PATRONI_REPLICATION_USERNAME
+              value: standby
+            - name: PATRONI_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: patroni-secret
+                  key: replication-password
+
+            # --- Bootstrap DCS config (async + auto-rejoin) --------------------
+            - name: SPILO_CONFIGURATION
+              value: |
+                bootstrap:
+                  dcs:
+                    ttl: 30
+                    loop_wait: 10
+                    retry_timeout: 10
+                    maximum_lag_on_failover: 10485760
+                    master_start_timeout: 30
+                    synchronous_mode: false
+                    postgresql:
+                      use_pg_rewind: true
+                      parameters:
+                        wal_level: replica
+                        hot_standby: "on"
+                        max_wal_senders: 10
+                        max_replication_slots: 10
+                        wal_keep_size: 1024MB
+
+          volumeMounts:
+            - name: pgdata
+              mountPath: /home/postgres/pgdata
+
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi
