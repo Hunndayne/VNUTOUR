@@ -1,20 +1,7 @@
-# Staging PVCs. Smaller than prod and no backup volume (staging is disposable).
-# local-path (k3s default) is node-local, so the pods mounting these must be
-# pinned to the storage node via nodeSelector - same as prod.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: postgres-data
-  namespace: vnutour-staging
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
-
----
-
+# Shared media PVC (all envs). The postgres-data PVC lives with the DB engine:
+# staging in components/db-simple, prod on external Patroni (out of GitOps).
+# local-path (k3s default) is node-local, so the pod mounting this must be
+# pinned to the storage node via nodeSelector.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
