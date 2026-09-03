@@ -15,8 +15,12 @@ spec:
     targetRevision: staging          
     path: k8s/kustomize/overlays/staging
 
+  # Staging runs on the Zone 1 homelab cluster (hunn.io.vn), while this ArgoCD
+  # lives on Zone 2 (Linode). So the destination is the homelab cluster over the
+  # wg mesh, NOT in-cluster. Register it first: argocd cluster add zone1
+  # --name zone1-homelab (see wg runbook §10); the server URL must match.
   destination:
-    server: https://kubernetes.default.svc 
+    server: https://192.168.1.110:6443
     namespace: vnutour-staging
 
   syncPolicy:
