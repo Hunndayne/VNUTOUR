@@ -445,10 +445,10 @@ function LandingPage() {
                 Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
               </p>
               <a
-                href="mailto:vnutour@suctremmt.com"
-                className="landing-focus landing-accent mt-7 inline-flex border-b border-[#1478D4] pb-1 text-base font-bold text-[#1478D4] transition-opacity duration-200 hover:opacity-75"
+                href="/tai-tro"
+                className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
               >
-                vnutour@suctremmt.com
+                Quyền lợi tài trợ
               </a>
             </Reveal>
           </div>
