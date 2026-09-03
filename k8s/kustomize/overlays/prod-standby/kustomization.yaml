@@ -30,6 +30,18 @@ components:
   - ../../components/db-patroni
 
 patches:
+  # A replica must NOT run Django migrations — it is read-only and receives all
+  # schema/data by streaming from the primary. The base ships vnutour-migrate as
+  # a PreSync hook; on the standby it can never reach a writable DB, so it hangs
+  # the whole sync (postgres-ha never gets applied). Drop it here. The homelab
+  # primary keeps it (that is where migrations run).
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: vnutour-migrate
+        namespace: vnutour-staging
   - patch: |-
       apiVersion: apps/v1
       kind: StatefulSet
