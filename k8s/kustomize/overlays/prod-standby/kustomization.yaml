@@ -3,11 +3,15 @@ kind: Kustomization
 
 # PROD STANDBY — Zone 2 (Linode), namespace vnutour, warm copy of the app tier.
 #
-# Deliberately app-tier only: NO Discord bot, NO email-worker, NO backup CronJob.
-# Those are cluster-wide singletons — running a second bot with the same token
-# would open a duplicate gateway session and every slash command would fire
-# twice. The standby exists to hold the SAME application version as Zone 1 (via
-# the shared components/images) and to be promotable after a DB restore.
+# App-tier only, plus the bot/email-worker singletons at replicas: 0 via
+# components/failover-workloads — site-activator (components/site-failover)
+# scales them to 1 here only while Linode holds the DB leader. Running a
+# second bot with the same token concurrently would open a duplicate gateway
+# session and every slash command would fire twice, so the replicas:0
+# baseline + activator is load-bearing, not decorative. The standby exists to
+# hold the SAME application version as Zone 1 (via the shared
+# components/images) and to be promotable after a DB restore. NO backup
+# CronJob here.
 #
 # It shares components/prod-config and components/images with overlays/prod, so
 # the backend/frontend image tag here is always identical to Zone 1's.
@@ -28,6 +32,8 @@ components:
   - ../../components/prod-config
   - ../../components/images
   - ../../components/db-patroni
+  - ../../components/failover-workloads
+  - ../../components/site-failover
 
 patches:
   # A replica must NOT run Django migrations — it is read-only and receives all
@@ -58,3 +64,25 @@ patches:
                   # POD_IP must be pinned to the mesh IP or failover to Linode breaks.
                   - name: POD_IP
                     value: "10.88.0.2"
+  # site-activator per-site knobs: this is the LINODE site. It never performs
+  # auto-failback (that's homelab-only), so no MEMBER_NAME/FAILBACK_STABILIZE
+  # are needed here.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: site-activator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: site-activator
+                env:
+                  - name: SITE
+                    value: "linode"
+                  - name: MEMBER_NAME
+                    value: "localhost"
+                  - name: DNS_TARGET_TYPE
+                    value: "A"
+                  - name: DNS_TARGET_CONTENT
+                    value: "172.104.186.118"
