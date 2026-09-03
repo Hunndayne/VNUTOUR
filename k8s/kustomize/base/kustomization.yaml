@@ -7,7 +7,10 @@ resources:
   - 00.namespace.yaml
   - 01.configmap.yaml
   - 03.storage.yaml
-  - 04.postgres.yaml
+  # 04.postgres.yaml removed from base: the DB engine is now per-env. Staging
+  # pulls in the plain single-node Postgres via components/db-simple; prod &
+  # prod-standby run an external Patroni + etcd HA cluster kept out of GitOps
+  # (see the DB HA runbook, Phase 0.5).
   - 05.migrate-job.yaml
   - 06.backend.yaml
   - 09.frontend.yaml

@@ -1,0 +1,24 @@
+# Applied ONLY by overlays/prod-standby (Linode). Flips the homelab-primary
+# defaults in patroni-statefulset.yaml to the Linode replica member: a distinct
+# Patroni name (two members must not share a name) and the Linode mesh IP
+# 10.88.0.2 as the advertised Postgres + REST address. Strategic-merge patches
+# env by name, so only these three entries change.
+#
+# NOTE: the Linode cluster is a single node — label it so the storage
+# nodeSelector matches:  kubectl label node <linode-node> vnutour/storage=true
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-ha
+spec:
+  template:
+    spec:
+      containers:
+        - name: patroni
+          env:
+            - name: PATRONI_NAME
+              value: linode
+            - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
+              value: "10.88.0.2:5432"
+            - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+              value: "10.88.0.2:8008"
