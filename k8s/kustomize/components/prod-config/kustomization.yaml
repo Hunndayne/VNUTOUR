@@ -24,6 +24,17 @@ patches:
       - op: replace
         path: /data/DISCORD_OAUTH_REDIRECT_URIS
         value: https://vnutour.suctremmt.com/participant
+      # Public OAuth client IDs (safe to commit — they appear in the browser).
+      # The base leaves DISCORD_CLIENT_ID blank for staging; prod needs the real
+      # app id or the Discord connect/login flow breaks. GOOGLE_CLIENT_ID is
+      # also backed by the Secret (which wins via envFrom), but we set it here
+      # too so the ConfigMap alone is a complete, self-describing prod config.
+      - op: add
+        path: /data/DISCORD_CLIENT_ID
+        value: "1406380236303630386"
+      - op: add
+        path: /data/GOOGLE_CLIENT_ID
+        value: "447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com"
 
   - target:
       kind: Ingress
