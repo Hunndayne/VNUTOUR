@@ -201,7 +201,11 @@ _LAYOUT = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "htt
                       </td>
                     </tr>
                     <tr>
-                      <td align="left" style="padding: 0; margin: 0; padding-right: 20px; padding-bottom: 20px;"></td>
+                      <td align="center" bgcolor="#1f2c4d" style="padding: 4px 20px 20px; margin: 0; background-color: #1f2c4d;">
+                        <p style="margin: 0; line-height: 18px; color: #9fb0d0; font-size: 12px; font-style: italic; font-family: arial, 'helvetica neue', helvetica, sans-serif; text-align: center;">
+                          Đây là email tự động từ hệ thống, mọi phản hồi trên email này sẽ không được hỗ trợ. Nếu cần hỗ trợ vui lòng liên hệ qua <a href="mailto:vnutour@suctremmt.com" style="color: #cfe2f3; text-decoration: underline;">vnutour@suctremmt.com</a>.
+                        </p>
+                      </td>
                     </tr>
                   </table>
                 </td>
