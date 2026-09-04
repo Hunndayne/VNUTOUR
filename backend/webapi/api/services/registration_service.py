@@ -308,6 +308,10 @@ def register_individual(data: dict) -> Tuple[Optional[Participant], Optional[str
     columns, extra, err = _validate_person(schema, data, "individual")
     if err:
         return None, err
+    remaining = team_service.registration_capacity_remaining()
+    if remaining is not None and remaining <= 0:
+        if not Participant.objects.filter(mssv=columns["mssv"]).exists():
+            return None, "registration_capacity_reached"
     return _upsert_participant(columns, extra)
 
 
@@ -357,6 +361,12 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     all_mssv = [cap_cols["mssv"]] + [c["mssv"] for c, _ in validated_members]
     if len(set(all_mssv)) != len(all_mssv):
         return None, "duplicate_mssv_in_team"
+
+    remaining = team_service.registration_capacity_remaining()
+    if remaining is not None:
+        new_count = sum(1 for m in all_mssv if not Participant.objects.filter(mssv=m).exists())
+        if new_count > remaining:
+            return None, "registration_capacity_reached"
 
     try:
         with transaction.atomic():

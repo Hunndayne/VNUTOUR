@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from api.services import registration_service
-from api.services.team_service import registration_is_open
+from api.services.team_service import registration_is_open, registration_is_full
 from .views_shared import _json_body, _consume_rate_limit, _require_antibot
 
 
@@ -29,7 +29,12 @@ _CONFLICT_CODES = frozenset({
 
 def _registration_error_response(err: str):
     code = str(err).split(":", 1)[0]
-    status = 409 if code in _CONFLICT_CODES else 400
+    if code == "registration_capacity_reached":
+        status = 403
+    elif code in _CONFLICT_CODES:
+        status = 409
+    else:
+        status = 400
     return JsonResponse({"error": err}, status=status)
 
 
@@ -37,7 +42,10 @@ def schema_view(request: HttpRequest):
     """GET the active registration form schema so the FE can render fields."""
     if request.method != "GET":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
-    return JsonResponse(registration_service.get_schema())
+    schema = registration_service.get_schema()
+    payload = dict(schema)
+    payload["registration_full"] = registration_is_full()
+    return JsonResponse(payload)
 
 
 @csrf_exempt
@@ -47,6 +55,8 @@ def register_individual_view(request: HttpRequest):
         return JsonResponse({"error": "method_not_allowed"}, status=405)
     if not registration_is_open():
         return _registration_closed_response()
+    # Capacity is enforced in the service so an already-registered MSSV can
+    # still update its info when full; only new registrants are turned away.
     limited, _ = _consume_rate_limit(
         request,
         scope="register-individual",
@@ -100,6 +110,8 @@ def register_team_view(request: HttpRequest):
         return JsonResponse({"error": "method_not_allowed"}, status=405)
     if not registration_is_open():
         return _registration_closed_response()
+    # Capacity is enforced in the service so an existing team can still edit
+    # its roster when full; only net-new registrants are turned away.
     limited, _ = _consume_rate_limit(
         request,
         scope="register-team",
