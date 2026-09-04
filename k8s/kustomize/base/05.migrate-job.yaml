@@ -48,12 +48,23 @@ spec:
                   name: backend-secret
                   key: DB_USER
 
+            # Follow the same DB host the app uses, so this hook works across
+            # overlays: base/staging point at "postgres", prod overlays flip
+            # backend-config's DB_HOST to "pg-primary" (the Patroni HAProxy).
+            # Hardcoding "postgres" here hung the PreSync hook on prod, where
+            # no plain "postgres" Service exists anymore.
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: DB_HOST
+
           command:
             - sh
             - -c
             - |
-              until pg_isready -h postgres -p 5432; do
-                echo "Waiting for PostgreSQL..."
+              until pg_isready -h "$DB_HOST" -p 5432; do
+                echo "Waiting for PostgreSQL ($DB_HOST)..."
                 sleep 3
               done
 
