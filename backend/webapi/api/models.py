@@ -1190,3 +1190,34 @@ class ShortLink(models.Model):
 
     def __str__(self) -> str:
         return f"/s/{self.code} -> {self.label or self.target_url}"
+
+
+# =====================================================================
+# 24. PasswordResetToken
+# =====================================================================
+
+class PasswordResetToken(models.Model):
+    """One-time token for the forgot/reset password flow.
+
+    The raw token is emailed to the account and never stored — only its
+    SHA-256 hash (`token_hash`) is kept, so a database leak alone can't be
+    used to reset anyone's password. `used_at` enforces single use;
+    `expires_at` is set from `settings.PASSWORD_RESET_TOKEN_TTL_HOURS` at
+    creation time.
+    """
+
+    account = models.ForeignKey(
+        Account, on_delete=models.CASCADE,
+        related_name="password_reset_tokens",
+    )
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "password_reset_token"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"reset token for {self.account.username} (used={bool(self.used_at)})"
