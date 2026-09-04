@@ -16,7 +16,7 @@ const organizerLogos = [
 const aboutItems = [
   {
     title: 'Kết nối',
-    body: 'VNU Tour là chương trình dành riêng cho các bạn Tân sinh viên, giúp các bạn có thể hòa nhập với môi trường đại học, tìm kiếm đồng đội và cùng trải nghiệm các thử thách gắn kết đồng đội đầy thú vị tại các Trạm được đặt xuyên tại các trường Đại học thuộc ĐHQG-HCM',
+    body: 'VNU Tour là hành trình khám phá khu Đô thị ĐHQG-HCM do Đoàn khoa Mạng máy tính và Truyền thông – Trường Đại học Công nghệ Thông tin, ĐHQG-HCM tổ chức. Đây là sân chơi dành cho các Tân sinh viên ĐHQG-HCM cùng các trường đại học tại TP. Hồ Chí Minh, giúp các bạn có thể hòa nhập với môi trường đại học, tìm kiếm "đồng đội" và cùng trải nghiệm các thử thách teamwork đầy thú vị thông qua các trò chơi chạy trạm tại chương trình.',
   },
   {
     title: 'Trải nghiệm',
@@ -24,7 +24,7 @@ const aboutItems = [
   },
   {
     title: 'Thử thách',
-    body: 'Vượt qua chuỗi trạm giải đố, mật thư và teambuilding sôi động, các “Út cưng” không chỉ được rèn luyện kỹ năng mềm mà còn có cơ hội rinh về vô số phần quà hấp dẫn từ Ban Tổ Chức. ',
+    body: 'Vượt qua chuỗi trạm giải đố, mật thư và teambuilding sôi động, các “út cưng” không chỉ được rèn luyện kỹ năng teamwork, tư duy xử lý tình huống mà còn có cơ hội rinh về vô số phần quà hấp dẫn từ Ban Tổ chức. ',
   },
 ]
 
@@ -65,19 +65,20 @@ const prizeItems = [
 const faqItems = [
   {
     question: 'VNU Tour là gì mà hot thế nhờ?',
-    answer: 'VNU Tour là “chiếc” tour siêu thực tế, xịn sò giúp các bạn tân sinh viên tham quan và khám phá các trường Đại học thuộc khu đô thị ĐHQG-HCM. Giúp các bạn Tân Sinh Viên thoát cảnh bỡ ngỡ và kết thêm nhiều bạn mới qua những thử thách tình bạn siêu thú vị',
+    answer: 'VNU Tour là “chiếc” tour siêu thực tế, xịn sò giúp các bạn tân sinh viên tham quan và khám phá các trường đại học thuộc khu đô thị ĐHQG-HCM. Giúp các bạn Tân sinh viên thoát cảnh bỡ ngỡ của những ngày đầu đại học và kết thêm nhiều bạn mới qua những thử thách tình bạn siêu thú vị.',
   },
   {
     question: 'Tham gia VNU Tour, các bạn Tân Sinh Viên sẽ hời sẽ được những gì?',
-    answer: 'Các Út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
+    answer: 'Các út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.
+',
   },
   {
     question: 'BTC ơi! Nếu một thành viên vắng mặt, cả đội còn được tham gia không?',
-    answer: 'Thấu hiểu được nỗi lòng của các đôi chơi khi trong team không may có bạn vướng lịch, BTC vẫn sẽ tạo điều kiện để đội chơi vẫn có thể tiếp tục chuyến "hải trình" cùng các thành viên còn lại, nhưng để hành trình được trọn vẹn nhất. Các út iu hãy liên hệ ngay với BTC để được thông báo hoặc thay đổi thành viên trong trường hợp bất khả kháng nhé.',
+    answer: 'Thấu hiểu được nỗi lòng của các đội chơi khi trong team không may có bạn vướng lịch, BTC vẫn sẽ tạo điều kiện để đội chơi vẫn có thể tiếp tục chuyến "hải trình" cùng các thành viên còn lại. Tuy nhiên, để hành trình được trọn vẹn nhất. Các út iu hãy liên hệ ngay với BTC để được thông báo hoặc thay đổi thành viên trong trường hợp bất khả kháng nhé. việc thiếu người có thể khiến đội gặp đôi chút bất lợi ở một số thử thách, vì vậy hãy cố gắng giữ liên lạc và động viên nhau tham gia thật đầy đủ nha.',
   },
   {
     question: 'Nếu em chỉ có một mình thì có thể tham gia VNU Tour không nhỉ?',
-    answer: 'Các Út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
+    answer: ' Các út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
   },
 ]
 
