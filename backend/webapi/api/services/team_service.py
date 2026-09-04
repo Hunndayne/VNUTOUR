@@ -42,6 +42,51 @@ def set_registration_open(value: bool) -> bool:
     return stored
 
 
+def get_max_registrations() -> int:
+    """Return the max allowed registrations (0 = unlimited)."""
+    val = _get_setting("max_registrations", 0)
+    try:
+        stored = int(val)
+        return max(0, stored)
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_max_registrations(value: int) -> int:
+    """Persist the max allowed registrations (0 = unlimited)."""
+    try:
+        stored = max(0, int(value))
+    except (TypeError, ValueError):
+        stored = 0
+    SystemSetting.objects.update_or_create(
+        key="max_registrations",
+        defaults={"value": stored},
+    )
+    return stored
+
+
+def get_current_registrations() -> int:
+    """Return the total number of registered participants."""
+    return Participant.objects.count()
+
+
+def registration_capacity_remaining() -> Optional[int]:
+    """Return the number of remaining spots, or None if unlimited."""
+    max_reg = get_max_registrations()
+    if max_reg <= 0:
+        return None
+    current = get_current_registrations()
+    return max(0, max_reg - current)
+
+
+def registration_is_full() -> bool:
+    """Return True if registration has reached or exceeded max capacity."""
+    max_reg = get_max_registrations()
+    if max_reg <= 0:
+        return False
+    return get_current_registrations() >= max_reg
+
+
 def profile_is_account_owned_by_other(
     participant: Optional[Participant],
     actor: Optional[Account],

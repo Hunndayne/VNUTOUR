@@ -11,9 +11,12 @@ import json
 
 from django.test import TestCase
 
-from api.models import Account, SystemSetting
+from api.models import Account, SystemSetting, Participant
 from api.services.auth_service import generate_session
-from api.services.team_service import registration_is_open, set_registration_open
+from api.services.team_service import (
+    registration_is_open, set_registration_open,
+    get_max_registrations, set_max_registrations,
+)
 
 
 class PublicSiteConfigViewTests(TestCase):
@@ -34,6 +37,18 @@ class PublicSiteConfigViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["allow_signup"], False)
         self.assertIn("antibot", response.json())
+
+    def test_get_reflects_registration_full(self):
+        set_max_registrations(2)
+        Participant.objects.create(mssv="SV901", full_name="One")
+        response = self.client.get("/api/public/site-config")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["registration_full"])
+
+        Participant.objects.create(mssv="SV902", full_name="Two")
+        response2 = self.client.get("/api/public/site-config")
+        self.assertEqual(response2.status_code, 200)
+        self.assertTrue(response2.json()["registration_full"])
 
     def test_non_get_is_method_not_allowed(self):
         response = self.client.post("/api/public/site-config")
@@ -94,6 +109,27 @@ class AdminSiteConfigViewTests(TestCase):
 
         self.assertEqual(put_response.status_code, 200)
         self.assertTrue(put_response.json()["registration_open"])
+
+    def test_admin_put_sets_max_registrations(self):
+        put_response = self.client.put(
+            "/api/admin/site-config",
+            data=json.dumps({"max_registrations": 150}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+
+        self.assertEqual(put_response.status_code, 200)
+        self.assertEqual(put_response.json()["max_registrations"], 150)
+        self.assertEqual(get_max_registrations(), 150)
+
+        # GET also returns max_registrations and current_registrations
+        get_response = self.client.get(
+            "/api/admin/site-config",
+            HTTP_AUTHORIZATION=f"Bearer {self.admin_token}",
+        )
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.json()["max_registrations"], 150)
+        self.assertIn("current_registrations", get_response.json())
 
     def test_non_admin_is_forbidden(self):
         response = self.client.get(

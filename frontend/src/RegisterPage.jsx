@@ -33,6 +33,7 @@ function explain(code, schema) {
     case 'team_name_requires_full_team':
       return `Chỉ đội đủ ${maxTeamSize} thành viên mới được đặt tên. Đội chưa đủ sẽ mang tên tạm và được BTC ghép với đội khác.`
     case 'team_too_large': return 'Số người tham gia không được vượt quá ' + maxTeamSize + '.'
+    case 'registration_capacity_reached': return 'Cổng đăng ký đã đủ số lượng người tham gia tối đa.'
     default: return 'Có lỗi xảy ra, vui lòng kiểm tra lại thông tin.'
   }
 }
@@ -276,6 +277,28 @@ export default function RegisterPage() {
   }
   if (!schema) {
     return <Shell><div className="py-20 text-center text-sm text-ink/40">Đang tải biểu mẫu…</div></Shell>
+  }
+
+  if (schema.registration_full) {
+    return (
+      <Shell>
+        <div className="rounded-2xl border border-stone bg-white p-8 text-center sm:p-12">
+          <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-clay/10 text-clay">
+            <Icon name="xmark" className="h-7 w-7" />
+          </div>
+          <h2 className="font-display text-2xl font-semibold text-ink">Đã đủ số lượng đăng ký</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink/55">
+            Cổng đăng ký tham gia VNU Tour 2026 hiện đã đạt số lượng tối đa và tạm ngưng tiếp nhận đăng ký mới.
+          </p>
+          <a
+            href="/"
+            className="mt-6 inline-flex items-center gap-1.5 rounded-lg border border-stone bg-paper/60 px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-paper"
+          >
+            <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" /> Về trang chủ
+          </a>
+        </div>
+      </Shell>
+    )
   }
 
   if (done) {

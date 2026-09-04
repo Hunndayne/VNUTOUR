@@ -9,6 +9,7 @@ import {
   deleteFrame,
   getFrameStats,
 } from './frameApi.js'
+import { stripMarkdown } from './markdownUtils.jsx'
 
 // ─────────────────────────────────────────────────────────────────────
 // Admin panel for the "ghép khung ảnh" (photo frame) tool — upload new
@@ -342,7 +343,7 @@ function FrameCard({ frame, onChanged }) {
                 Sửa
               </button>
             </div>
-            {frame.description && <p className="mt-1 text-sm text-ink/55">{frame.description}</p>}
+            {frame.description && <p className="mt-1 line-clamp-3 text-sm text-ink/55">{stripMarkdown(frame.description)}</p>}
           </div>
         )}
 

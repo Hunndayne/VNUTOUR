@@ -11,6 +11,8 @@
 // download.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import MarkdownPreview from './MarkdownPreview'
+import { stripMarkdown } from './markdownUtils.jsx'
 import logoImage from './assets/vnutour-logo.png'
 import { Icon } from './ui.jsx'
 import { frameImageUrl, listPublicFrames, logFrameDownload } from './frameApi.js'
@@ -204,7 +206,7 @@ function GallerySection({ frames, loading, error, onRetry, onSelect }) {
           <div className="flex flex-1 flex-col gap-1 px-3 py-2.5">
             <p className="line-clamp-1 text-sm font-semibold text-ink">{frame.title || 'Khung ảnh'}</p>
             {frame.description ? (
-              <p className="line-clamp-2 text-xs text-ink/50">{frame.description}</p>
+              <p className="line-clamp-2 text-xs text-ink/50">{stripMarkdown(frame.description)}</p>
             ) : null}
           </div>
         </button>
@@ -559,7 +561,9 @@ function FramePage() {
               {selectedFrame.title || 'Khung ảnh'}
             </h2>
             {selectedFrame.description ? (
-              <p className="mt-1 max-w-xl text-sm leading-6 text-ink/50">{selectedFrame.description}</p>
+              <div className="mt-1 max-w-xl">
+                <MarkdownPreview content={selectedFrame.description} />
+              </div>
             ) : null}
 
             {frameLoading && (
