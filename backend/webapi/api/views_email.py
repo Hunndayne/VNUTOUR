@@ -8,6 +8,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.http import HttpRequest, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 
 from .models import Account, Participant
 from .services.email_service import enqueue_email_messages
@@ -72,6 +73,7 @@ def _email_list(value) -> list[str]:
     return result
 
 
+@csrf_exempt
 def send_email_view(request: HttpRequest) -> JsonResponse:
     """POST /api/admin/send-email - send bulk or personalized email."""
     if request.method != "POST":
