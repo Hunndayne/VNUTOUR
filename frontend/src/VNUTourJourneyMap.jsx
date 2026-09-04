@@ -1,19 +1,19 @@
 import React, { useState, useEffect } from 'react'
 import { Reveal } from './LandingPage.jsx'
-import vnu2014 from './assets/VNUTOUR14.jpg'
-import vnu2013 from './assets/VNUTOUR13.png'
-import vnu2012 from './assets/VNUTOUR12.jpg'
-import vnu2015 from './assets/VNUTOUR15.jpg'
-import vnu2016 from './assets/VNUTOUR16.jpg'
-import vnu2017 from './assets/VNUTOUR17.jpg'
-import vnu2018 from './assets/VNUTOUR18.jpg'
-import vnu2019 from './assets/VNUTOUR19.jpg'
-import vnu2020 from './assets/VNUTOUR20.jpg'
-import vnu2022 from './assets/VNUTOUR22.jpg'
-import vnu2023 from './assets/VNUTOUR23.jpg'
-import vnu2024 from './assets/VNUTOUR24.jpg'
-import vnu2025 from './assets/VNUTOUR25.jpg'
-import vnu2026 from './assets/VNUTOUR26.jpg'
+import vnu2014 from './assets/VNUTOUR14.webp'
+import vnu2013 from './assets/VNUTOUR13.webp'
+import vnu2012 from './assets/VNUTOUR12.webp'
+import vnu2015 from './assets/VNUTOUR15.webp'
+import vnu2016 from './assets/VNUTOUR16.webp'
+import vnu2017 from './assets/VNUTOUR17.webp'
+import vnu2018 from './assets/VNUTOUR18.webp'
+import vnu2019 from './assets/VNUTOUR19.webp'
+import vnu2020 from './assets/VNUTOUR20.webp'
+import vnu2022 from './assets/VNUTOUR22.webp'
+import vnu2023 from './assets/VNUTOUR23.webp'
+import vnu2024 from './assets/VNUTOUR24.webp'
+import vnu2025 from './assets/vnutour-hero.webp'
+import vnu2026 from './assets/VNUTOUR26.webp'
 
 const journeyData = [
   { year: 2012, images: [vnu2012], shortContent: "", detailedContent: "Vào năm 2012, chương trình VNU Tour lần đầu tiên được tổ chức dưới hình thức chạy trạm. Chương trình do Liên chi Đoàn khoa Mạng máy tính và Truyền thông kết hợp cùng Khoa Công nghệ Phần mềm tổ chức tại 2 địa điểm nổi tiếng tại khu đô thị là Hồ đá làng đại học và tại Nhà điều hành Đại học Quốc gia Thành phố Hồ Chí Minh." },
@@ -91,7 +91,7 @@ export default function VNUTourJourneyMap() {
       <div className="relative mx-auto w-full max-w-[1200px]">
 
         {/* MOBILE FALLBACK VERTICAL PATH */}
-        <div className="absolute bottom-0 left-[23px] top-4 w-[2px] border-l-[3px] border-dashed border-[#1478D4]/30 md:hidden"></div>        {/* EXTENSIVE BACKGROUND DECORATIVE LAYER (Desktop only) */}
+        <div className="absolute bottom-0 left-[19px] sm:left-[23px] top-4 w-[2px] border-l-[3px] border-dashed border-[#1478D4]/30 md:hidden"></div>        {/* EXTENSIVE BACKGROUND DECORATIVE LAYER (Desktop only) */}
         <div className="absolute inset-0 pointer-events-none hidden md:block -z-10">
 
           {/* TITLE TO 2012 AREA */}
@@ -248,7 +248,7 @@ export default function VNUTourJourneyMap() {
                 >
 
                   {/* NODE MARKER */}
-                  <div className="absolute left-[24px] top-0 z-10 -translate-x-1/2 -translate-y-1/2 md:left-1/2 flex h-6 w-6 items-center justify-center">
+                  <div className="absolute left-[20px] sm:left-[24px] top-0 z-10 -translate-x-1/2 -translate-y-1/2 md:left-1/2 flex h-6 w-6 items-center justify-center">
                     {item.isCurrent && (
                       <div className="absolute h-10 w-10 rounded-full bg-[#1478D4] opacity-40 animate-ping"></div>
                     )}
@@ -264,7 +264,7 @@ export default function VNUTourJourneyMap() {
                   </div>
 
                   {/* CONTENT (YEAR + IMAGE) */}
-                  <div className="relative flex w-full flex-col items-start pl-16 md:w-auto md:items-center md:pl-0">
+                  <div className="relative flex w-full flex-col items-start pl-14 sm:pl-16 md:w-auto md:items-center md:pl-0">
 
                     {/* TOOLTIP */}
                     <div className="pointer-events-none absolute bottom-[100%] left-16 z-50 mb-2 w-[220px] -translate-y-2 opacity-0 transition-all duration-300 ease-out group-hover:translate-y-0 group-hover:opacity-100 md:left-1/2 md:-translate-x-1/2 md:mb-4 md:w-[260px]">
@@ -279,12 +279,12 @@ export default function VNUTourJourneyMap() {
                     <Reveal delay={100} className="flex flex-col items-start md:items-center">
 
                       {/* YEAR TYPOGRAPHY */}
-                      <span className={`font-extrabold leading-none text-[#0c1d33] drop-shadow-sm transition-colors duration-300 group-hover:text-[#1478D4] ${item.isCurrent ? 'mb-2 text-3xl text-[#1478D4] md:mb-3 md:text-5xl group-hover:drop-shadow-[0_0_12px_rgba(20,120,212,0.4)]' : 'mb-2 text-2xl md:mb-3 md:text-[32px]'}`}>
+                      <span className={`font-extrabold leading-none text-[#0c1d33] drop-shadow-sm transition-colors duration-300 group-hover:text-[#1478D4] ${item.isCurrent ? 'mb-2 text-2xl sm:text-3xl md:text-5xl text-[#1478D4] md:mb-3 group-hover:drop-shadow-[0_0_12px_rgba(20,120,212,0.4)]' : 'mb-2 text-xl sm:text-2xl md:mb-3 md:text-[32px]'}`}>
                         {item.year}
                       </span>
 
                       {/* COMPACT IMAGES */}
-                      <div className="flex w-full gap-2 md:w-[160px] lg:w-[200px]">
+                      <div className="flex w-full gap-2 sm:w-[140px] md:w-[160px] lg:w-[200px]">
                         {item.images.map((imgSrc, imgIndex) => (
                           <div
                             className={`relative aspect-[3/2] w-full overflow-hidden rounded-xl border border-black/5 bg-[#E8FAFF] shadow-md transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-[0_8px_30px_rgb(20,120,212,0.25)] group-hover:ring-2 group-hover:ring-[#1478D4]/40 group-hover:scale-[1.03] ${item.isCurrent ? 'ring-1 ring-[#1478D4]/30 shadow-[0_4px_20px_rgb(20,120,212,0.15)]' : ''}`}

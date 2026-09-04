@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'

@@ -11,9 +11,9 @@
 // download.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import logoImage from './assets/vnutour-logo.webp'
 import MarkdownPreview from './MarkdownPreview'
 import { stripMarkdown } from './markdownUtils.jsx'
-import logoImage from './assets/vnutour-logo.png'
 import { Icon } from './ui.jsx'
 import { frameImageUrl, listPublicFrames, logFrameDownload } from './frameApi.js'
 import { navigate } from './router.js'
