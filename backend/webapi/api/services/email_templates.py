@@ -244,6 +244,43 @@ _CTA_ROW = """
 """
 
 
+# Bulletproof (Outlook-safe) button meant to sit inline inside `body_html`,
+# between two paragraphs — unlike `_CTA_ROW` above, which only renders once,
+# between the body and the footer. Colors are inverted (navy fill, white text)
+# because it lands on the white body card instead of the navy footer row.
+_CTA_BUTTON_INLINE = """<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin: 4px auto 20px; border-collapse: collapse;">
+  <tr>
+    <td align="center" style="padding: 0; margin: 0;">
+      <!--[if mso]>
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="__CTA_URL__" style="height:46px;v-text-anchor:middle;width:280px;" arcsize="12%" stroke="f" fillcolor="#1f2c4d">
+      <w:anchorlock/>
+      <center style="color:#ffffff;font-family:arial,sans-serif;font-size:16px;font-weight:bold;">__CTA_LABEL__</center>
+      </v:roundrect>
+      <![endif]-->
+      <!--[if !mso]><!-- -->
+      <a href="__CTA_URL__" target="_blank" style="display: inline-block; padding: 14px 32px; font-family: arial, 'helvetica neue', helvetica, sans-serif; font-size: 16px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 6px; background-color: #1f2c4d; border: 1px solid #1f2c4d;">__CTA_LABEL__</a>
+      <!--<![endif]-->
+    </td>
+  </tr>
+</table>
+"""
+
+
+def email_cta_button(url: str, label: str) -> str:
+    """A bulletproof (Outlook-safe) button usable inline within `body_html`.
+
+    Use this when a CTA needs to sit mid-body (e.g. between two numbered
+    steps) rather than in the single `cta=` slot of `render_branded_email`,
+    which always renders once, after the last paragraph. Both `url` and
+    `label` are escaped.
+    """
+    return (
+        _CTA_BUTTON_INLINE
+        .replace("__CTA_URL__", escape(url or ""))
+        .replace("__CTA_LABEL__", escape(label or "Xem chi tiết"))
+    )
+
+
 def email_paragraph(text: str) -> str:
     """A single body paragraph styled to match the brand template.
 

@@ -19,7 +19,7 @@ from django.db import transaction
 from api.models import (
     Account, Participant, Team, TeamMembership, SystemSetting, ProgramPhase,
 )
-from api.services import team_service
+from api.services import registration_emails, team_service
 
 
 SCHEMA_KEY = "registration_form_schema"
@@ -312,7 +312,11 @@ def register_individual(data: dict) -> Tuple[Optional[Participant], Optional[str
     if remaining is not None and remaining <= 0:
         if not Participant.objects.filter(mssv=columns["mssv"]).exists():
             return None, "registration_capacity_reached"
-    return _upsert_participant(columns, extra)
+    participant, err = _upsert_participant(columns, extra)
+    if err:
+        return None, err
+    registration_emails.send_registration_received_individual(participant)
+    return participant, None
 
 
 def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
@@ -400,6 +404,7 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     except _Rollback as r:
         return None, r.code
 
+    registration_emails.send_registration_received_team(team)
     return team, None
 
 
