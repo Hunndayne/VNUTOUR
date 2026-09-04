@@ -1,3 +1,19 @@
+import logoMb from '../assets/banks/mb.png';
+import logoTechcombank from '../assets/banks/techcombank.png';
+import logoMsb from '../assets/banks/msb.png';
+import logoVpbank from '../assets/banks/vpbank.png';
+import logoVietinbank from '../assets/banks/vietinbank.png';
+import logoAcb from '../assets/banks/acb.png';
+import logoSacombank from '../assets/banks/sacombank.png';
+import logoCake from '../assets/banks/cake.png';
+import logoBvbank from '../assets/banks/bvbank.png';
+import logoShb from '../assets/banks/shb.png';
+import logoTpbank from '../assets/banks/tpbank.png';
+import logoPvcombank from '../assets/banks/pvcombank.png';
+import logoEximbank from '../assets/banks/eximbank.png';
+import logoNamabank from '../assets/banks/namabank.png';
+import logoTimo from '../assets/banks/timo.png';
+
 const VIETQR_GUI = "A000000727";
 const VIETQR_SERVICE_CODE = "QRIBFTTA";
 const VND_CURRENCY_CODE = "704";
@@ -127,23 +143,24 @@ export const BANK_DEEPLINKS = {
 };
 
 export const BANK_DEEPLINK_OPTIONS = [
-  { key: "mb", name: BANK_DEEPLINKS.mb.name },
-  { key: "techcombank", name: BANK_DEEPLINKS.techcombank.name },
-  { key: "msb", name: BANK_DEEPLINKS.msb.name },
-  { key: "vpbank", name: BANK_DEEPLINKS.vpbank.name },
-  { key: "vietinbank", name: BANK_DEEPLINKS.vietinbank.name },
-  { key: "acb", name: BANK_DEEPLINKS.acb.name },
-  { key: "sacombank", name: BANK_DEEPLINKS.sacombank.name },
-  { key: "cake", name: BANK_DEEPLINKS.cake.name },
-  { key: "bvbank", name: BANK_DEEPLINKS.bvbank.name },
-  { key: "shb", name: BANK_DEEPLINKS.shb.name },
-  { key: "tpbank", name: BANK_DEEPLINKS.tpbank.name },
-  { key: "pvcombank", name: BANK_DEEPLINKS.pvcombank.name },
-  { key: "eximbank", name: BANK_DEEPLINKS.eximbank.name },
-  { key: "namabank", name: BANK_DEEPLINKS.namabank.name },
-  { key: "vikki", name: BANK_DEEPLINKS.vikki.name },
-  { key: "timo", name: "Timo" },
+  { key: "mb", name: BANK_DEEPLINKS.mb.name, logo: logoMb },
+  { key: "techcombank", name: BANK_DEEPLINKS.techcombank.name, logo: logoTechcombank },
+  { key: "msb", name: BANK_DEEPLINKS.msb.name, logo: logoMsb },
+  { key: "vpbank", name: BANK_DEEPLINKS.vpbank.name, logo: logoVpbank },
+  { key: "vietinbank", name: BANK_DEEPLINKS.vietinbank.name, logo: logoVietinbank },
+  { key: "acb", name: BANK_DEEPLINKS.acb.name, logo: logoAcb },
+  { key: "sacombank", name: BANK_DEEPLINKS.sacombank.name, logo: logoSacombank },
+  { key: "cake", name: BANK_DEEPLINKS.cake.name, logo: logoCake },
+  { key: "bvbank", name: BANK_DEEPLINKS.bvbank.name, logo: logoBvbank },
+  { key: "shb", name: BANK_DEEPLINKS.shb.name, logo: logoShb },
+  { key: "tpbank", name: BANK_DEEPLINKS.tpbank.name, logo: logoTpbank },
+  { key: "pvcombank", name: BANK_DEEPLINKS.pvcombank.name, logo: logoPvcombank },
+  { key: "eximbank", name: BANK_DEEPLINKS.eximbank.name, logo: logoEximbank },
+  { key: "namabank", name: BANK_DEEPLINKS.namabank.name, logo: logoNamabank },
+  { key: "vikki", name: BANK_DEEPLINKS.vikki.name, logo: null },
+  { key: "timo", name: "Timo", logo: logoTimo },
 ];
+
 
 export function buildQrBankDeeplink(bankKey, qrPayload) {
   if (!qrPayload || !qrPayload.startsWith("000201")) {

@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: vnutour-staging
+
+resources:
+- ../../base
+
+# Image tags are updated automatically by the CI pipeline after a successful
+# image push to GHCR. Do NOT edit newTag manually.
+images:
+- name: ghcr.io/hunndayne/vnutour-backend
+  newTag: 681bc6b
+- name: ghcr.io/hunndayne/vnutour-frontend
+  newTag: 681bc6b

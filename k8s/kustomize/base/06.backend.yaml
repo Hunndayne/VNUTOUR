@@ -1,5 +1,6 @@
-# Staging backend — trimmed vs prod: no backup volume (staging is disposable)
-# and no prometheus annotations (staging has no monitoring stack).
+# Staging backend - trimmed vs prod: no backup volume (staging is disposable)
+# and no prometheus annotations (staging has no monitoring stack)
+# Image tag is managed by Kustomize overlay - do NOT hardcode here
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,7 +9,6 @@ metadata:
 spec:
   selector:
     app: backend
-
   ports:
     - name: http
       port: 8000
@@ -23,10 +23,9 @@ metadata:
 spec:
   replicas: 1
 
-  # Same reason as prod: this pod mounts a ReadWriteOnce local-path volume
-  # (media-data), so a surging second pod can only be scheduled on the node
-  # holding it — anywhere else the rollout stops with the new pod Pending.
-  # A few seconds of downtime beats a wedged deploy.
+  # Recreate: this pod mounts a ReadWriteOnce local-path volume (media-data).
+  # Surging a second pod means the scheduler may place it on a different node
+  # where the volume is unavailable — Recreate avoids that wedge.
   strategy:
     type: Recreate
 
@@ -42,14 +41,14 @@ spec:
     spec:
       terminationGracePeriodSeconds: 30
 
-      # Same as prod: the media-data claim is local-path, so this pod has to
-      # stay on the node that is never powered off.
+      # media-data is a local-path claim, so pin to the storage node.
       nodeSelector:
         vnutour/storage: "true"
 
       containers:
         - name: backend
-          image: ghcr.io/hunndayne/vnutour-backend:staging
+          image: ghcr.io/hunndayne/vnutour-backend
+          # Tag is injected by Kustomize overlay.
 
           ports:
             - name: http
@@ -100,9 +99,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
 
-          # Scaled down from prod — staging carries a tester or two, and the
-          # CPU limit stays under one core so a burst cannot starve the staging
-          # postgres on the same node.
+          # Scaled down from prod — staging carries a tester or two.
           resources:
             requests:
               cpu: "100m"

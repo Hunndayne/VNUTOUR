@@ -6,9 +6,12 @@ from pathlib import Path
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
+from django.utils import timezone
+
 from api.models import (
     Account, Participant, PhaseRoster, ProgramPhase, ScoreEntry, Station,
-    StationSubmission, SubEvent, SystemSetting, Team, TeamFormVariant, TeamMembership,
+    StationSession, StationSubmission, SubEvent, SystemSetting, Team,
+    TeamFormVariant, TeamMembership,
 )
 from api.services import team_form_variant_service as variant_service
 from api.services.submission_config_service import checkout_after_submit
@@ -75,7 +78,21 @@ class FormsApiTestBase(TestCase):
                 },
             },
         )
+        # A staff-scan station only accepts a submission while the team is checked
+        # in, so stand in for the coop scan with an active session for this attempt.
+        self.session = StationSession.objects.create(
+            phase=self.phase, sub_event=self.event, station=self.station,
+            team=self.team, status=StationSession.STATUS_ACTIVE,
+            entered_at=timezone.now(),
+        )
         self.token = generate_session(self.account)
+
+    def _checkin(self, team, station=None):
+        """Open an active session for a team at a station (coop-scan stand-in)."""
+        return StationSession.objects.create(
+            phase=self.phase, sub_event=self.event, station=station or self.station,
+            team=team, status=StationSession.STATUS_ACTIVE, entered_at=timezone.now(),
+        )
 
     def _make_other_team(self, code="T0002"):
         team = Team.objects.create(
@@ -176,6 +193,11 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         self.assertFalse(ScoreEntry.objects.filter(team=self.team).exists())
 
     def test_submit_with_auto_score_writes_score_entry(self):
+        # Submission-keyed autoScore is the free-play path (no station session):
+        # the ScoreEntry is pinned to the submission and re-scoring updates it in
+        # place. Scan-gated stations score through the session best-of instead.
+        self.session.delete()
+        self.station.checkin_policy = Station.POLICY_FREE_PLAY
         self.station.submission_config = {
             "quiz": {
                 "enabled": True,
@@ -205,6 +227,33 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         entries = ScoreEntry.objects.filter(team=self.team)
         self.assertEqual(entries.count(), 1)
         self.assertEqual(entries.first().points, 0)
+
+    def test_scan_gated_submit_requires_active_checkin(self):
+        # No coop scan (no active session) => the form cannot be submitted.
+        self.session.delete()
+        resp = self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 1}]}})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"], "not_checked_in")
+
+    def test_each_replay_attempt_keeps_its_own_submission(self):
+        # First attempt (the setUp session): submit answer A.
+        self.assertEqual(self._submit(
+            {"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]}}
+        ).status_code, 201)
+        # Close it and open a fresh session (a coop re-scan for a replay).
+        self.session.status = StationSession.STATUS_CLOSED
+        self.session.save(update_fields=["status"])
+        self._checkin(self.team)
+        # Second attempt: submit answer B. It must not overwrite the first.
+        self.assertEqual(self._submit(
+            {"response_payload": {"quiz": [{"id": "q1", "selectedOption": 1}]}}
+        ).status_code, 201)
+
+        subs = StationSubmission.objects.filter(
+            team=self.team, station=self.station,
+        ).order_by("created_at")
+        self.assertEqual(subs.count(), 2)
+        self.assertNotEqual(subs[0].station_session_id, subs[1].station_session_id)
 
     def test_forms_payload_includes_closure_and_my_submission(self):
         self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]}})

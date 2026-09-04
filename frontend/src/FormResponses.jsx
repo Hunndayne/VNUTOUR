@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
-import { useSearchParam } from './router.js'
+import { useSearchParam, navigate, buildUrl } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
 
 // Cheap deep-equality stand-in for the plain string/number/index answer maps
@@ -291,7 +291,7 @@ function inferFieldKind(field) {
   return 'text'
 }
 
-function FormFieldCard({ label, required, helper, children }) {
+function FormFieldCard({ label, required, helper, children, isAntiCheat = true }) {
   return (
     <div className={`${CARD} relative px-5 py-5 sm:px-6`}>
       <div className="mb-5 relative">
@@ -300,19 +300,19 @@ function FormFieldCard({ label, required, helper, children }) {
           {required ? <span className="ml-1 text-clay">*</span> : null}
         </h2>
         {helper ? <p className="mt-1 text-sm text-ink/55">{helper}</p> : null}
-        <AITrapPrompt />
+        {isAntiCheat && <AITrapPrompt />}
       </div>
       {children}
     </div>
   )
 }
 
-function FieldInput({ field, value, onChange }) {
+function FieldInput({ field, value, onChange, disabled }) {
   const kind = inferFieldKind(field)
   // `select-text` overrides the form-wide `select-none` guard (see
   // FormSubmissionPanel) so the participant can still select and edit their
   // own typed answer — only the question content itself is locked down.
-  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10'
+  const baseClass = 'w-full select-text rounded-2xl border border-stone bg-paper/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-trail focus:bg-white focus:ring-4 focus:ring-trail/10 disabled:opacity-60 disabled:bg-stone/20 disabled:cursor-not-allowed'
   if (kind === 'textarea') {
     return (
       <textarea
@@ -321,6 +321,7 @@ function FieldInput({ field, value, onChange }) {
         onChange={(event) => onChange(event.target.value)}
         placeholder={field.placeholder || 'Nhap cau tra loi cua ban'}
         className={`${baseClass} leading-7`}
+        disabled={disabled}
       />
     )
   }
@@ -331,20 +332,22 @@ function FieldInput({ field, value, onChange }) {
       onChange={(event) => onChange(event.target.value)}
       placeholder={field.placeholder || 'Nhap cau tra loi cua ban'}
       className={baseClass}
+      disabled={disabled}
     />
   )
 }
 
-function QuizChoice({ active, label, onClick, index = 0 }) {
+function QuizChoice({ active, label, onClick, index = 0, isAntiCheat = true, disabled }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`relative overflow-hidden flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition ${
         active ? 'border-trail bg-trail/10 shadow-[0_10px_24px_rgba(39,102,93,0.12)]' : 'border-stone bg-paper/50 hover:border-ink/25 hover:bg-white'
-      }`}
+      } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
     >
-      <TrapPattern index={index} />
+      {isAntiCheat && <TrapPattern index={index} />}
       <span className={`relative z-10 mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border transition ${active ? 'border-trail bg-trail text-white' : 'border-stone bg-white text-transparent'}`}>
         <Icon name="checkPlain" className="h-3.5 w-3.5" />
       </span>
@@ -353,14 +356,15 @@ function QuizChoice({ active, label, onClick, index = 0 }) {
   )
 }
 
-function AttachmentBox({ attachment, files, onChange, onPickerOpen }) {
+function AttachmentBox({ attachment, files, onChange, onPickerOpen, disabled }) {
   return (
-    <label className="block cursor-pointer border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition hover:bg-gold/15" style={{ borderRadius: 26 }}>
+    <label className={`block border-2 border-dashed border-gold bg-gold/10 px-5 py-6 transition ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-gold/15'}`} style={{ borderRadius: 26 }}>
       <input
         type="file"
         className="hidden"
         multiple={Number(attachment.maxFiles) > 1}
         onClick={onPickerOpen}
+        disabled={disabled}
         onChange={(event) => {
           onChange(Array.from(event.target.files || []))
           event.target.value = ''
@@ -397,12 +401,114 @@ function AttachmentBox({ attachment, files, onChange, onPickerOpen }) {
   )
 }
 
+function formatCountdown(ms) {
+  if (ms <= 0) return '00:00'
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const parts = []
+  if (hours > 0) parts.push(String(hours).padStart(2, '0'))
+  parts.push(String(minutes).padStart(2, '0'))
+  parts.push(String(seconds).padStart(2, '0'))
+  return parts.join(':')
+}
+
+function FormCountdown({ opensAt, closesAt, serverTimeOffset, onStateChange }) {
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffset)
+  
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now() + serverTimeOffset)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [serverTimeOffset])
+
+  const openTime = opensAt ? new Date(opensAt).getTime() : 0
+  const closeTime = closesAt ? new Date(closesAt).getTime() : 0
+
+  let status = 'open'
+  let label = ''
+  let timeStr = ''
+
+  if (openTime > 0 && now < openTime) {
+    status = 'waiting'
+    label = 'Form chưa mở. Sẽ mở sau:'
+    timeStr = formatCountdown(openTime - now)
+  } else if (closeTime > 0 && now < closeTime) {
+    status = 'closing'
+    label = 'Thời gian làm bài còn lại:'
+    timeStr = formatCountdown(closeTime - now)
+  } else if (closeTime > 0 && now >= closeTime) {
+    status = 'closed'
+    label = 'Form đã đóng thời gian làm bài.'
+  }
+
+  useEffect(() => {
+    onStateChange(status)
+  }, [status, onStateChange])
+
+  if (status === 'open') return null
+
+  return (
+    <div className={`mb-6 flex items-center justify-between rounded-xl border px-5 py-3 ${
+      status === 'closed' ? 'bg-[#D6492B]/10 border-[#D6492B]/30 text-[#D6492B]' :
+      status === 'waiting' ? 'bg-[#DCD8CC]/30 border-[#DCD8CC] text-[#20312B]/70' :
+      'bg-[#E0A23A]/15 border-[#E0A23A]/40 text-[#9A6B12]'
+    }`}>
+      <span className="text-sm font-semibold">{label}</span>
+      {timeStr && <span className="font-mono text-lg font-bold tabular-nums">{timeStr}</span>}
+    </div>
+  )
+}
+
+function QuizItemDisplay({ item, index, answer, onAnswer, randomizeOptions, isAntiCheat = true, disabled }) {
+  const shuffledOptions = useMemo(() => {
+    const opts = (item.options || []).map((label, originalIndex) => ({ label, originalIndex }))
+    if (randomizeOptions) {
+      for (let i = opts.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[opts[i], opts[j]] = [opts[j], opts[i]]
+      }
+    }
+    return opts
+  }, [item.options, randomizeOptions])
+
+  return (
+    <FormFieldCard
+      index={index + 1}
+      label={item.question || `Cau hoi ${index + 1}`}
+      helper="Chon mot dap an"
+      isAntiCheat={isAntiCheat}
+    >
+      <div className="grid gap-3">
+        {shuffledOptions.map((opt, displayIndex) => (
+          <QuizChoice
+            key={`${item.id}-${opt.originalIndex}`}
+            index={displayIndex}
+            label={opt.label || `Lua chon ${opt.originalIndex + 1}`}
+            active={answer === opt.originalIndex}
+            onClick={() => onAnswer(opt.originalIndex)}
+            isAntiCheat={isAntiCheat}
+            disabled={disabled}
+          />
+        ))}
+      </div>
+    </FormFieldCard>
+  )
+}
+
 // Everything that depends on the answers the user is typing, split out so the
 // parent can remount it with `key={selectedId}` on every form switch. That
 // remount is what makes useDraftState safe here — the hook only ever reads
 // its baseline once per mount, and re-mounting is simpler than teaching it to
 // change key mid-life without mixing one form's answers into another's.
-function FormSubmissionPanel({ form, onSubmitted }) {
+function FormSubmissionPanel({
+  form,
+  serverTimeOffset,
+  onSubmitted,
+  onReload,
+}) {
   const submissionConfig = form?.submission_config || {}
   // The backend always sends the canonical ordered item list, converting older
   // three-section configs on the way out — so display order is admin-controlled.
@@ -411,7 +517,8 @@ function FormSubmissionPanel({ form, onSubmitted }) {
   const activeQuizItems = submissionItems.filter((item) => item.type === 'quiz')
   const attachmentConfig = submissionItems.find((item) => item.type === 'attachment') || null
   const closure = form?.closure || null
-  const formClosed = Boolean(closure?.closed)
+  const [timeStatus, setTimeStatus] = useState('open')
+  const formClosed = Boolean(closure?.closed && closure?.reason !== 'not_started') || timeStatus === 'closed' || timeStatus === 'waiting'
   const mySubmission = form?.my_submission || null
 
   // Survey forms stay individual — one person, one device, plain localStorage,
@@ -543,6 +650,7 @@ function FormSubmissionPanel({ form, onSubmitted }) {
   // Deterrence, not prevention — the web cannot stop a screenshot. Hiding the
   // content while the tab is backgrounded or the window loses focus at least
   // keeps it out of the frame when someone alt-tabs to a capture tool.
+  const isAntiCheat = submissionConfig.antiCheat !== false
   const [contentHidden, setContentHidden] = useState(false)
   // Opening the attachment file dialog blurs the window too — that is the
   // participant uploading, not tabbing away to a capture tool — so a click on
@@ -555,6 +663,7 @@ function FormSubmissionPanel({ form, onSubmitted }) {
     window.setTimeout(() => { pickingFileRef.current = false }, 1500)
   }
   useEffect(() => {
+    if (!isAntiCheat) return
     const handleVisibilityChange = () => setContentHidden(document.hidden)
     const handleBlur = () => {
       if (pickingFileRef.current) {
@@ -566,25 +675,62 @@ function FormSubmissionPanel({ form, onSubmitted }) {
     const handleFocus = () => {
       if (!document.hidden) setContentHidden(false)
     }
+    const handleKeyDown = (e) => {
+      // F12
+      if (e.key === 'F12' || e.keyCode === 123) e.preventDefault()
+      // Ctrl+Shift+I / Cmd+Opt+I / Ctrl+Shift+J / Cmd+Opt+J
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) e.preventDefault()
+      // Ctrl+U / Cmd+U
+      if ((e.ctrlKey || e.metaKey) && ['U', 'u'].includes(e.key)) e.preventDefault()
+      // Ctrl+S / Cmd+S
+      if ((e.ctrlKey || e.metaKey) && ['S', 's'].includes(e.key)) e.preventDefault()
+      // Ctrl+P / Cmd+P
+      if ((e.ctrlKey || e.metaKey) && ['P', 'p'].includes(e.key)) e.preventDefault()
+    }
+    
+    // Anti-DevTools debugger loop
+    const devtoolsTimer = setInterval(() => {
+      const start = performance.now()
+      // eslint-disable-next-line no-debugger
+      debugger
+      // If devtools is open, debugger will pause execution, making the elapsed time much longer
+      if (performance.now() - start > 100) {
+        setContentHidden(true)
+      }
+    }, 2000)
+
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleBlur)
     window.addEventListener('focus', handleFocus)
+    window.addEventListener('keydown', handleKeyDown)
     return () => {
+      clearInterval(devtoolsTimer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [])
+  }, [isAntiCheat])
 
   const blockClipboardEvent = (event) => {
-    event.preventDefault()
+    if (isAntiCheat) event.preventDefault()
   }
 
   const setAnswer = (key, value) => {
     setAnswers((current) => ({ ...current, [key]: value }))
   }
 
-  const handleSubmit = async () => {
+  const handleSubmitRef = useRef(null)
+
+  useEffect(() => {
+    if (timeStatus === 'closed' && closure?.reason !== 'not_started' && !mySubmission && submitState !== 'success' && submitState !== 'submitting') {
+      if (handleSubmitRef.current) {
+        handleSubmitRef.current(true) // skip validation
+      }
+    }
+  }, [timeStatus, closure?.reason, mySubmission, submitState])
+
+  const handleSubmit = async (skipValidation = false) => {
     const missingRequiredField = activeFormFields.some((field) => {
       if (!field.required) return false
       return !String(answers[`form:${field.id}`] || '').trim()
@@ -593,7 +739,7 @@ function FormSubmissionPanel({ form, onSubmitted }) {
       if (item.required === false) return false
       return answers[`quiz:${item.id}`] === undefined
     })
-    if (missingRequiredField || missingQuizAnswer) {
+    if (!skipValidation && (missingRequiredField || missingQuizAnswer)) {
       setSubmitState('error')
       setSubmitMessage('Vui lòng hoàn tất các mục bắt buộc trước khi gửi.')
       return
@@ -631,7 +777,7 @@ function FormSubmissionPanel({ form, onSubmitted }) {
     const responsePayload = {
       form: activeFormFields.map((field) => ({
         id: field.id,
-        label: field.label || '',
+        label: field.label || field.question || '',
         value: answers[`form:${field.id}`] || '',
       })),
       quiz: activeQuizItems.map((item) => ({
@@ -668,6 +814,14 @@ function FormSubmissionPanel({ form, onSubmitted }) {
       // this so the draft (and the answers) survive for a retry.
       answersDraft.clear()
       onSubmitted(form.station_id)
+      // Station flow: once the bài is in, leave the form and hand the team back
+      // to the station screen, which then shows the checkout QR (or the done /
+      // closed state) for this station instead of stranding them on the form.
+      if (stationId && !isSurvey) {
+        window.setTimeout(() => {
+          navigate(buildUrl('/stations', { station: stationId }))
+        }, 1200)
+      }
     } catch (submitError) {
       if (submitError?.status === 401) {
         logoutAndRedirect('/')
@@ -679,6 +833,8 @@ function FormSubmissionPanel({ form, onSubmitted }) {
         manual: 'Biểu mẫu đã được ban tổ chức đóng.',
         limit_reached: 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.',
         correct_answer: 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.',
+        not_opened: 'Biểu mẫu chưa tới giờ mở.',
+        time_closed: 'Biểu mẫu đã hết giờ làm bài.',
       }
       const messageMap = {
         team_not_approved: 'Đội của bạn chưa được duyệt nên chưa thể gửi bài.',
@@ -694,6 +850,8 @@ function FormSubmissionPanel({ form, onSubmitted }) {
       setSubmitMessage(messageMap[code] || 'Không gửi được bài nộp. Vui lòng thử lại.')
     }
   }
+
+  handleSubmitRef.current = handleSubmit
 
   return (
     <>
@@ -714,22 +872,32 @@ function FormSubmissionPanel({ form, onSubmitted }) {
           )
         : null}
       <div
-        className={`space-y-5 transition-[filter] duration-200 select-none ${contentHidden ? 'blur-md' : ''}`}
+        className={`space-y-5 transition-[filter] duration-200 ${isAntiCheat ? 'select-none' : ''} ${contentHidden ? 'blur-md' : ''}`}
         onCopy={blockClipboardEvent}
         onCut={blockClipboardEvent}
         onContextMenu={blockClipboardEvent}
         onDragStart={blockClipboardEvent}
       >
+        <FormCountdown 
+          opensAt={submissionConfig.limits?.opensAt} 
+          closesAt={closure?.closes_at || submissionConfig.limits?.closesAt}
+          serverTimeOffset={serverTimeOffset}
+          onStateChange={setTimeStatus}
+        />
         {formClosed || mySubmission ? (
           <div className={`rounded-2xl border px-5 py-4 sm:px-6 ${formClosed ? 'border-clay/40 bg-clay/10' : 'border-trail/30 bg-trail/10'}`}>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm leading-6 text-ink/75">
               {formClosed ? (
                 <span className="font-semibold text-clay">
-                  {closure?.reason === 'limit_reached'
-                    ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
-                    : closure?.reason === 'correct_answer'
-                      ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
-                      : 'Biểu mẫu đã được ban tổ chức đóng.'}
+                  {timeStatus === 'waiting'
+                    ? 'Biểu mẫu chưa tới giờ mở.'
+                    : timeStatus === 'closed' || closure?.reason === 'time_closed'
+                      ? 'Biểu mẫu đã hết giờ làm bài.'
+                      : closure?.reason === 'limit_reached'
+                        ? 'Biểu mẫu đã đủ số lượng bài nộp và tự động đóng.'
+                        : closure?.reason === 'correct_answer'
+                          ? 'Đã có đội trả lời đúng nên biểu mẫu tự động đóng.'
+                          : 'Biểu mẫu đã được ban tổ chức đóng.'}
                 </span>
               ) : null}
               {mySubmission?.submitted_at ? (
@@ -744,49 +912,83 @@ function FormSubmissionPanel({ form, onSubmitted }) {
           </div>
         ) : null}
 
+        {closure?.reason === 'not_started' ? (
+          <div className={`${CARD} bg-paper px-6 py-10 sm:px-10 text-center`}>
+            <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full bg-trail/10 text-trail">
+              <Icon name="clock" className="h-8 w-8" />
+            </div>
+            <h2 className="text-xl font-bold text-ink">Bắt đầu làm bài</h2>
+            <p className="mt-2 text-sm leading-6 text-ink/70">
+              Trạm này có giới hạn thời gian làm bài là {closure?.duration_minutes || 0} phút.
+              <br/>
+              Thời gian sẽ bắt đầu đếm ngược ngay khi bạn nhấn nút bên dưới.
+            </p>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  setSubmitState('submitting')
+                  await apiRequest(`/my-team/forms/${form.station_id}/start`, { method: 'POST' })
+                  onReload()
+                } catch (err) {
+                  if (err?.status === 401) {
+                    logoutAndRedirect('/')
+                    return
+                  }
+                  setSubmitMessage('Lỗi khi bắt đầu làm bài.')
+                  setSubmitState('error')
+                }
+              }}
+              disabled={submitState === 'submitting'}
+              className="mt-6 inline-flex rounded-xl bg-ink px-8 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitState === 'submitting' ? 'Đang tải...' : 'Bắt đầu làm bài'}
+            </button>
+            {submitState === 'error' && submitMessage ? (
+              <p className="mt-4 text-sm text-clay">{submitMessage}</p>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            {!(formClosed && !mySubmission) && (
+              <>
+                <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
+                {answersDraft.restored && attachmentConfig ? (
+                  <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
+                ) : null}
 
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
+                  {isSurvey ? (
+                    <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
+                  ) : teamSync.updatedAt ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
+                      Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
+                    </span>
+                  ) : (
+                    <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
+                  )}
+                  {isAntiCheat && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
+                    </>
+                  )}
+                </div>
 
-        <DraftNotice draft={answersDraft} label={isSurvey ? 'câu trả lời đang làm dở' : 'câu trả lời của đội đang làm dở'} />
-        {answersDraft.restored && attachmentConfig ? (
-          <p className="text-xs text-ink/40">Tệp đính kèm không được lưu cùng bản nháp — vui lòng chọn lại nếu cần.</p>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/45">
-          {isSurvey ? (
-            <span>Bài khảo sát cá nhân — không đồng bộ theo đội.</span>
-          ) : teamSync.updatedAt ? (
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-trail/60" aria-hidden="true" />
-              Đồng bộ theo đội{teamSync.updatedBy ? ` · ${teamSync.updatedBy}` : ''} vừa cập nhật lúc {formatDateTime(teamSync.updatedAt)}
-            </span>
-          ) : (
-            <span>Bài chung của đội — câu trả lời tự động đồng bộ cho mọi thành viên.</span>
-          )}
-          <span aria-hidden="true">·</span>
-          <span>Nội dung được bảo vệ, vui lòng không sao chép hoặc chụp màn hình. Việc sử dụng AI là không được phép.</span>
-        </div>
-
-        {submissionItems.map((item, index) => {
+                {submissionItems.map((item, index) => {
           if (item.type === 'quiz') {
             return (
-              <FormFieldCard
+              <QuizItemDisplay
                 key={item.id}
-                index={index + 1}
-                label={item.question || `Cau hoi ${index + 1}`}
-                helper="Chon mot dap an"
-              >
-                <div className="grid gap-3">
-                  {(item.options || []).map((option, optionIndex) => (
-                    <QuizChoice
-                      key={`${item.id}-${optionIndex}`}
-                      index={optionIndex}
-                      label={option || `Lua chon ${optionIndex + 1}`}
-                      active={answers[`quiz:${item.id}`] === optionIndex}
-                      onClick={() => setAnswer(`quiz:${item.id}`, optionIndex)}
-                    />
-                  ))}
-                </div>
-              </FormFieldCard>
+                item={item}
+                index={index}
+                answer={answers[`quiz:${item.id}`]}
+                onAnswer={(val) => setAnswer(`quiz:${item.id}`, val)}
+                randomizeOptions={submissionConfig.quiz?.randomizeOptions}
+                isAntiCheat={isAntiCheat}
+                disabled={locked || formClosed}
+              />
             )
           }
 
@@ -797,8 +999,9 @@ function FormSubmissionPanel({ form, onSubmitted }) {
                 index={index + 1}
                 label="Tep minh chung"
                 helper="Tai len theo cau hinh cua tram"
+                isAntiCheat={isAntiCheat}
               >
-                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} />
+                <AttachmentBox attachment={item} files={attachments} onChange={setAttachments} onPickerOpen={armFilePicker} disabled={locked || formClosed} />
               </FormFieldCard>
             )
           }
@@ -807,18 +1010,22 @@ function FormSubmissionPanel({ form, onSubmitted }) {
             <FormFieldCard
               key={item.id}
               index={index + 1}
-              label={item.label || `Truong ${index + 1}`}
+              label={item.label || item.question || `Trường ${index + 1}`}
               required={item.required}
               helper={item.placeholder}
+              isAntiCheat={isAntiCheat}
             >
               <FieldInput
                 field={item}
                 value={answers[`form:${item.id}`] || ''}
                 onChange={(value) => setAnswer(`form:${item.id}`, value)}
+                disabled={locked || formClosed}
               />
             </FormFieldCard>
           )
         })}
+            </>
+          )}
 
         <div className={`${CARD} bg-paper px-5 py-5 sm:px-6`}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -831,10 +1038,10 @@ function FormSubmissionPanel({ form, onSubmitted }) {
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={submitState === 'submitting' || formClosed}
+              disabled={submitState === 'submitting' || formClosed || locked}
               className="rounded-xl bg-ink px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
+              {locked ? 'Đã nộp' : formClosed ? 'Đã đóng' : submitState === 'submitting' ? 'Đang gửi...' : 'Gửi bài nộp'}
             </button>
           </div>
           {submitMessage ? (
@@ -847,6 +1054,8 @@ function FormSubmissionPanel({ form, onSubmitted }) {
             </p>
           ) : null}
         </div>
+        </>
+        )}
       </div>
     </>
   )
@@ -857,58 +1066,65 @@ export default function FormResponses() {
   const [error, setError] = useState('')
   const [forms, setForms] = useState([])
   const [teamCode, setTeamCode] = useState('')
+  const [serverTimeOffset, setServerTimeOffset] = useState(0)
   // A form is one-to-one with its station, and StationRunPage/ParticipantDashboard
   // already link here as `/form?stationId=...` — so the open form rides in that
   // same param rather than a second `form` param that would just duplicate it.
   const [selectedId, setSelectedId] = useSearchParam('stationId', '')
 
-  useEffect(() => {
-    let cancelled = false
-    async function loadForms() {
-      try {
-        setLoading(true)
-        setError('')
-        const payload = await apiRequest('/my-team/forms')
-        if (cancelled) return
-        const accessibleForms = payload?.accessible_forms || []
-        setForms(accessibleForms)
-        if (payload?.team_code) setTeamCode(payload.team_code)
-        // `selectedId` here is only ever the URL's value at mount time (see the
-        // eslint-disable below) — an id that is missing or no longer valid
-        // falls back to the first accessible form instead of a blank page.
-        const validId = accessibleForms.some((item) => String(item.station_id) === selectedId)
-          ? selectedId
+  const loadForms = useCallback(async (isCancelled) => {
+    try {
+      setLoading(true)
+      setError('')
+      const payload = await apiRequest('/my-team/forms')
+      if (isCancelled && isCancelled()) return
+      
+      if (payload?.server_now) {
+        const serverNow = new Date(payload.server_now).getTime()
+        if (!isNaN(serverNow)) {
+          setServerTimeOffset(serverNow - Date.now())
+        }
+      }
+      
+      const accessibleForms = payload?.accessible_forms || []
+      setForms(accessibleForms)
+      if (payload?.team_code) setTeamCode(payload.team_code)
+      
+      setSelectedId((prevSelectedId) => {
+        const validId = accessibleForms.some((item) => String(item.station_id) === prevSelectedId)
+          ? prevSelectedId
           : accessibleForms[0]?.station_id
             ? String(accessibleForms[0].station_id)
             : ''
-        if (validId !== selectedId) setSelectedId(validId, { replace: true })
-      } catch (err) {
-        if (cancelled) return
-        if (err?.status === 401) {
-          logoutAndRedirect('/')
-          return
-        }
-        if (err?.status === 403) {
-          setError('Ban khong co quyen truy cap bieu mau nay.')
-          return
-        }
-        if (err?.status === 404) {
-          setError('Ban chua co doi hoac chua co bieu mau phu hop voi phase hien tai.')
-          return
-        }
-        setError('Khong tai duoc danh sach bieu mau.')
-      } finally {
-        if (!cancelled) setLoading(false)
+        return validId
+      }, { replace: true })
+    } catch (err) {
+      if (isCancelled && isCancelled()) return
+      if (err?.status === 401) {
+        logoutAndRedirect('/')
+        return
       }
+      if (err?.status === 403) {
+        setError('Ban khong co quyen truy cap bieu mau nay.')
+        return
+      }
+      if (err?.status === 404) {
+        setError('Ban chua co doi hoac chua co bieu mau phu hop voi phase hien tai.')
+        return
+      }
+      setError('Khong tai duoc danh sach bieu mau.')
+    } finally {
+      if (!isCancelled || !isCancelled()) setLoading(false)
     }
-    void loadForms()
+  }, [setSelectedId])
+
+  useEffect(() => {
+    let cancelled = false
+    loadForms(() => cancelled)
     return () => {
       cancelled = true
     }
-    // Mount-only: reads selectedId's value at load time without refetching
-    // the form list every time the user switches forms afterwards.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [loadForms])
 
   const selectedForm = useMemo(
     () => forms.find((item) => String(item.station_id) === String(selectedId)) || null,
@@ -927,17 +1143,24 @@ export default function FormResponses() {
     return <div className="min-h-screen bg-paper px-6 py-16 text-center text-sm text-ink/45">Khong co bieu mau nao kha dung cho phase hien tai.</div>
   }
 
+  const isAntiCheat = selectedForm?.submission_config?.antiCheat !== false
+
   return (
     <div className="min-h-screen bg-paper text-ink selection:bg-gold/30">
-      <InvisibleWatermark text={teamCode} />
+      {isAntiCheat && (
+        <>
+          <InvisibleWatermark text={teamCode} />
+          <style>{`@media print { body { display: none !important; } }`}</style>
+        </>
+      )}
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <a href="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink">
           <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
           Quay lại trang chủ
         </a>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_320px] lg:items-start">
-          <main className="space-y-5">
+        <div className="mt-6">
+          <main className="mx-auto max-w-2xl space-y-5">
             <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
@@ -958,6 +1181,8 @@ export default function FormResponses() {
             <FormSubmissionPanel
               key={selectedId}
               form={selectedForm}
+              serverTimeOffset={serverTimeOffset}
+              onReload={loadForms}
               onSubmitted={(stationId) => {
                 setForms((current) => current.map((item) => {
                   if (String(item.station_id) !== String(stationId)) return item
@@ -973,31 +1198,9 @@ export default function FormResponses() {
               }}
             />
           </main>
-
-          <aside className="space-y-5 lg:sticky lg:top-6">
-            <div className={`${CARD} p-5`}>
-              <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">Biểu mẫu khả dụng</p>
-              <div className="mt-4 space-y-3">
-                {forms.map((item) => (
-                  <button
-                    key={item.station_id}
-                    type="button"
-                    onClick={() => setSelectedId(String(item.station_id))}
-                    className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                      String(item.station_id) === String(selectedId)
-                        ? 'border-trail bg-trail/10'
-                        : 'border-stone bg-white hover:bg-paper'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold text-ink">{item.station_name}</p>
-                    <p className="mt-1 text-xs text-ink/50">{item.event_name} · {item.phase_label}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
         </div>
       </div>
     </div>
   )
 }
+

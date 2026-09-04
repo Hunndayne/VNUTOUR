@@ -1,5 +1,6 @@
 # Staging frontend — single replica, no nginx-exporter sidecar and no
 # prometheus annotations (staging has no monitoring stack).
+# Image tag is managed by Kustomize overlay — do NOT hardcode here.
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,7 +9,6 @@ metadata:
 spec:
   selector:
     app: frontend
-
   ports:
     - name: http
       port: 80
@@ -35,7 +35,8 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/hunndayne/vnutour-frontend:staging
+          image: ghcr.io/hunndayne/vnutour-frontend
+          # Tag is injected by Kustomize overlay.
 
           ports:
             - name: http

@@ -284,6 +284,34 @@ class SubEvent(models.Model):
 
 
 # =====================================================================
+# 6a. QuestionBankItem
+# =====================================================================
+
+class QuestionBankItem(models.Model):
+    sub_event = models.ForeignKey(
+        SubEvent, on_delete=models.CASCADE, related_name="question_bank",
+    )
+    type = models.CharField(max_length=20, default="quiz")
+    question = models.TextField()
+    options = models.JSONField(default=list)
+    correct_option = models.IntegerField(null=True, blank=True)
+    correct_text = models.JSONField(default=list, blank=True)
+    points = models.IntegerField(default=1)
+    order = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+    tags = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "question_bank_item"
+        ordering = ["sub_event", "order", "id"]
+
+    def __str__(self) -> str:
+        return f"BankItem {self.id} (SubEvent {self.sub_event_id})"
+
+
+# =====================================================================
 # 7. PhaseRoster
 # =====================================================================
 
@@ -746,7 +774,32 @@ class CaptainVote(models.Model):
 
 
 # =====================================================================
-# 14b. TeamFormVariant
+# 14b. TeamFormSession
+# =====================================================================
+
+class TeamFormSession(models.Model):
+    """Tracks when a team explicitly starts a form that has a time limit."""
+    team = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="form_sessions",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="team_form_sessions",
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    started_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+
+    class Meta:
+        db_table = "team_form_session"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "station"],
+                name="uq_team_form_session_station",
+            )
+        ]
+
+# 14c. TeamFormVariant
 # =====================================================================
 
 class TeamFormVariant(models.Model):

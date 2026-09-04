@@ -122,10 +122,16 @@ def clear_timo_config() -> None:
 # ---------------------------------------------------------------------------
 
 def _post_timo(path: str, body: dict) -> dict:
+    import json as _json
+
     resp = requests.post(
         f"{TIMO_API_BASE}{path}",
-        json=body,
-        headers={"Accept": "application/json, text/plain"},
+        data=_json.dumps(body),
+        headers={
+            "Content-Type": "application/json; charset=UTF-8",
+            "Accept": "application/json, text/plain",
+            "User-Agent": "",
+        },
         timeout=FETCH_TIMEOUT_S,
     )
     resp.raise_for_status()

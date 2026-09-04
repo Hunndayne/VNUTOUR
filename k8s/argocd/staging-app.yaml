@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vnutour-staging
+  namespace: argocd
+  # Finalizer ensures ArgoCD cleans up cluster resources when this Application
+  # is deleted from Git (cascade delete)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Hunndayne/VNUTOUR.git
+    targetRevision: staging          
+    path: k8s/kustomize/overlays/staging
+
+  destination:
+    server: https://kubernetes.default.svc 
+    namespace: vnutour-staging
+
+  syncPolicy:
+    automated:
+      prune: true       # remove resources that no longer exist in Git
+      selfHeal: true    # re-apply if someone makes an out-of-band kubectl change
+    syncOptions:
+      - CreateNamespace=true   # create vnutour-staging if it doesn't exist
+      - ServerSideApply=true   # avoids annotation size limits on large manifests
