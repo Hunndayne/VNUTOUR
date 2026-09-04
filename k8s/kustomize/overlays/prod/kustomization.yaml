@@ -22,3 +22,31 @@ components:
   - ../../components/prod-config
   - ../../components/images
   - ../../components/db-patroni
+  - ../../components/failover-workloads
+  - ../../components/site-failover
+
+# site-activator per-site knobs: this is the HOMELAB site, and the site that
+# performs auto-failback. See components/site-failover/kustomization.yaml for
+# the full prereqs (postgres-ha, Secret cf-dns-secret out-of-band).
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: site-activator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: site-activator
+                env:
+                  - name: SITE
+                    value: "homelab"
+                  - name: MEMBER_NAME
+                    value: "vnutour-w1"
+                  - name: DNS_TARGET_TYPE
+                    value: "CNAME"
+                  - name: DNS_TARGET_CONTENT
+                    value: "vpn.hunn.io.vn"
+                  - name: FAILBACK_STABILIZE
+                    value: "300"

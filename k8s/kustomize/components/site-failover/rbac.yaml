@@ -1,0 +1,33 @@
+# The site-activator scales the singleton workloads (bot, email-worker) in its
+# own namespace based on whether this cluster holds the DB leader. It needs only
+# to read and scale Deployments — nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: site-activator
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: site-activator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: site-activator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: site-activator
+subjects:
+  - kind: ServiceAccount
+    name: site-activator

@@ -1,0 +1,64 @@
+# The site-activator control loop container. Non-secret knobs shared by both
+# sites live here; per-site knobs (SITE, MEMBER_NAME, DNS_TARGET_TYPE,
+# DNS_TARGET_CONTENT, FAILBACK_STABILIZE) are added by a strategic-merge patch
+# in each overlay (see kustomization.yaml in this component for the prereqs).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: site-activator
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: site-activator
+
+  template:
+    metadata:
+      labels:
+        app: site-activator
+
+    spec:
+      serviceAccountName: site-activator
+
+      containers:
+        - name: site-activator
+          image: alpine/k8s:1.34.1
+
+          command:
+            - /bin/sh
+            - /scripts/run.sh
+
+          envFrom:
+            - secretRef:
+                name: cf-dns-secret
+
+          env:
+            - name: NS
+              value: "vnutour"
+            - name: CF_RECORD_NAME
+              value: "ddns.hunn.io.vn"
+            - name: INTERVAL
+              value: "10"
+            - name: SCALE_DEPLOYS
+              value: "bot email-worker"
+            - name: PATRONI_URL
+              value: "http://postgres-ha:8008"
+
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+
+      volumes:
+        - name: script
+          configMap:
+            name: site-activator-script
+            defaultMode: 0755
