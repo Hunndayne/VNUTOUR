@@ -48,10 +48,16 @@ data:
       log "DNS $CF_RECORD_NAME -> $DNS_TARGET_TYPE $DNS_TARGET_CONTENT (was $cur_type $cur_content)"
       # PUT (full record replace, not PATCH) so the record TYPE can change
       # between A and CNAME across a failover.
+      # proxied MUST be false (DNS-only): vnutour.suctremmt.com is a proxied
+      # CNAME to this record, and suctremmt.com + hunn.io.vn are different
+      # Cloudflare accounts. Proxying this record too makes a cross-account
+      # proxied CNAME chain -> Cloudflare error 1014 -> the site 403s. The
+      # proxy/WAF/TLS all live on the suctremmt.com hop; this record only needs
+      # to resolve to the active origin IP.
       curl -fsS --max-time 10 -X PUT -H "Authorization: Bearer $CF_API_TOKEN" \
         -H "Content-Type: application/json" \
         "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records/$rid" \
-        --data "{\"type\":\"$DNS_TARGET_TYPE\",\"name\":\"$CF_RECORD_NAME\",\"content\":\"$DNS_TARGET_CONTENT\",\"ttl\":60,\"proxied\":true}" \
+        --data "{\"type\":\"$DNS_TARGET_TYPE\",\"name\":\"$CF_RECORD_NAME\",\"content\":\"$DNS_TARGET_CONTENT\",\"ttl\":60,\"proxied\":false}" \
         >/dev/null 2>&1 || log "CF PUT failed"
     }
 
