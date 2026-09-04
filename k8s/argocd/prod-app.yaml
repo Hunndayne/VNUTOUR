@@ -36,6 +36,17 @@ spec:
     server: https://192.168.1.110:6443   # homelab k3s API over the wg mesh (registered as zone1-homelab)
     namespace: vnutour
 
+  # The StatefulSet's volumeClaimTemplates get server-defaulted fields
+  # (apiVersion/kind/status/volumeMode) that ArgoCD does not normalize, leaving
+  # postgres-ha permanently OutOfSync though `kubectl diff` is clean. Ignore that
+  # subtree so a Healthy DB reports Synced; VCTs are immutable anyway.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: postgres-ha
+      jsonPointers:
+        - /spec/volumeClaimTemplates
+
   syncPolicy:
     automated:
       prune: false     # app-tier only; never delete the imperative bot/email/monitoring/backup

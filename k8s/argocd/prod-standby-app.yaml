@@ -19,6 +19,16 @@ spec:
     server: https://kubernetes.default.svc   # the Linode cluster itself
     namespace: vnutour
 
+  # postgres-ha's volumeClaimTemplates get server-defaulted fields ArgoCD does
+  # not normalize, leaving it permanently OutOfSync though `kubectl diff` is
+  # clean. Ignore that subtree (VCTs are immutable anyway).
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: postgres-ha
+      jsonPointers:
+        - /spec/volumeClaimTemplates
+
   syncPolicy:
     automated:
       prune: true      # standby is disposable; PVCs are opted out via Prune=false
