@@ -1,6 +1,7 @@
 # The site-activator scales the singleton workloads (bot, email-worker) in its
-# own namespace based on whether this cluster holds the DB leader. It needs only
-# to read and scale Deployments — nothing else.
+# own namespace based on whether this cluster holds the DB leader, and — on the
+# homelab side — triggers an auto-failback by running patronictl in the local
+# Patroni pod. So it needs to read/scale Deployments and exec into that pod.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -18,6 +19,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "update", "patch"]
+  # Auto-failback: exec `patronictl switchover` in the local Patroni pod.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1

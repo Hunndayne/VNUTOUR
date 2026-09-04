@@ -19,6 +19,7 @@ data:
     SITE="${SITE:-unknown}"
     MEMBER_NAME="${MEMBER_NAME:-}"
     FAILBACK_STABILIZE="${FAILBACK_STABILIZE:-300}"
+    PATRONI_POD="${PATRONI_POD:-postgres-ha-0}"
     DNS_TARGET_TYPE="${DNS_TARGET_TYPE:-}"
     DNS_TARGET_CONTENT="${DNS_TARGET_CONTENT:-}"
     stable=0
@@ -88,13 +89,14 @@ data:
           fi
           if [ "$stable" -ge "$FAILBACK_STABILIZE" ]; then
             lname="$(echo "$cj" | jq -r '.members[]|select(.role=="leader")|.name' 2>/dev/null)"
-            lurl="$(echo "$cj" | jq -r '.members[]|select(.role=="leader")|.api_url' 2>/dev/null)"
-            if [ -n "$lurl" ] && [ "$lurl" != "null" ]; then
-              log "failback: switchover $lname -> $MEMBER_NAME"
-              curl -fsS --max-time 15 -X POST "$lurl/switchover" -H 'Content-Type: application/json' \
-                --data "{\"leader\":\"$lname\",\"candidate\":\"$MEMBER_NAME\"}" >/dev/null 2>&1 || log "switchover failed"
-              stable=0
-            fi
+            # Promote via patronictl inside the LOCAL Patroni pod, which talks to
+            # the shared etcd -- NOT a cross-cluster REST POST to the remote
+            # leader's Patroni API: the controller pod cannot route to the other
+            # cluster's node-level WireGuard mesh IP, so that POST always failed.
+            # patronictl over etcd can promote any member from either side.
+            log "failback: switchover $lname -> $MEMBER_NAME (via $PATRONI_POD)"
+            kubectl -n "$NS" exec "$PATRONI_POD" -- patronictl switchover --candidate "$MEMBER_NAME" --force >/dev/null 2>&1 || log "switchover failed"
+            stable=0
           fi
         fi
       fi
