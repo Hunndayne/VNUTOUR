@@ -64,20 +64,24 @@ const prizeItems = [
 
 const faqItems = [
   {
-    question: 'VNU Tour là gì mà hot thế nhờ?',
-    answer: 'VNU Tour là “chiếc” tour siêu thực tế, xịn sò giúp các bạn tân sinh viên tham quan và khám phá các trường đại học thuộc khu đô thị ĐHQG-HCM. Giúp các bạn Tân sinh viên thoát cảnh bỡ ngỡ của những ngày đầu đại học và kết thêm nhiều bạn mới qua những thử thách tình bạn siêu thú vị.',
+    question: 'Khi tham gia, em sẽ được trải nghiệm những gì vậy ạ? ',
+    answer: ' Khi tham gia VNU TOUR 2026, bạn sẽ có cơ hội trực tiếp khám phá những địa điểm nổi bật tại khu Đô thị ĐHQG-HCM, cùng đồng đội giải mật thư và chinh phục các trạm thử thách kịch tính. Đây không chỉ là dịp tuyệt vời để kết nối với những người bạn mới mà còn mang về những phần quà hấp dẫn nữa đó! ',
   },
   {
-    question: 'Tham gia VNU Tour, các bạn Tân Sinh Viên sẽ hời sẽ được những gì?',
-    answer: 'Các út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
+    question: 'Em là “người siêu hướng nội” chưa quen ai cả, có nên tham gia không ạ?',
+    answer: 'Hoàn toàn nên nhé! Bạn cứ mạnh dạn đăng ký cá nhân, BTC sẽ hỗ trợ kết nối và ghép bạn vào một đội hình 5 người hoàn chỉnh. Đây chính là "cơ hội vàng" để bạn thoát khỏi vùng an toàn và tìm thấy những người bạn chí cốt có thể sẽ cùng đồng hành suốt 4 năm đại học sắp tới.'
   },
   {
-    question: 'BTC ơi! Nếu một thành viên vắng mặt, cả đội còn được tham gia không?',
-    answer: 'Thấu hiểu được nỗi lòng của các đội chơi khi trong team không may có bạn vướng lịch, BTC vẫn sẽ tạo điều kiện để đội chơi vẫn có thể tiếp tục chuyến "hải trình" cùng các thành viên còn lại. Tuy nhiên, để hành trình được trọn vẹn nhất. Các út iu hãy liên hệ ngay với BTC để được thông báo hoặc thay đổi thành viên trong trường hợp bất khả kháng nhé. việc thiếu người có thể khiến đội gặp đôi chút bất lợi ở một số thử thách, vì vậy hãy cố gắng giữ liên lạc và động viên nhau tham gia thật đầy đủ nha.',
+    question: 'Nếu đến ngày thi mà một thành viên trong đội có việc đột xuất vắng mặt thì đội có được thi tiếp không? ',
+    answer: 'Có nhé! Đội của bạn vẫn được phép tiếp tục tham gia chương trình. Tuy nhiên, việc thiếu người có thể khiến đội gặp đôi chút bất lợi ở một số thử thách yêu cầu đủ quân số, vì vậy hãy cố gắng giữ liên lạc và động viên nhau tham gia thật đầy đủ nha.',
   },
   {
-    question: 'Nếu em chỉ có một mình thì có thể tham gia VNU Tour không nhỉ?',
-    answer: ' Các út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
+    question: 'Di chuyển giữa các trạm thi bằng cách nào, có được dùng xe máy hay phương tiện cá nhân không?',
+    answer: ' Để đảm bảo tính công bằng và an toàn tuyệt đối, các đội chỉ di chuyển bằng cách đi bộ hoặc sử dụng xe buýt nội khu ĐHQG (không dùng phương tiện cá nhân). Đây cũng là dịp tuyệt vời để cả đội cùng nhau khám phá và check-in trọn vẹn Làng Đại học đó! ',
+  },
+   {
+    question: 'Tụi em cần chuẩn bị những gì trước khi bước vào ngày thi ạ? ',
+    answer: 'Bạn nên cần ăn sáng đầy đủ, mặc trang phục thoải mái để dễ dàng vận động, mang theo nước uống và nón che nắng. Quan trọng nhất là chuẩn bị một chiếc điện thoại đầy pin cùng tinh thần thật "cháy" để sẵn sàng bung xõa cùng VNU Tour 2026 nhé!',
   },
 ]
 
@@ -315,7 +319,7 @@ function LandingPage() {
     inline-flex
     min-h-11
     w-[168px]
-    -translate-x-6
+    -translate-x-1
     items-center
     justify-center
     whitespace-nowrap
@@ -366,10 +370,10 @@ function LandingPage() {
             <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#1478D4]">Đã hết hạn đăng ký</p>
           )}
         </div>
-        <div className="sm:pt-0.5">
-          <p className="whitespace-nowrap text-xs font-bold uppercase leading-none tracking-[0.06em] text-[#1478D4]">Lệ phí tham gia:</p>
-          <p className="mt-1 text-lg font-extrabold text-[#FFD54D]">25.000 VNĐ</p>
-        </div>
+<div className="sm:pt-0.5 ml-4"> {/* Thay ml-4 bằng ml-6, ml-8... tùy bạn muốn dịch sang phải nhiều hay ít */}
+  <p className="whitespace-nowrap text-xs font-bold uppercase leading-none tracking-[0.06em] text-[#1478D4]">Lệ phí tham gia:</p>
+  <p className="mt-1 text-lg font-extrabold text-[#FFD54D]">25.000 VNĐ</p>
+</div>
     </div>
 
   </div>
