@@ -2,7 +2,7 @@ import logoImage from './assets/vnutour-logo.webp'
 import { navigate, useLocation } from './router.js'
 
 const navigationItems = [
-  { label: 'HOME', href: '/' },
+  { label: 'HOME', href: '/#home' },
   { label: 'ABOUT US', href: '/#about' },
   { label: 'TOUR', href: '/#tour' },
   { label: 'SPONSERSHIP', href: '/tai-tro' },
