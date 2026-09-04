@@ -16,7 +16,7 @@ const organizerLogos = [
 const aboutItems = [
   {
     title: 'Kết nối',
-    body: 'VNU Tour là chương trình dành riêng cho các bạn Tân sinh viên, giúp các bạn có thể hòa nhập với môi trường đại học, tìm kiếm đồng đội và cùng trải nghiệm các thử thách gắn kết đồng đội đầy thú vị tại các Trạm được đặt xuyên tại các trường Đại học thuộc ĐHQG-HCM',
+    body: 'VNU Tour là hành trình khám phá khu Đô thị ĐHQG-HCM do Đoàn khoa Mạng máy tính và Truyền thông – Trường Đại học Công nghệ Thông tin, ĐHQG-HCM tổ chức. Đây là sân chơi dành cho các Tân sinh viên ĐHQG-HCM cùng các trường đại học tại TP. Hồ Chí Minh, giúp các bạn có thể hòa nhập với môi trường đại học, tìm kiếm "đồng đội" và cùng trải nghiệm các thử thách teamwork đầy thú vị thông qua các trò chơi chạy trạm tại chương trình.',
   },
   {
     title: 'Trải nghiệm',
@@ -24,7 +24,7 @@ const aboutItems = [
   },
   {
     title: 'Thử thách',
-    body: 'Vượt qua chuỗi trạm giải đố, mật thư và teambuilding sôi động, các “Út cưng” không chỉ được rèn luyện kỹ năng mềm mà còn có cơ hội rinh về vô số phần quà hấp dẫn từ Ban Tổ Chức. ',
+    body: 'Vượt qua chuỗi trạm giải đố, mật thư và teambuilding sôi động, các “út cưng” không chỉ được rèn luyện kỹ năng teamwork, tư duy xử lý tình huống mà còn có cơ hội rinh về vô số phần quà hấp dẫn từ Ban Tổ chức. ',
   },
 ]
 
@@ -64,20 +64,24 @@ const prizeItems = [
 
 const faqItems = [
   {
-    question: 'VNU Tour là gì mà hot thế nhờ?',
-    answer: 'VNU Tour là “chiếc” tour siêu thực tế, xịn sò giúp các bạn tân sinh viên tham quan và khám phá các trường Đại học thuộc khu đô thị ĐHQG-HCM. Giúp các bạn Tân Sinh Viên thoát cảnh bỡ ngỡ và kết thêm nhiều bạn mới qua những thử thách tình bạn siêu thú vị',
+    question: 'Khi tham gia, em sẽ được trải nghiệm những gì vậy ạ? ',
+    answer: ' Khi tham gia VNU TOUR 2026, bạn sẽ có cơ hội trực tiếp khám phá những địa điểm nổi bật tại khu Đô thị ĐHQG-HCM, cùng đồng đội giải mật thư và chinh phục các trạm thử thách kịch tính. Đây không chỉ là dịp tuyệt vời để kết nối với những người bạn mới mà còn mang về những phần quà hấp dẫn nữa đó! ',
   },
   {
-    question: 'Tham gia VNU Tour, các bạn Tân Sinh Viên sẽ hời sẽ được những gì?',
-    answer: 'Các Út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
+    question: 'Em là “người siêu hướng nội” chưa quen ai cả, có nên tham gia không ạ?',
+    answer: 'Hoàn toàn nên nhé! Bạn cứ mạnh dạn đăng ký cá nhân, BTC sẽ hỗ trợ kết nối và ghép bạn vào một đội hình 5 người hoàn chỉnh. Đây chính là "cơ hội vàng" để bạn thoát khỏi vùng an toàn và tìm thấy những người bạn chí cốt có thể sẽ cùng đồng hành suốt 4 năm đại học sắp tới.'
   },
   {
-    question: 'BTC ơi! Nếu một thành viên vắng mặt, cả đội còn được tham gia không?',
-    answer: 'Thấu hiểu được nỗi lòng của các đôi chơi khi trong team không may có bạn vướng lịch, BTC vẫn sẽ tạo điều kiện để đội chơi vẫn có thể tiếp tục chuyến "hải trình" cùng các thành viên còn lại, nhưng để hành trình được trọn vẹn nhất. Các út iu hãy liên hệ ngay với BTC để được thông báo hoặc thay đổi thành viên trong trường hợp bất khả kháng nhé.',
+    question: 'Nếu đến ngày thi mà một thành viên trong đội có việc đột xuất vắng mặt thì đội có được thi tiếp không? ',
+    answer: 'Có nhé! Đội của bạn vẫn được phép tiếp tục tham gia chương trình. Tuy nhiên, việc thiếu người có thể khiến đội gặp đôi chút bất lợi ở một số thử thách yêu cầu đủ quân số, vì vậy hãy cố gắng giữ liên lạc và động viên nhau tham gia thật đầy đủ nha.',
   },
   {
-    question: 'Nếu em chỉ có một mình thì có thể tham gia VNU Tour không nhỉ?',
-    answer: 'Các Út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
+    question: 'Di chuyển giữa các trạm thi bằng cách nào, có được dùng xe máy hay phương tiện cá nhân không?',
+    answer: ' Để đảm bảo tính công bằng và an toàn tuyệt đối, các đội chỉ di chuyển bằng cách đi bộ hoặc sử dụng xe buýt nội khu ĐHQG (không dùng phương tiện cá nhân). Đây cũng là dịp tuyệt vời để cả đội cùng nhau khám phá và check-in trọn vẹn Làng Đại học đó! ',
+  },
+   {
+    question: 'Tụi em cần chuẩn bị những gì trước khi bước vào ngày thi ạ? ',
+    answer: 'Bạn nên cần ăn sáng đầy đủ, mặc trang phục thoải mái để dễ dàng vận động, mang theo nước uống và nón che nắng. Quan trọng nhất là chuẩn bị một chiếc điện thoại đầy pin cùng tinh thần thật "cháy" để sẵn sàng bung xõa cùng VNU Tour 2026 nhé!',
   },
 ]
 
@@ -315,7 +319,7 @@ function LandingPage() {
     inline-flex
     min-h-11
     w-[168px]
-    -translate-x-6
+    -translate-x-1
     items-center
     justify-center
     whitespace-nowrap
@@ -366,10 +370,10 @@ function LandingPage() {
             <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#1478D4]">Đã hết hạn đăng ký</p>
           )}
         </div>
-        <div className="sm:pt-0.5">
-          <p className="whitespace-nowrap text-xs font-bold uppercase leading-none tracking-[0.06em] text-[#1478D4]">Lệ phí tham gia:</p>
-          <p className="mt-1 text-lg font-extrabold text-[#FFD54D]">25.000 VNĐ</p>
-        </div>
+<div className="sm:pt-0.5 ml-4"> {/* Thay ml-4 bằng ml-6, ml-8... tùy bạn muốn dịch sang phải nhiều hay ít */}
+  <p className="whitespace-nowrap text-xs font-bold uppercase leading-none tracking-[0.06em] text-[#1478D4]">Lệ phí tham gia:</p>
+  <p className="mt-1 text-lg font-extrabold text-[#FFD54D]">25.000 VNĐ</p>
+</div>
     </div>
 
   </div>
@@ -457,57 +461,67 @@ function LandingPage() {
 {/* Đã thu hẹp padding-top (pt-4 md:pt-6) để bức ảnh kéo sát lên trên */}
 <section id="tour" className="landing-flow-tour landing-tour-section relative isolate overflow-visible pt-4 pb-16 md:pt-6 md:pb-24">
   <VNUTourJourneyMap />
-        <div className="landing-accent-grid mt-14 grid gap-px lg:grid-cols-[1.15fr_0.85fr]">
-          {prizeHighlights.map((item, index) => (
-            <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
-              <p className="text-sm font-bold uppercase tracking-[0.08em] text-[#0c1d33]/55">{item.label}</p>
-              <p className="mt-5 text-4xl font-bold uppercase leading-none tracking-[-0.04em] text-[#1478D4] sm:text-5xl lg:text-6xl">
-                {item.value}
-              </p>
-            </Reveal>
-          ))}
-        </div>
+       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+  {/* Phần 1: Highlight giải thưởng */}
+  <div className="landing-accent-grid mt-14 grid gap-px lg:grid-cols-[1.15fr_0.85fr]">
+    {prizeHighlights.map((item, index) => (
+      <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
+        <p className="text-sm font-bold uppercase tracking-[0.08em] text-[#0c1d33]/55">{item.label}</p>
+        <p className="mt-5 text-4xl font-bold uppercase leading-none tracking-[-0.04em] text-[#1478D4] sm:text-5xl lg:text-6xl">
+          {item.value}
+        </p>
+      </Reveal>
+    ))}
+  </div>
 
-        <div className="mt-16 grid gap-x-12 md:grid-cols-2">
-          {prizeItems.map((item, index) => (
-            <Reveal as="article" key={item.title} delay={index * 70} className="grid grid-cols-[52px_1fr] gap-4 border-t border-[#1478D4]/20 py-7">
-              <p className="font-mono text-sm font-bold text-[#0c1d33]/35">{item.value}</p>
-              <div>
-                <h3 className="text-lg font-bold uppercase text-[#0c1d33] md:text-xl">{item.title}</h3>
-                <p className="mt-3 max-w-[520px] text-sm leading-6 text-[#0c1d33]/60 md:text-base md:leading-7">{item.body}</p>
-              </div>
-            </Reveal>
-          ))}
+  {/* Phần 2: Danh sách chi tiết giải thưởng */}
+  <div className="mt-16 grid gap-x-12 md:grid-cols-2">
+    {prizeItems.map((item, index) => (
+      <Reveal as="article" key={item.title} delay={index * 70} className="grid grid-cols-[52px_1fr] gap-4 border-t border-[#1478D4]/20 py-7">
+        <p className="font-mono text-sm font-bold text-[#0c1d33]/35">{item.value}</p>
+        <div>
+          <h3 className="text-lg font-bold uppercase text-[#0c1d33] md:text-xl">{item.title}</h3>
+          <p className="mt-3 max-w-[520px] text-sm leading-6 text-[#0c1d33]/60 md:text-base md:leading-7">{item.body}</p>
         </div>
+      </Reveal>
+    ))}
+  </div>
+</div>
 
-             <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
-          <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-end lg:gap-20">
-            <Reveal>
-              <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
-              <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
-                Nhà tài trợ
-              </h2>
-            </Reveal>
+<div className="w-full max-w-[1350px] ml-auto px-5 py-20 md:px-8 md:py-28 xl:px-8 xl:py-36 lg:pr-16">
+  <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-stretch lg:gap-20">
+    <Reveal>
+      <div className="h-full flex flex-col justify-center">
+        <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
+        <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
+          Nhà tài trợ
+        </h2>
+      </div>
+    </Reveal>
 
-            <Reveal delay={100}>
-              <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
-                Chưa công bố
-              </p>
-              <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
-                Trở thành nhà tài trợ của chương trình
-              </h3>
-              <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
-                Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
-              </p>
-              <a
-                href="/tai-tro"
-                className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
-              >
-                Quyền lợi tài trợ
-              </a>
-            </Reveal>
-          </div>
+    <Reveal delay={100}>
+      <div className="h-full flex flex-col justify-center">
+        <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
+          Chưa công bố
+        </p>
+        <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
+          Trở thành nhà tài trợ của chương trình
+        </h3>
+        <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
+          Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
+        </p>
+        <div>
+          <a
+            href="/tai-tro"
+            className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
+          >
+            Quyền lợi tài trợ
+          </a>
         </div>
+      </div>
+    </Reveal>
+  </div>
+</div>
       </section>
   <section id="faq" className="landing-faq-section relative isolate overflow-hidden bg-[#083348] pb-20 pt-16 md:pb-28 md:pt-24 xl:pb-36">
   
@@ -526,7 +540,7 @@ function LandingPage() {
     {/* CỘT TIÊU ĐỀ BÊN TRÁI */}
     <Reveal className="lg:sticky lg:top-28 lg:h-fit">
       <span className="mb-4 inline-block text-xs font-bold uppercase tracking-[0.2em] text-[#00B6F1] md:text-sm">
-        Cẩm năng giải đáp
+        Cẩm nang giải đáp
       </span>
       
       <h2 className="text-3xl font-extrabold uppercase leading-[1.25] tracking-tight text-white sm:text-4xl lg:text-5xl">
@@ -535,7 +549,7 @@ function LandingPage() {
       </h2>
       
       <p className="mt-5 max-w-[430px] text-base leading-relaxed text-white/75 md:text-lg">
-        Cẩm năng VNU Tour sẽ giúp các bạn thí sinh giải đáp các vấn đề thường gặp.
+        Cẩm nang VNU Tour sẽ giúp các bạn thí sinh giải đáp các vấn đề thường gặp.
       </p>
     </Reveal>
 
