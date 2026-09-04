@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import TeamsPage from './TeamsPage.jsx'
 import StationsPage from './StationsPage.jsx'
 import DiscordPage from './DiscordPage.jsx'

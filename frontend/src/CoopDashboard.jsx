@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import { FIXED_PHASES } from './adminProgram.js'
 import {
   apiRequest,
