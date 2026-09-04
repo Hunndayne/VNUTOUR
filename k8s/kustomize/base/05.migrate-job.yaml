@@ -17,8 +17,9 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
 spec:
   backoffLimit: 3
-  # 20 min: homelab pulls each new image tag fresh over a slow link; 300s
-  # exceeded the pull and the PreSync hook failed with DeadlineExceeded.
+  # 20 min: the homelab pulls each new image tag fresh over a slow residential
+  # link, and the backend image (ffmpeg + deps) is large. 300s exceeded the pull
+  # time and the PreSync hook failed with DeadlineExceeded before migrate ran.
   activeDeadlineSeconds: 1200
   ttlSecondsAfterFinished: 3600
 

@@ -1,4 +1,4 @@
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import { navigate, useLocation } from './router.js'
 
 const navigationItems = [

@@ -2,6 +2,7 @@ from django.test import TestCase
 
 from api.models import Participant, ProgramPhase, SystemSetting, Team
 from api.services.registration_service import get_schema, register_individual, register_team
+from api.services.team_service import set_max_registrations, set_registration_open
 
 
 def person(mssv: str) -> dict:
@@ -155,3 +156,79 @@ class TeamNamingRuleTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(team.name, "Pending team SV230")
+
+
+class CapacityLimitingTests(TestCase):
+    def setUp(self):
+        set_registration_open(True)
+
+    def test_individual_registration_within_capacity(self):
+        set_max_registrations(2)
+        p1, err1 = register_individual(person("SV301"))
+        self.assertIsNone(err1)
+        self.assertIsNotNone(p1)
+
+        p2, err2 = register_individual(person("SV302"))
+        self.assertIsNone(err2)
+        self.assertIsNotNone(p2)
+
+        # 3rd is blocked
+        p3, err3 = register_individual(person("SV303"))
+        self.assertIsNone(p3)
+        self.assertEqual(err3, "registration_capacity_reached")
+
+    def test_team_registration_blocked_when_exceeding_remaining(self):
+        # 3 spots total, 1 already taken
+        set_max_registrations(3)
+        register_individual(person("SV310"))
+
+        # Team of 3 people wants to register (captain + 2 members).
+        # Only 2 spots left, so team of 3 is blocked!
+        team, err = register_team({
+            "captain": person("SV311"),
+            "members": [person("SV312"), person("SV313")],
+        })
+        self.assertIsNone(team)
+        self.assertEqual(err, "registration_capacity_reached")
+
+        # But a team of 2 (captain + 1 member) fits exactly into the 2 remaining spots!
+        team2, err2 = register_team({
+            "captain": person("SV314"),
+            "members": [person("SV315")],
+        })
+        self.assertIsNone(err2)
+        self.assertIsNotNone(team2)
+
+    def test_zero_capacity_allows_unlimited(self):
+        set_max_registrations(0)
+        p, err = register_individual(person("SV320"))
+        self.assertIsNone(err)
+        self.assertIsNotNone(p)
+
+    def test_views_return_registration_full_and_block_post(self):
+        set_max_registrations(1)
+        register_individual(person("SV330"))
+
+        # schema_view has registration_full = True
+        resp = self.client.get("/api/register/schema")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["registration_full"])
+
+        # POST /api/register/individual returns 403
+        resp_ind = self.client.post(
+            "/api/register/individual",
+            data=person("SV331"),
+            content_type="application/json",
+        )
+        self.assertEqual(resp_ind.status_code, 403)
+        self.assertEqual(resp_ind.json()["error"], "registration_capacity_reached")
+
+        # POST /api/register/team returns 403
+        resp_team = self.client.post(
+            "/api/register/team",
+            data={"captain": person("SV332"), "members": []},
+            content_type="application/json",
+        )
+        self.assertEqual(resp_team.status_code, 403)
+        self.assertEqual(resp_team.json()["error"], "registration_capacity_reached")
+

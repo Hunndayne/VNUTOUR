@@ -15,6 +15,7 @@ from api.services.team_service import (
     create_team, approve_team, reject_team,
     get_team_members, add_member, link_account_profile,
     registration_is_open, set_registration_open,
+    get_max_registrations, set_max_registrations, get_current_registrations,
 )
 from api.services.audit_service import record_audit
 from api.services import team_merge_service
@@ -471,6 +472,8 @@ def admin_site_config_view(request: HttpRequest):
     if request.method == "GET":
         return JsonResponse({
             "registration_open": registration_is_open(),
+            "max_registrations": get_max_registrations(),
+            "current_registrations": get_current_registrations(),
             "antibot": antibot_config(),
         })
 
@@ -487,6 +490,15 @@ def admin_site_config_view(request: HttpRequest):
             else:
                 value = bool(raw)
             response["registration_open"] = set_registration_open(value)
+        if "max_registrations" in data:
+            raw = data.get("max_registrations")
+            try:
+                val = int(raw)
+                if val < 0:
+                    val = 0
+            except (TypeError, ValueError):
+                val = 0
+            response["max_registrations"] = set_max_registrations(val)
         if "antibot_enabled" in data:
             raw = data.get("antibot_enabled")
             if isinstance(raw, str):
@@ -497,6 +509,8 @@ def admin_site_config_view(request: HttpRequest):
         if not response:
             return JsonResponse({"error": "missing_fields"}, status=400)
         response.setdefault("registration_open", registration_is_open())
+        response.setdefault("max_registrations", get_max_registrations())
+        response.setdefault("current_registrations", get_current_registrations())
         response.setdefault("antibot", antibot_config())
         return JsonResponse(response)
 

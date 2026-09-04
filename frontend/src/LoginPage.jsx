@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import { roleHomePath } from './api.js'
 import { TurnstileWidget, HoneypotField } from './antibot.jsx'
 import { useFormSignals, ANTIBOT_ERROR_TEXT, ANTIBOT_ERROR_CODES } from './antibot.js'

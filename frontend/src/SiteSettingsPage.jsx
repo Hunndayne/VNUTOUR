@@ -29,6 +29,9 @@ function SuccessNote({ children }) {
 function RegistrationToggleSection() {
   const [open, setOpen] = useState(false)
   const [serverOpen, setServerOpen] = useState(false)
+  const [maxReg, setMaxReg] = useState(0)
+  const [serverMaxReg, setServerMaxReg] = useState(0)
+  const [currentReg, setCurrentReg] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [apiError, setApiError] = useState('')
@@ -43,8 +46,13 @@ function RegistrationToggleSection() {
         const payload = await apiRequest('/admin/site-config')
         if (cancelled) return
         const value = Boolean(payload?.registration_open)
+        const maxVal = Number(payload?.max_registrations) || 0
+        const curVal = Number(payload?.current_registrations) || 0
         setServerOpen(value)
         setOpen(value)
+        setServerMaxReg(maxVal)
+        setMaxReg(maxVal)
+        setCurrentReg(curVal)
       } catch (error) {
         if (cancelled) return
         if (error?.status === 401) { logoutAndRedirect('/login'); return }
@@ -57,22 +65,27 @@ function RegistrationToggleSection() {
     return () => { cancelled = true }
   }, [])
 
-  // Same "nothing to save" guard as the payment card — stays disabled until
-  // the switch differs from what the server last confirmed.
-  const isDirty = open !== serverOpen
+  // Stays disabled until either the switch or the max registrations differs from server
+  const isDirty = open !== serverOpen || Number(maxReg) !== serverMaxReg
 
   const handleSave = async () => {
     setSaving(true)
     setApiError('')
     setSuccessMsg('')
     try {
+      const safeMax = Math.max(0, parseInt(maxReg, 10) || 0)
       const payload = await apiRequest('/admin/site-config', {
         method: 'PUT',
-        body: { registration_open: open },
+        body: { registration_open: open, max_registrations: safeMax },
       })
       const value = Boolean(payload?.registration_open)
+      const maxVal = Number(payload?.max_registrations) || 0
+      const curVal = Number(payload?.current_registrations) || 0
       setServerOpen(value)
       setOpen(value)
+      setServerMaxReg(maxVal)
+      setMaxReg(maxVal)
+      setCurrentReg(curVal)
       setSuccessMsg('Đã lưu cấu hình đăng ký.')
       setTimeout(() => setSuccessMsg(''), 3000)
     } catch (error) {
@@ -94,7 +107,7 @@ function RegistrationToggleSection() {
   return (
     <div className={`${CARD} p-5`}>
       <h3 className="mb-4 font-mono text-[11px] uppercase tracking-[0.18em] text-ink/40">
-        Mở / đóng đăng ký
+        Mở / đóng &amp; giới hạn đăng ký
       </h3>
 
       <div className="space-y-4">
@@ -125,6 +138,45 @@ function RegistrationToggleSection() {
               }`}
             />
           </button>
+        </div>
+
+        <div className="rounded-lg border border-stone bg-paper px-4 py-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <label htmlFor="max-registrations-input" className="text-sm font-semibold text-ink">
+                Số lượng đăng ký tối đa (người)
+              </label>
+              <p className="mt-1 text-xs leading-5 text-ink/45">
+                Đặt 0 hoặc để trống = không giới hạn. Khi tổng số người đăng ký đạt con số này, trang đăng ký sẽ tự động khoá.
+              </p>
+            </div>
+            <div className="shrink-0">
+              <input
+                id="max-registrations-input"
+                type="number"
+                min="0"
+                value={maxReg === 0 ? '' : maxReg}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0)
+                  setMaxReg(val)
+                }}
+                placeholder="0 (Không giới hạn)"
+                className="w-40 rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+              />
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2 border-t border-stone/60 pt-3 text-xs text-ink/60">
+            <span className="font-medium">Số người đã đăng ký:</span>
+            <span className="font-mono font-semibold text-ink">
+              {currentReg}
+              {serverMaxReg > 0 ? ` / ${serverMaxReg}` : ' (không giới hạn)'}
+            </span>
+            {serverMaxReg > 0 && currentReg >= serverMaxReg && (
+              <span className="rounded bg-clay/10 px-1.5 py-0.5 text-[11px] font-semibold text-clay">
+                Đã đủ số lượng
+              </span>
+            )}
+          </div>
         </div>
 
         <button type="button" onClick={handleSave} disabled={saving || !isDirty} className={PRIMARY_BTN}>

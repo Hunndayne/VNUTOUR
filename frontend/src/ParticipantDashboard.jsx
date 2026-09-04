@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
@@ -1606,7 +1606,7 @@ function ParticipantDashboard() {
       : 'Đội chưa có đội trưởng nên chưa ai đổi được tên. Bầu xong đội trưởng thì người đó sẽ đặt tên chính thức.')
     : team?.member_count === 1
       ? 'Đăng ký cá nhân — hệ thống tự đặt tên tạm để nhận biết. Bạn có thể sang bước Thanh toán.'
-      : `Đội cần đủ ${maxMembers} người mới đặt được tên và sang bước Thanh toán, hoặc để lại 1 người (đăng ký cá nhân). Hiện ${team?.member_count ?? '—'}/${maxMembers}.`
+      : `Đội chưa đủ ${maxMembers} người nên chưa đặt được tên chính thức. BTC sẽ ghép đội sau. Hiện ${team?.member_count ?? '—'}/${maxMembers}.`
   // A merged team is left named after its code until the new captain renames it.
   const teamNameIsCode = Boolean(team && team.team_name && team.team_name === team.team_id)
   const captainShouldNameTeam = hasElectedCaptain && canRenameTeam && teamNameIsCode
@@ -2312,7 +2312,7 @@ function ParticipantDashboard() {
                               stepUnlocked('payment')
                                 ? undefined
                                 : !rosterSizeFinal
-                                  ? `Đội cần đủ ${maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới sang được bước Thanh toán.`
+                                  ? `Đội cần ít nhất ${minMembers} và tối đa ${maxMembers} người mới sang được bước Thanh toán.`
                                   : ((teamIsFull || team?.naming_allowed) && !teamNameDraft.trim())
                                     ? 'Nhập tên đội để sang bước Thanh toán.'
                                     : undefined
@@ -2391,7 +2391,7 @@ function ParticipantDashboard() {
                     </div>
                     {editable && !rosterSizeFinal && (
                       <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
-                        Đội cần đủ {maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
+                        Đội cần từ {minMembers} đến {maxMembers} người mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
                       </p>
                     )}
                     {editable && !team.has_payment_proof && (
@@ -2515,7 +2515,7 @@ function ParticipantDashboard() {
                 </div>
                 {editable && !rosterSizeFinal && (
                   <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
-                    Đội cần đủ {maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
+                    Đội cần từ {minMembers} đến {maxMembers} người mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
                   </p>
                 )}
                 {editable && !team.has_payment_proof && (

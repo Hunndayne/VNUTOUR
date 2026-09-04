@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import oceanWavesBg from './assets/ocean-waves-bg.svg'
-import logoImage from './assets/vnutour-logo.png'
+import logoImage from './assets/vnutour-logo.webp'
 import universityLogo from './assets/organizer-university.webp'
 import youthUnionLogo from './assets/organizer-youth-union.webp'
 import facultyLogo from './assets/organizer-faculty.webp'
@@ -16,15 +16,15 @@ const organizerLogos = [
 const aboutItems = [
   {
     title: 'Kết nối',
-    body: 'VNU Tour là chương trình hướng đến đối tượng các bạn tân sinh viên làm quen với nhịp sống đại học, gặp gỡ và bắt cặp các đồng đội mới nhằm tham gia vào hành trình tại ĐHQG-HCM thông qua những trải nghiệm và thử thách chân thật thử thách tính đoàn kết.',
+    body: 'VNU Tour là chương trình dành riêng cho các bạn Tân sinh viên, giúp các bạn có thể hòa nhập với môi trường đại học, tìm kiếm đồng đội và cùng trải nghiệm các thử thách gắn kết đồng đội đầy thú vị tại các Trạm được đặt xuyên tại các trường Đại học thuộc ĐHQG-HCM',
   },
   {
     title: 'Trải nghiệm',
-    body: 'Mỗi chặng dừng chân là một trường đại học thuộc ĐHQG-HCM, giúp các Newbie hiểu thêm về không gian học tập, văn hóa sinh viên của trường - nơi sẽ đồng hành cùng các bạn trong những năm tháng tiếp theo trên giảng đường đại học.',
+    body: 'Mỗi chặng dừng chân tại các trường thành viên thuộc ĐHQG-HCM sẽ giúp các Newbie khám phá không gian học tập và văn hóa sinh viên đặc trưng – nơi chắp cánh cho hành trình thanh xuân rực rỡ của các bạn trong những năm tháng đại học rực rỡ sắp tới.',
   },
   {
     title: 'Thử thách',
-    body: 'Vượt qua chuỗi trạm giải đố, mật thư và trò chơi teambuilding sôi nổi để rèn luyện kỹ năng mềm và rinh về những phần quà hấp dẫn từ BTC.',
+    body: 'Vượt qua chuỗi trạm giải đố, mật thư và teambuilding sôi động, các “Út cưng” không chỉ được rèn luyện kỹ năng mềm mà còn có cơ hội rinh về vô số phần quà hấp dẫn từ Ban Tổ Chức. ',
   },
 ]
 
@@ -69,7 +69,7 @@ const faqItems = [
   },
   {
     question: 'Tham gia VNU Tour, các bạn Tân Sinh Viên sẽ hời sẽ được những gì?',
-    answer: 'Các út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
+    answer: 'Các Út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
   },
   {
     question: 'BTC ơi! Nếu một thành viên vắng mặt, cả đội còn được tham gia không?',
@@ -77,9 +77,11 @@ const faqItems = [
   },
   {
     question: 'Nếu em chỉ có một mình thì có thể tham gia VNU Tour không nhỉ?',
-    answer: 'Các út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
+    answer: 'Các Út cưng đừng lo, BTC sẽ ghép các bạn tân sinh viên lại với nhau để tạo thành một đội chơi hoàn chỉnh. Vì vậy các bạn không phải lo đến cảnh đơn phương độc mã khi đến với chương trình đâu nhé. Hãy yên tâm và tham gia cùng BTC để có những trải nghiệm thật vui và đáng nhớ nào!',
   },
 ]
+
+const registrationDeadline = Date.UTC(2026, 8, 12, 13, 0, 0)
 
 export function Reveal({ as = 'div', children, className = '', delay = 0, direction = 'up' }) {
   const ref = useRef(null)
@@ -133,11 +135,28 @@ export function Reveal({ as = 'div', children, className = '', delay = 0, direct
 
 function LandingPage() {
   const [isCtaPopping, setIsCtaPopping] = useState(false)
+  const [timeRemaining, setTimeRemaining] = useState(() => Math.max(0, registrationDeadline - Date.now()))
+
+  useEffect(() => {
+    const updateCountdown = () => setTimeRemaining(Math.max(0, registrationDeadline - Date.now()))
+    const intervalId = window.setInterval(updateCountdown, 1000)
+
+    updateCountdown()
+    return () => window.clearInterval(intervalId)
+  }, [registrationDeadline])
 
   const handleCtaClick = () => {
     setIsCtaPopping(true)
     window.setTimeout(() => setIsCtaPopping(false), 380)
   }
+
+  const totalSeconds = Math.floor(timeRemaining / 1000)
+  const countdownValues = [
+    Math.floor(totalSeconds / 86400),
+    Math.floor((totalSeconds % 86400) / 3600),
+    Math.floor((totalSeconds % 3600) / 60),
+    totalSeconds % 60,
+  ]
 
   return (
     <main className="landing-page min-h-screen min-h-[100dvh] bg-white font-display text-[#0c1d33]">
@@ -257,65 +276,101 @@ function LandingPage() {
     Hành trình dành cho tân sinh viên, kết nối đồng đội qua những trạm thử thách tại ĐHQG-HCM.
   </p>
 
-  <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+  <div className="mt-8 flex flex-col items-start gap-4">
+    <div className="flex w-full flex-col items-center gap-3 sm:grid sm:grid-cols-[minmax(0,250px)_max-content] sm:items-center sm:gap-10">
+      <a
+        href="/login?mode=signup"
+        className="
+          landing-focus
+          landing-primary-cta
+          inline-flex
+          min-h-11
+          w-[168px]
+          items-center
+          justify-center
+          whitespace-nowrap
+          rounded-full
+          px-5
+          py-3
+          text-xs
+          font-bold
+          leading-none
+          uppercase
+          tracking-[0.06em]
+          transition-all
+          duration-200
+          active:translate-y-px
+          hover:-translate-y-1
+          sm:justify-self-start
+        "
+      >
+        Đăng ký ngay
+      </a>
 
-    <a
-      href="/login?mode=signup"
-      className="
-        landing-focus
-        landing-primary-cta
-        inline-flex
-        min-h-13
-        items-center
-        justify-center
-        whitespace-nowrap
-        rounded-full
-        px-7
-        py-4
-        text-sm
-        font-bold
-        uppercase
-        tracking-[0.06em]
-        transition-all
-        duration-200
-        active:translate-y-px
-        hover:-translate-y-1
-      "
-    >
-      Đăng ký ngay
-    </a>
+<a
+  href="#tour"
+  className="
+    landing-focus
+    landing-secondary-cta
+    inline-flex
+    min-h-11
+    w-[168px]
+    -translate-x-6
+    items-center
+    justify-center
+    whitespace-nowrap
+    rounded-full
+    border-2
+    border-[#00B6F1]
+    bg-white/70
+    px-5
+    py-3
+    text-xs
+    font-bold
+    leading-none
+    uppercase
+    tracking-[0.06em]
+    text-[#00B6F1]
+    transition-all
+    duration-200
+    active:translate-y-px
+    hover:-translate-y-1
+    hover:bg-[#00B6F1]
+    hover:text-[#0c1d33]
+    sm:justify-self-center
+  "
+>
+  Xem hành trình
+      </a>
+    </div>
 
-    <a
-      href="#tour"
-      className="
-        landing-focus
-        landing-secondary-cta
-        inline-flex
-        min-h-13
-        items-center
-        justify-center
-        whitespace-nowrap
-        rounded-full
-        border-2
-        border-[#00B6F1]
-        bg-white/70
-        px-7
-        py-4
-        text-sm
-        font-bold
-        uppercase
-        tracking-[0.06em]
-        text-[#00B6F1]
-        transition-all
-        duration-200
-        active:translate-y-px
-        hover:-translate-y-1
-        hover:bg-[#00B6F1]
-        hover:text-white
-      "
-    >
-      Xem hành trình
-    </a>
+    <div className="grid w-full max-w-[560px] grid-cols-1 gap-3 text-center text-[#0c1d33] sm:grid-cols-[minmax(0,250px)_max-content] sm:items-start sm:gap-10 sm:text-left" aria-live="polite">
+        <div>
+          {timeRemaining > 0 ? (
+            <>
+              <p className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em] text-[#1478D4]">⌛ Thời gian còn lại</p>
+              <div className="mt-1.5 grid grid-cols-4 gap-1">
+                {countdownValues.map((value, index) => (
+                  <div key={index}>
+                    <span className="flex h-8 items-center justify-center rounded-md bg-white/75 px-1 text-base font-bold tabular-nums shadow-sm ring-1 ring-[#1478D4]/15 sm:h-9">
+                      {String(value).padStart(2, '0')}
+                    </span>
+                    <span className="mt-0.5 block text-[8px] font-bold uppercase tracking-[0.03em] text-[#0c1d33]/65">
+                      {['Ngày', 'Giờ', 'Phút', 'Giây'][index]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#1478D4]">Đã hết hạn đăng ký</p>
+          )}
+        </div>
+        <div className="sm:pt-0.5">
+          <p className="whitespace-nowrap text-xs font-bold uppercase leading-none tracking-[0.06em] text-[#1478D4]">Lệ phí tham gia:</p>
+          <p className="mt-1 text-lg font-extrabold text-[#FFD54D]">25.000 VNĐ</p>
+        </div>
+    </div>
 
   </div>
 
@@ -445,10 +500,10 @@ function LandingPage() {
                 Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
               </p>
               <a
-                href="mailto:vnutour@suctremmt.com"
-                className="landing-focus landing-accent mt-7 inline-flex border-b border-[#1478D4] pb-1 text-base font-bold text-[#1478D4] transition-opacity duration-200 hover:opacity-75"
+                href="/tai-tro"
+                className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
               >
-                vnutour@suctremmt.com
+                Quyền lợi tài trợ
               </a>
             </Reveal>
           </div>
