@@ -69,8 +69,7 @@ const faqItems = [
   },
   {
     question: 'Tham gia VNU Tour, các bạn Tân Sinh Viên sẽ hời sẽ được những gì?',
-    answer: 'Các út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.
-',
+    answer: 'Các út cưng khi tham gia sẽ có cơ hội để làm quen với những người bạn mới, tiếp cận với môi trường đại học, trải nghiệm những thử thách thú vị, đồng thời có cơ hội nhận liền tay những phần quà hấp dẫn từ BTC.',
   },
   {
     question: 'BTC ơi! Nếu một thành viên vắng mặt, cả đội còn được tham gia không?',
@@ -458,57 +457,67 @@ function LandingPage() {
 {/* Đã thu hẹp padding-top (pt-4 md:pt-6) để bức ảnh kéo sát lên trên */}
 <section id="tour" className="landing-flow-tour landing-tour-section relative isolate overflow-visible pt-4 pb-16 md:pt-6 md:pb-24">
   <VNUTourJourneyMap />
-        <div className="landing-accent-grid mt-14 grid gap-px lg:grid-cols-[1.15fr_0.85fr]">
-          {prizeHighlights.map((item, index) => (
-            <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
-              <p className="text-sm font-bold uppercase tracking-[0.08em] text-[#0c1d33]/55">{item.label}</p>
-              <p className="mt-5 text-4xl font-bold uppercase leading-none tracking-[-0.04em] text-[#1478D4] sm:text-5xl lg:text-6xl">
-                {item.value}
-              </p>
-            </Reveal>
-          ))}
-        </div>
+       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+  {/* Phần 1: Highlight giải thưởng */}
+  <div className="landing-accent-grid mt-14 grid gap-px lg:grid-cols-[1.15fr_0.85fr]">
+    {prizeHighlights.map((item, index) => (
+      <Reveal as="article" key={item.label} delay={index * 100} className="landing-panel bg-gradient-to-br from-[#E8FAFF] to-[#F0FAFF] border border-[#00B6F1]/20 p-7 md:p-10 rounded-xl">
+        <p className="text-sm font-bold uppercase tracking-[0.08em] text-[#0c1d33]/55">{item.label}</p>
+        <p className="mt-5 text-4xl font-bold uppercase leading-none tracking-[-0.04em] text-[#1478D4] sm:text-5xl lg:text-6xl">
+          {item.value}
+        </p>
+      </Reveal>
+    ))}
+  </div>
 
-        <div className="mt-16 grid gap-x-12 md:grid-cols-2">
-          {prizeItems.map((item, index) => (
-            <Reveal as="article" key={item.title} delay={index * 70} className="grid grid-cols-[52px_1fr] gap-4 border-t border-[#1478D4]/20 py-7">
-              <p className="font-mono text-sm font-bold text-[#0c1d33]/35">{item.value}</p>
-              <div>
-                <h3 className="text-lg font-bold uppercase text-[#0c1d33] md:text-xl">{item.title}</h3>
-                <p className="mt-3 max-w-[520px] text-sm leading-6 text-[#0c1d33]/60 md:text-base md:leading-7">{item.body}</p>
-              </div>
-            </Reveal>
-          ))}
+  {/* Phần 2: Danh sách chi tiết giải thưởng */}
+  <div className="mt-16 grid gap-x-12 md:grid-cols-2">
+    {prizeItems.map((item, index) => (
+      <Reveal as="article" key={item.title} delay={index * 70} className="grid grid-cols-[52px_1fr] gap-4 border-t border-[#1478D4]/20 py-7">
+        <p className="font-mono text-sm font-bold text-[#0c1d33]/35">{item.value}</p>
+        <div>
+          <h3 className="text-lg font-bold uppercase text-[#0c1d33] md:text-xl">{item.title}</h3>
+          <p className="mt-3 max-w-[520px] text-sm leading-6 text-[#0c1d33]/60 md:text-base md:leading-7">{item.body}</p>
         </div>
+      </Reveal>
+    ))}
+  </div>
+</div>
 
-             <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
-          <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-end lg:gap-20">
-            <Reveal>
-              <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
-              <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
-                Nhà tài trợ
-              </h2>
-            </Reveal>
+<div className="w-full max-w-[1350px] ml-auto px-5 py-20 md:px-8 md:py-28 xl:px-8 xl:py-36 lg:pr-16">
+  <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-stretch lg:gap-20">
+    <Reveal>
+      <div className="h-full flex flex-col justify-center">
+        <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
+        <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
+          Nhà tài trợ
+        </h2>
+      </div>
+    </Reveal>
 
-            <Reveal delay={100}>
-              <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
-                Chưa công bố
-              </p>
-              <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
-                Trở thành nhà tài trợ của chương trình
-              </h3>
-              <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
-                Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
-              </p>
-              <a
-                href="/tai-tro"
-                className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
-              >
-                Quyền lợi tài trợ
-              </a>
-            </Reveal>
-          </div>
+    <Reveal delay={100}>
+      <div className="h-full flex flex-col justify-center">
+        <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
+          Chưa công bố
+        </p>
+        <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
+          Trở thành nhà tài trợ của chương trình
+        </h3>
+        <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
+          Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
+        </p>
+        <div>
+          <a
+            href="/tai-tro"
+            className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
+          >
+            Quyền lợi tài trợ
+          </a>
         </div>
+      </div>
+    </Reveal>
+  </div>
+</div>
       </section>
   <section id="faq" className="landing-faq-section relative isolate overflow-hidden bg-[#083348] pb-20 pt-16 md:pb-28 md:pt-24 xl:pb-36">
   
