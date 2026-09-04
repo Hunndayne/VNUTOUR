@@ -2,12 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
-html {
-  scroll-behavior: smooth;
-}
-
 html, body, #root {
   @apply min-h-screen;
+}
+
+/* iOS Safari renders text inputs with its own opaque (white) background and
+   rounded look, which overrides translucent dark-theme fields (e.g. the
+   login/register form) and shows solid white boxes. Reset the native
+   appearance so our own background/border styling is respected. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']),
+textarea,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-clip: padding-box;
 }
 
 body {

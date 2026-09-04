@@ -358,7 +358,7 @@ function LoginPage() {
   // ── Render helpers ──────────────────────────────────────────────────
   const inputClass = (hasErr) =>
     [
-      'w-full rounded-2xl border px-4 py-3 text-sm text-white placeholder-white/30 bg-white/[0.06] backdrop-blur transition outline-none',
+      'w-full appearance-none rounded-2xl border px-4 py-3 text-sm text-white placeholder-white/30 bg-white/[0.06] backdrop-blur transition outline-none',
       hasErr
         ? 'border-rose-400/60 focus:border-rose-400 focus:ring-2 focus:ring-rose-400/30'
         : 'border-white/15 focus:border-white/40 focus:ring-2 focus:ring-white/10',
