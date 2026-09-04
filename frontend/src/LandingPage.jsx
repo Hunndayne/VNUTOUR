@@ -540,7 +540,7 @@ function LandingPage() {
     {/* CỘT TIÊU ĐỀ BÊN TRÁI */}
     <Reveal className="lg:sticky lg:top-28 lg:h-fit">
       <span className="mb-4 inline-block text-xs font-bold uppercase tracking-[0.2em] text-[#00B6F1] md:text-sm">
-        Cẩm năng giải đáp
+        Cẩm nang giải đáp
       </span>
       
       <h2 className="text-3xl font-extrabold uppercase leading-[1.25] tracking-tight text-white sm:text-4xl lg:text-5xl">
@@ -549,7 +549,7 @@ function LandingPage() {
       </h2>
       
       <p className="mt-5 max-w-[430px] text-base leading-relaxed text-white/75 md:text-lg">
-        Cẩm năng VNU Tour sẽ giúp các bạn thí sinh giải đáp các vấn đề thường gặp.
+        Cẩm nang VNU Tour sẽ giúp các bạn thí sinh giải đáp các vấn đề thường gặp.
       </p>
     </Reveal>
 
