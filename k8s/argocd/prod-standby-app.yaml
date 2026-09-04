@@ -28,6 +28,18 @@ spec:
       name: postgres-ha
       jsonPointers:
         - /spec/volumeClaimTemplates
+    # bot / email-worker are singletons scaled 0<->1 by the site-activator
+    # controller off the DB leader; ArgoCD must not fight it via selfHeal.
+    - group: apps
+      kind: Deployment
+      name: bot
+      jsonPointers:
+        - /spec/replicas
+    - group: apps
+      kind: Deployment
+      name: email-worker
+      jsonPointers:
+        - /spec/replicas
 
   syncPolicy:
     automated:
