@@ -122,7 +122,7 @@ def _prepare_member_submission(data: dict, who: str):
     return validate_person_submission(payload, who)
 
 
-def _member_resolution(data: dict):
+def _member_resolution(data: dict, team: Team | None = None):
     payload = dict(data or {})
     mssv = str((payload.get("mssv") or "").strip())
     email = str((payload.get("email") or "").strip())
@@ -138,6 +138,26 @@ def _member_resolution(data: dict):
     ).select_related("team").first()
     if submitted_member:
         return None, "mssv_in_submitted_team"
+
+    # Mirror add_member's guard so the captain sees it while typing, not only on
+    # save: a member who leads their own team that already has other members
+    # cannot simply be pulled in — that team must be dismantled deliberately
+    # first. A solo auto-created shell is fine (it gets dissolved on the move).
+    b_membership = TeamMembership.objects.filter(
+        participant__mssv=mssv,
+    ).select_related("team", "team__owner_account").first()
+    if b_membership and (team is None or b_membership.team_id != team.id):
+        old_team = b_membership.team
+        owner_mssv = ""
+        if old_team.owner_account_id and old_team.owner_account:
+            owner_mssv = (old_team.owner_account.mssv or "").strip()
+        b_owns_old_team = bool(
+            b_membership.is_captain or (owner_mssv and owner_mssv == mssv)
+        )
+        if b_owns_old_team and TeamMembership.objects.filter(
+            team=old_team,
+        ).exclude(participant__mssv=mssv).exists():
+            return None, "mssv_leads_other_team"
 
     account = Account.objects.filter(mssv=mssv, is_active=True).first()
     participant = Participant.objects.filter(mssv=mssv).first()
@@ -951,7 +971,7 @@ def my_team_member_resolve_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    payload, error = _member_resolution(data)
+    payload, error = _member_resolution(data, team=membership.team)
     if error:
         return JsonResponse({"error": error}, status=400)
     return JsonResponse(payload)

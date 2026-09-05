@@ -280,11 +280,25 @@ def add_member(
         if old_team.owner_account_id and old_team.owner_account:
             old_owner_mssv = (old_team.owner_account.mssv or "").strip()
         # B owns the stale team when they captain it or their account created it.
-        # Owner => dissolve the whole team; plain member => just detach B.
         b_owns_old_team = bool(
             existing_member.is_captain
             or (old_owner_mssv and old_owner_mssv == mssv)
         )
+        # A team B leads is only a movable stand-in while B is its sole occupant
+        # — the empty shell every signup auto-creates. Once other people joined
+        # it, B is a real captain, and pulling B out would silently dissolve a
+        # team those members chose. Refuse instead, so B (or a member) has to
+        # dismantle it deliberately before B can join someone else's team.
+        if b_owns_old_team:
+            has_other_members = (
+                TeamMembership.objects.filter(team=old_team)
+                .exclude(participant__mssv=mssv)
+                .exists()
+            )
+            if has_other_members:
+                return None, "mssv_leads_other_team"
+        # Owner of a solo shell => dissolve it after the move; plain member =>
+        # just detach B and leave the old team to its captain.
         release_old_team = (old_team, b_owns_old_team)
 
     # An MSSV identifies the student, so the same MSSV already on this team is the

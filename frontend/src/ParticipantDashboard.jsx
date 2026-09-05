@@ -218,6 +218,7 @@ function explainApiError(error) {
     team_full: 'Đội đã đủ số lượng thành viên.',
     mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
+    mssv_leads_other_team: 'MSSV này đang là đội trưởng của một đội đã có thành viên khác. Bạn ấy cần giải tán đội đó (hoặc rời khỏi vai trò đội trưởng) trước khi được thêm vào đội của bạn.',
     already_in_team: 'MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.',
     email_in_team: 'Email này đã được một người khác sử dụng — mỗi người phải dùng email riêng.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
