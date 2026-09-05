@@ -5,6 +5,7 @@ from api.models import Account, Participant, Team, TeamMembership
 from api.services.team_service import (
     add_member,
     create_team,
+    get_current_registrations,
     get_team_members,
     link_account_profile,
 )
@@ -312,3 +313,39 @@ class AddMemberDuplicateTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(participant.mssv, "23520000")
+
+
+class CurrentRegistrationsCountTests(TestCase):
+    """The registration cap counts only members of submitted teams (pending/
+    approved/rejected) — never draft teams or teamless participants."""
+
+    def _member(self, team, mssv):
+        participant = Participant.objects.create(
+            mssv=mssv, full_name=mssv, email=f"{mssv}@x.com",
+        )
+        TeamMembership.objects.create(team=team, participant=participant)
+        return participant
+
+    def test_counts_only_submitted_team_members(self):
+        draft = Team.objects.create(
+            code="D1", name="Draft", approval_status=Team.APPROVAL_DRAFT,
+        )
+        pending = Team.objects.create(
+            code="P1", name="Pending", approval_status=Team.APPROVAL_PENDING,
+        )
+        approved = Team.objects.create(
+            code="A1", name="Approved", approval_status=Team.APPROVAL_APPROVED,
+        )
+        rejected = Team.objects.create(
+            code="R1", name="Rejected", approval_status=Team.APPROVAL_REJECTED,
+        )
+
+        self._member(draft, "1001")     # draft -> not counted
+        self._member(pending, "1002")   # counted
+        self._member(pending, "1003")   # counted
+        self._member(approved, "1004")  # counted
+        self._member(rejected, "1005")  # rejected still counted
+        # A participant not on any team must not count either.
+        Participant.objects.create(mssv="1006", full_name="Lone", email="1006@x.com")
+
+        self.assertEqual(get_current_registrations(), 4)

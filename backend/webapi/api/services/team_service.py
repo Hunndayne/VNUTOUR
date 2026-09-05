@@ -67,8 +67,21 @@ def set_max_registrations(value: int) -> int:
 
 
 def get_current_registrations() -> int:
-    """Return the total number of registered participants."""
-    return Participant.objects.count()
+    """Number of people registered through a team that was sent for approval.
+
+    Only members of *submitted* teams count toward the cap — pending, approved,
+    and rejected teams all count (a rejected team still consumed a slot), but
+    draft teams that were never submitted, and participants not yet on any team,
+    do not. Membership is unique per participant, so counting membership rows in
+    submitted teams counts each registered person exactly once.
+    """
+    return TeamMembership.objects.filter(
+        team__approval_status__in=[
+            Team.APPROVAL_PENDING,
+            Team.APPROVAL_APPROVED,
+            Team.APPROVAL_REJECTED,
+        ],
+    ).count()
 
 
 def registration_capacity_remaining() -> Optional[int]:

@@ -162,42 +162,41 @@ class CapacityLimitingTests(TestCase):
     def setUp(self):
         set_registration_open(True)
 
-    def test_individual_registration_within_capacity(self):
+    def test_individual_registration_does_not_consume_capacity(self):
+        # The cap counts members of submitted teams only. A lone registrant is
+        # not on a submitted team, so they never fill a slot — registration
+        # stays open however many register individually.
         set_max_registrations(2)
-        p1, err1 = register_individual(person("SV301"))
-        self.assertIsNone(err1)
-        self.assertIsNotNone(p1)
-
-        p2, err2 = register_individual(person("SV302"))
-        self.assertIsNone(err2)
-        self.assertIsNotNone(p2)
-
-        # 3rd is blocked
-        p3, err3 = register_individual(person("SV303"))
-        self.assertIsNone(p3)
-        self.assertEqual(err3, "registration_capacity_reached")
+        for mssv in ("SV301", "SV302", "SV303"):
+            p, err = register_individual(person(mssv))
+            self.assertIsNone(err)
+            self.assertIsNotNone(p)
 
     def test_team_registration_blocked_when_exceeding_remaining(self):
-        # 3 spots total, 1 already taken
-        set_max_registrations(3)
-        register_individual(person("SV310"))
+        # A submitted team consumes one slot per member. 4 spots total.
+        set_max_registrations(4)
 
-        # Team of 3 people wants to register (captain + 2 members).
-        # Only 2 spots left, so team of 3 is blocked!
-        team, err = register_team({
-            "captain": person("SV311"),
-            "members": [person("SV312"), person("SV313")],
+        # A team of 2 takes 2 of the 4 slots.
+        team_a, err_a = register_team({
+            "captain": person("SV310"), "members": [person("SV311")],
         })
-        self.assertIsNone(team)
-        self.assertEqual(err, "registration_capacity_reached")
+        self.assertIsNone(err_a)
+        self.assertIsNotNone(team_a)
 
-        # But a team of 2 (captain + 1 member) fits exactly into the 2 remaining spots!
-        team2, err2 = register_team({
-            "captain": person("SV314"),
-            "members": [person("SV315")],
+        # A team of 3 needs 3 more, but only 2 remain -> blocked.
+        team_b, err_b = register_team({
+            "captain": person("SV312"),
+            "members": [person("SV313"), person("SV314")],
         })
-        self.assertIsNone(err2)
-        self.assertIsNotNone(team2)
+        self.assertIsNone(team_b)
+        self.assertEqual(err_b, "registration_capacity_reached")
+
+        # A team of 2 fits exactly into the 2 remaining slots.
+        team_c, err_c = register_team({
+            "captain": person("SV315"), "members": [person("SV316")],
+        })
+        self.assertIsNone(err_c)
+        self.assertIsNotNone(team_c)
 
     def test_zero_capacity_allows_unlimited(self):
         set_max_registrations(0)
@@ -206,8 +205,9 @@ class CapacityLimitingTests(TestCase):
         self.assertIsNotNone(p)
 
     def test_views_return_registration_full_and_block_post(self):
-        set_max_registrations(1)
-        register_individual(person("SV330"))
+        set_max_registrations(2)
+        # A submitted team of 2 fills the cap.
+        register_team({"captain": person("SV330"), "members": [person("SV331")]})
 
         # schema_view has registration_full = True
         resp = self.client.get("/api/register/schema")
@@ -217,7 +217,7 @@ class CapacityLimitingTests(TestCase):
         # POST /api/register/individual returns 403
         resp_ind = self.client.post(
             "/api/register/individual",
-            data=person("SV331"),
+            data=person("SV332"),
             content_type="application/json",
         )
         self.assertEqual(resp_ind.status_code, 403)
@@ -226,7 +226,7 @@ class CapacityLimitingTests(TestCase):
         # POST /api/register/team returns 403
         resp_team = self.client.post(
             "/api/register/team",
-            data={"captain": person("SV332"), "members": []},
+            data={"captain": person("SV333"), "members": []},
             content_type="application/json",
         )
         self.assertEqual(resp_team.status_code, 403)
