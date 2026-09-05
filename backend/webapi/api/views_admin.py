@@ -37,6 +37,25 @@ def _lock_registration_phase() -> bool:
 # Teams
 # =====================================================================
 
+def _team_leader_display(team, memberships):
+    """The team's leader for display: the actual ``is_captain`` member, never the
+    denormalized ``owner_account``.
+
+    ``owner_account`` is stamped at creation and never re-synced, so it goes
+    stale when the captain leaves the team or changes their MSSV — leaving a
+    ghost leader who is no longer on the roster (shown as captain here while
+    being a member elsewhere). The ``is_captain`` membership is the real leader,
+    so prefer its linked account username, then the participant's own name/MSSV.
+    Fall back to ``owner_account`` only when the roster has no captain yet.
+    """
+    captain = next((m for m in memberships if m.is_captain), None)
+    if captain:
+        participant = captain.participant
+        account = participant.account if participant.account_id else None
+        return (account.username if account else None) or participant.full_name or participant.mssv
+    return team.owner_account.username if team.owner_account_id else None
+
+
 @csrf_exempt
 def teams_collection_view(request: HttpRequest):
     """GET: list teams. POST: admin creates team."""
@@ -82,7 +101,7 @@ def teams_collection_view(request: HttpRequest):
             page, limit = 1, 50
         offset = (page - 1) * limit
         total = qs.count()
-        teams = qs.prefetch_related("memberships__participant")[offset:offset + limit]
+        teams = qs.prefetch_related("memberships__participant__account")[offset:offset + limit]
 
         items = []
         for t in teams:
@@ -116,7 +135,7 @@ def teams_collection_view(request: HttpRequest):
                         "is_captain": membership.is_captain,
                     })
                 item.update({
-                    "owner_username": t.owner_account.username if t.owner_account else None,
+                    "owner_username": _team_leader_display(t, memberships),
                     "gender_counts": gender_counts,
                     "member_summaries": member_summaries,
                     "provision_state": t.provision_state,
@@ -221,7 +240,10 @@ def team_item_view(request: HttpRequest, team_key: str):
         if is_admin(acc):
             payload.update({
                 "id": team.id,
-                "owner_username": team.owner_account.username if team.owner_account else None,
+                "owner_username": _team_leader_display(
+                    team,
+                    list(team.memberships.select_related("participant__account").all()),
+                ),
                 "approval_note": team.approval_note,
                 "payment_proof": team.payment_proof,
                 # True only for a real uploaded image (drawer renders it inline);
