@@ -15,6 +15,6 @@ components:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: b6f08e1
+  newTag: 096126d
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: b6f08e1
+  newTag: 096126d
