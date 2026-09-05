@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from django.db import models
+from django.db.models.functions import Lower, Upper
 from django.utils import timezone
+
+
+def _normalized_mssv(value):
+    return str(value).strip().upper() if value else value
+
+
+def _normalized_email(value):
+    return str(value).strip().lower() if value else value
 
 
 # =====================================================================
@@ -44,6 +53,22 @@ class Account(models.Model):
 
     class Meta:
         db_table = "account"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("email"),
+                name="uq_account_email_ci",
+            ),
+            models.UniqueConstraint(
+                Upper("mssv"),
+                condition=models.Q(mssv__isnull=False) & ~models.Q(mssv=""),
+                name="uq_account_mssv_ci",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.mssv = _normalized_mssv(self.mssv)
+        self.email = _normalized_email(self.email)
+        return super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.username} ({self.role})"
@@ -79,6 +104,22 @@ class Participant(models.Model):
 
     class Meta:
         db_table = "participant"
+        constraints = [
+            models.UniqueConstraint(
+                Upper("mssv"),
+                name="uq_participant_mssv_ci",
+            ),
+            models.UniqueConstraint(
+                Lower("email"),
+                condition=models.Q(email__isnull=False) & ~models.Q(email=""),
+                name="uq_participant_email_ci",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.mssv = _normalized_mssv(self.mssv)
+        self.email = _normalized_email(self.email)
+        return super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.mssv} - {self.full_name}"
@@ -160,6 +201,13 @@ class Team(models.Model):
 
     class Meta:
         db_table = "team"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner_account"],
+                condition=models.Q(owner_account__isnull=False),
+                name="uq_team_owner_account",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.code} - {self.name}"

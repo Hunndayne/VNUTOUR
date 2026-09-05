@@ -14,11 +14,13 @@ Covers:
 """
 
 from datetime import date
+from pathlib import Path
 import shutil
 import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 from api.models import Account, Participant, SystemSetting, Team, TeamMembership
 from api.services.auth_service import generate_session
@@ -265,13 +267,22 @@ class PaymentProofUploadTests(PaymentApiTestBase):
         self.media_root = tempfile.mkdtemp(prefix="vnutour-payment-media-")
         self.addCleanup(shutil.rmtree, self.media_root, ignore_errors=True)
 
-    def _upload(self, token=None, filename="proof.png", content_type="image/png"):
+    def _upload(self, token=None, filename="proof.png", content_type="image/png", lock_roster=True):
+        if lock_roster and not self.team.roster_locked_at:
+            self.team.roster_locked_at = timezone.now()
+            self.team.save(update_fields=["roster_locked_at", "updated_at"])
         with override_settings(MEDIA_ROOT=self.media_root):
             return self.client.post(
                 "/api/my-team/payment-proof",
                 data={"file": SimpleUploadedFile(filename, PNG_BYTES, content_type=content_type)},
                 HTTP_AUTHORIZATION=f"Bearer {token or self.token}",
             )
+
+    def test_upload_requires_locked_roster(self):
+        response = self._upload(lock_roster=False)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "roster_not_locked")
 
     def _fetch_file(self, token=None):
         with override_settings(MEDIA_ROOT=self.media_root):
@@ -302,6 +313,33 @@ class PaymentProofUploadTests(PaymentApiTestBase):
         )
 
         self.assertTrue(response.json()["has_proof"])
+
+    def test_cancel_payment_clears_proof_and_deletes_stored_file(self):
+        self._upload()
+        self.team.refresh_from_db()
+        stored_entry = self.team.payment_proof_file
+        stored_path = Path(self.media_root) / stored_entry["key"]
+        self.assertTrue(stored_path.exists())
+
+        with override_settings(MEDIA_ROOT=self.media_root):
+            response = self.client.post(
+                "/api/my-team/payment/cancel",
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["roster_locked"])
+        self.assertFalse(response.json()["has_proof"])
+        self.team.refresh_from_db()
+        self.assertIsNone(self.team.roster_locked_at)
+        self.assertIsNone(self.team.payment_proof_file)
+        self.assertFalse(stored_path.exists())
+
+        overview = self.client.get(
+            "/api/my-team",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+        self.assertFalse(overview.json()["team"]["has_payment_proof"])
 
     def test_get_file_after_upload_serves_or_redirects(self):
         self._upload()
@@ -410,6 +448,8 @@ class SubmitPaymentGateTests(PaymentApiTestBase):
         self.assertIn("payment_proof", response.json()["error"])
 
     def test_submit_after_uploading_proof_succeeds(self):
+        self.team.roster_locked_at = timezone.now()
+        self.team.save(update_fields=["roster_locked_at", "updated_at"])
         with override_settings(MEDIA_ROOT=self.media_root):
             upload = self.client.post(
                 "/api/my-team/payment-proof",
@@ -425,6 +465,19 @@ class SubmitPaymentGateTests(PaymentApiTestBase):
         # pending approval.
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["approval_status"], Team.APPROVAL_PENDING)
+
+    def test_submit_with_proof_but_unlocked_roster_is_rejected(self):
+        self.team.payment_proof_file = {
+            "storage": "local",
+            "key": "payment-proofs/T0001/stale.png",
+            "name": "stale.png",
+        }
+        self.team.save(update_fields=["payment_proof_file", "updated_at"])
+
+        response = self._submit()
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "roster_not_locked")
 
     def test_submit_with_legacy_payment_proof_link_is_still_rejected(self):
         """Only an uploaded file passes the gate — the pasted link does not."""

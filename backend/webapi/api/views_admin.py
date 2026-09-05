@@ -166,7 +166,10 @@ def teams_collection_view(request: HttpRequest):
 
         name = str((data.get("team_name") or data.get("name") or "").strip())
         owner_username = str((data.get("owner_username") or data.get("owner") or "").strip())
-        owner_account = acc
+        # An unassigned team created by an organiser has no participant owner.
+        # Storing the admin as owner would make one organiser appear to captain
+        # many teams and conflicts with the one-team-per-participant invariant.
+        owner_account = None
         if owner_username:
             owner_account = Account.objects.filter(
                 username__iexact=owner_username,

@@ -167,6 +167,15 @@ const FIELD_LABELS = {
   facebook: 'Link Facebook',
 }
 
+const MEMBERSHIP_CONFLICT_CODES = new Set([
+  'already_has_team',
+  'already_in_team',
+  'membership_changed',
+  'mssv_in_other_team',
+  'mssv_in_submitted_team',
+  'mssv_leads_other_team',
+])
+
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   if (code === 'missing:team:payment_proof') {
@@ -215,11 +224,13 @@ function explainApiError(error) {
     profile_incomplete: 'Hồ sơ hiện chưa đủ để tạo đội.',
     team_locked: 'Đội đã khóa chỉnh sửa.',
     roster_locked: 'Đội đã được xác nhận để thanh toán nên thông tin đã bị khóa. Cần thay đổi thì hãy liên hệ BTC.',
+    roster_not_locked: 'Bạn cần xác nhận lại danh sách đội trước khi tải minh chứng hoặc gửi duyệt.',
     team_full: 'Đội đã đủ số lượng thành viên.',
-    mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
+    mssv_in_other_team: 'MSSV này đang nằm trong đội khác. Hãy liên hệ BTC nếu cần chuyển đội.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
-    mssv_leads_other_team: 'MSSV này đang là đội trưởng của một đội đã có thành viên khác. Bạn ấy cần giải tán đội đó (hoặc rời khỏi vai trò đội trưởng) trước khi được thêm vào đội của bạn.',
+    mssv_leads_other_team: 'MSSV này đang là đội trưởng của một đội đã có thành viên khác. Hãy liên hệ BTC để xử lý đội hiện tại trước khi chuyển.',
     already_in_team: 'MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.',
+    membership_changed: 'Thông tin đội của thành viên vừa thay đổi. Danh sách đã được tải lại.',
     email_in_team: 'Email này đã được một người khác sử dụng — mỗi người phải dùng email riêng.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
     not_a_team_member: 'Bạn không thuộc đội này nên không bỏ phiếu được.',
@@ -1314,7 +1325,9 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
     setError('')
     try {
       await apiRequest('/my-team/payment/cancel', { method: 'POST' })
-      setInfo((current) => (current ? { ...current, roster_locked: false } : current))
+      setHasProof(false)
+      setProofUrl(null)
+      setInfo((current) => (current ? { ...current, roster_locked: false, has_proof: false } : current))
       await onProofChange?.()
     } catch (err) {
       setError(explainApiError(err))
@@ -1447,7 +1460,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
               Chưa có ảnh
             </div>
           )}
-          {editable ? (
+          {editable && info?.roster_locked ? (
             <label className={`cursor-pointer ${SECONDARY_BUTTON}`}>
               <Icon name="paperclip" className="h-4 w-4" />
               {uploading ? 'Đang tải lên...' : hasProof ? 'Đổi ảnh' : 'Tải ảnh lên'}
@@ -1461,7 +1474,11 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             </label>
           ) : (
             <p className="text-sm text-ink/45">
-              {hasProof ? 'Đội đã khoá chỉnh sửa — không thể đổi ảnh.' : 'Đội chưa upload minh chứng thanh toán.'}
+              {!info?.roster_locked
+                ? 'Hãy quay lại bước Đội và xác nhận danh sách trước khi tải minh chứng.'
+                : hasProof
+                  ? 'Đội đã khoá chỉnh sửa — không thể đổi ảnh.'
+                  : 'Đội chưa upload minh chứng thanh toán.'}
             </p>
           )}
         </div>
@@ -1923,6 +1940,14 @@ function ParticipantDashboard() {
         logoutAndRedirect('/')
         return
       }
+      const conflictCode = error?.data?.error || error?.message
+      if (error?.status === 409 && MEMBERSHIP_CONFLICT_CODES.has(conflictCode)) {
+        try {
+          await loadDashboard()
+        } catch {
+          // Preserve the original conflict: it explains the action that failed.
+        }
+      }
       setApiError(explainApiError(error))
     } finally {
       setBusyAction('')
@@ -2000,17 +2025,22 @@ function ParticipantDashboard() {
   const saveMember = async (event) => {
     event?.preventDefault?.()
     if (!memberForm?.mssv || !memberForm?.email) return
+    const normalizedMemberForm = {
+      ...memberForm,
+      mssv: String(memberForm.mssv).trim().toUpperCase(),
+      email: String(memberForm.email).trim().toLowerCase(),
+    }
 
     // A student is identified by MSSV, so refuse a second row with an MSSV that
     // already belongs to the team — the captain (shown separately) or any listed
     // member — before it even reaches the server. Only guards new additions;
     // editing keeps its own MSSV.
     if (memberDialog?.index === null) {
-      const mssv = String(memberForm.mssv).trim()
+      const mssv = normalizedMemberForm.mssv
       const taken = new Set(
         [profile.mssv, ...members.map((m) => m.mssv)]
           .filter(Boolean)
-          .map((value) => String(value).trim()),
+          .map((value) => String(value).trim().toUpperCase()),
       )
       if (taken.has(mssv)) {
         setApiError('MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.')
@@ -2023,12 +2053,12 @@ function ParticipantDashboard() {
       if (memberDialog?.index === null) {
         await apiRequest('/my-team/members', {
           method: 'POST',
-          body: memberForm,
+          body: normalizedMemberForm,
         })
       } else {
         await apiRequest(`/my-team/members/${members[memberDialog.index].mssv}`, {
           method: 'PATCH',
-          body: memberForm,
+          body: normalizedMemberForm,
         })
       }
       // Saved server-side, so the local copy has nothing left to protect.

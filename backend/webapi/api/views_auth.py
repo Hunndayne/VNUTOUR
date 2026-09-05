@@ -106,6 +106,8 @@ def me_view(request: HttpRequest):
                 value = data[key]
                 if isinstance(value, str):
                     value = value.strip()
+                    if key == "mssv":
+                        value = value.upper()
                     if key == "mssv" and not value:
                         value = None
                 updates[key] = value
@@ -599,7 +601,7 @@ def signup_view(request: HttpRequest):
     username = str((data.get("username") or "").strip())
     password = str((data.get("password") or "").strip())
     email = str((data.get("email") or "").strip())
-    mssv = str((data.get("mssv") or "").strip()) or None
+    mssv = str((data.get("mssv") or "").strip()).upper() or None
     full_name = str((data.get("full_name") or "").strip()) or None
     school = str((data.get("school") or "").strip()) or None
     faculty = str((data.get("faculty") or "").strip()) or None
