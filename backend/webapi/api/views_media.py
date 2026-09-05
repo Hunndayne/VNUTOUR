@@ -57,10 +57,6 @@ def submission_media_view(request: HttpRequest, path: str):
     if request.method not in ("GET", "HEAD"):
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
-    acc, err = _auth_or_401(request)
-    if err:
-        return err
-
     # Normalise first: `..` segments must not escape MEDIA_ROOT, and the
     # normalised form is what the key pattern has to match.
     key = posixpath.normpath(path.replace("\\", "/")).lstrip("/")
@@ -69,11 +65,19 @@ def submission_media_view(request: HttpRequest, path: str):
 
     root = Path(settings.MEDIA_ROOT).resolve()
 
+    # Feed images are public announcement assets (covers + inline body images),
+    # loaded from <img> tags that can't carry the Authorization header. Serve
+    # them without the submission auth gate — same posture as frame images.
     if FEED_KEY.match(key):
         target = (root / key).resolve()
         if not target.is_relative_to(root) or not target.is_file():
             return _not_found()
         return FileResponse(target.open("rb"))
+
+    # Submissions are private team files — require auth and per-file authZ.
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
 
     match = SUBMISSION_KEY.match(key)
     if not match:
