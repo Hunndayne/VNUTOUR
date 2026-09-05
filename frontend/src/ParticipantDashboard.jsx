@@ -1329,6 +1329,16 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
       setProofUrl(null)
       setInfo((current) => (current ? { ...current, roster_locked: false, has_proof: false } : current))
       await onProofChange?.()
+      // Cancelling unlocks the roster so the captain can edit it again — the
+      // mirror of the confirm flow (team → payment). Staying on the payment
+      // step strands them: with the roster unlocked the proof upload is refused
+      // and the confirm/cancel buttons are hidden, so nothing here is
+      // actionable. Send them back to the team step. Navigate directly rather
+      // than via gotoStep — the parent still has to re-render on the reloaded
+      // (now unlocked) roster before the step guards would let 'team' through.
+      const params = new URLSearchParams(window.location.search)
+      params.set('step', 'team')
+      navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     } catch (err) {
       setError(explainApiError(err))
     } finally {
