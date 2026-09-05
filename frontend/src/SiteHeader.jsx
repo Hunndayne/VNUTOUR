@@ -5,7 +5,7 @@ const navigationItems = [
   { label: 'HOME', href: '/#home' },
   { label: 'ABOUT US', href: '/#about' },
   { label: 'TOUR', href: '/#tour' },
-  { label: 'SPONSERSHIP', href: '/tai-tro' },
+  { label: 'SPONSORSHIP', href: '/tai-tro' },
   { label: 'FAQ', href: '/#faq' },
   { label: 'FRAME', href: '/frame' },
 ]
