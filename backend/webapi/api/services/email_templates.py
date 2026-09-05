@@ -18,8 +18,8 @@ from __future__ import annotations
 from django.utils.html import escape
 
 # Same brand assets as email_templates/registration_confirmation.html.
-_HEADER_IMAGE_URL = "https://storage.hiseku.net/PhoneHeader.png"
-_CREST_IMAGE_URL = "https://storage.hiseku.net/BieuTrung.png"
+_HEADER_IMAGE_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj-F2vvVtOhXRCuBgBh3zrIf_GLCUjgBGW1ghC7_ga4RuJUVzBnhxykvaOSulXQ1hAZs4kOxnG1oBqPKpKvXFikYXOcNKl-f_WFrTjman472c1VlHtq_bb2iS-8-_I8BfHG5MMzPZ8559p_x4HSyzqCvWQob6dSPIMA7Yd1UYoogx0JF4clTb56EzREMdo/s1600/PhoneHeader.png"
+_CREST_IMAGE_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgr1sV9iF0WJ7xGivas3L6kYoIQK4A2j-UH1hErlftEDWlE7HWo0x29_d-QbTmpukTc7nSMJiMLsE9_voKUQJF-mN_C04VP2_a7wyUduDHKRRSeXD8kn17eeCVi2DPUfk2-WOsHG_c8APtKBv-S54SWnnJ6b6CVooRiYSmN8Uyqjeebmw8aO38RlWN67QQ/s1600/BieuTrung%20%281%29.png"
 _LOGO_IMAGE_URL = "https://storage.hiseku.net/logo.png"
 
 _LAYOUT = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
