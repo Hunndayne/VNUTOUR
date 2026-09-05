@@ -409,6 +409,10 @@ def submit_team(team: Team) -> Tuple[bool, Optional[str]]:
     team.submitted_at = datetime.now(timezone.utc)
     team.approval_note = None
     team.save(update_fields=["approval_status", "submitted_at", "approval_note", "updated_at"])
+    # Email 1 ("registration received"): the dashboard submit flow routes here,
+    # not through registration_service.register_team, so fire it from this choke
+    # point too. Enqueue failures are swallowed inside the helper.
+    registration_emails.send_registration_received_team(team)
     return True, None
 
 
