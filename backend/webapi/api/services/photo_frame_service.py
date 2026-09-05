@@ -13,7 +13,7 @@ from django.db.models import F
 from django.http import HttpRequest
 
 from api.models import FrameDownloadLog, PhotoFrame
-from api.services.submission_storage_service import save_frame_image
+from api.services.submission_storage_service import delete_stored_object, save_frame_image
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -106,6 +106,7 @@ def update_frame(
     uploaded=None,
 ) -> PhotoFrame:
     update_fields = ["updated_at"]
+    old_image = None
 
     if title is not None:
         frame.title = title
@@ -121,6 +122,8 @@ def update_frame(
         update_fields.append("sort_order")
 
     if uploaded is not None:
+        if isinstance(frame.image, dict):
+            old_image = frame.image
         entry = save_frame_image(uploaded)
         width, height = _image_dimensions(uploaded)
         frame.image = entry
@@ -129,11 +132,20 @@ def update_frame(
         update_fields.extend(["image", "width", "height"])
 
     frame.save(update_fields=update_fields)
+
+    # The old file is unreferenced once the new one is saved — drop it so a
+    # replaced frame doesn't leave its previous PNG behind in R2/local storage.
+    if old_image:
+        delete_stored_object(old_image.get("storage"), old_image.get("key"))
+
     return frame
 
 
 def delete_frame(frame: PhotoFrame) -> None:
+    image = frame.image if isinstance(frame.image, dict) else None
     frame.delete()
+    if image:
+        delete_stored_object(image.get("storage"), image.get("key"))
 
 
 def record_download(frame: PhotoFrame, *, ip: str = "", account=None) -> int:
