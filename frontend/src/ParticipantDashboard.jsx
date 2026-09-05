@@ -1686,8 +1686,19 @@ function ParticipantDashboard() {
     [profile, team, members, personFields, editable],
   )
   const captainIndex = members.findIndex((member) => member.is_captain)
-  const displayedMemberCount = captainIndex === -1 ? members.length + 1 : members.length
   const myMssv = profile.mssv || user.mssv || ''
+  // The fallback "you are the captain" header block stands in only before the
+  // captain's own membership row exists (the team is created on arrival at the
+  // member step). Once the logged-in user is already listed in `members`,
+  // rendering it duplicates their row — which is exactly what happens when a
+  // team has no is_captain at all: a merge resets every flag pending the kín
+  // election, or a captain flag was otherwise lost. Defer to the member row.
+  const selfInMembers = members.some((member) => {
+    const key = String(member?.mssv || '').trim()
+    return key && key === String(myMssv).trim()
+  })
+  const showProfileAsCaptain = captainIndex === -1 && !selfInMembers
+  const displayedMemberCount = showProfileAsCaptain ? members.length + 1 : members.length
   // Backend now lets a non-captain PATCH their own row too; mirror that here
   // so the "Sửa" button shows for the row that belongs to the logged-in
   // account, not only for the captain.
@@ -2650,7 +2661,7 @@ function ParticipantDashboard() {
               </div>
 
               <div className="divide-y divide-stone">
-                {captainIndex === -1 && (
+                {showProfileAsCaptain && (
                   <div id="captain-profile">
                     <div className={`grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center ${!profileComplete ? 'border-l-4 border-[#D6492B] bg-[#D6492B]/[0.04] pl-4' : ''}`}>
                       <div className="min-w-0">
