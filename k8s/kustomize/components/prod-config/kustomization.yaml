@@ -42,6 +42,11 @@ patches:
       - op: add
         path: /data/GOOGLE_CLIENT_ID
         value: "447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com"
+      # Public Discord server invite (used in registration emails). Base leaves
+      # it blank for staging; prod points at the real server.
+      - op: replace
+        path: /data/DISCORD_INVITE_URL
+        value: "https://discord.gg/w9ppm8psu"
 
   - target:
       kind: Ingress
