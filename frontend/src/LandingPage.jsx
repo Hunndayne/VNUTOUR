@@ -488,7 +488,7 @@ function LandingPage() {
   </div>
 </div>
 
-<div className="w-full max-w-[1350px] ml-auto px-5 py-20 md:px-8 md:py-28 xl:px-8 xl:py-36 lg:pr-16">
+<div className="w-full max-w-[1350px] mx-auto px-5 py-20 md:px-8 md:py-28 xl:px-8 xl:py-36 lg:pr-16">
   <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-stretch lg:gap-20">
     <Reveal>
       <div className="h-full flex flex-col justify-center">
