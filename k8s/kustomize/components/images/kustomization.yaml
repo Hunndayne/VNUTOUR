@@ -12,6 +12,6 @@ kind: Component
 # is wired). Until then it tracks `latest`.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: b06fb60
+  newTag: a3319af
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: b06fb60
+  newTag: a3319af
