@@ -312,3 +312,117 @@ class AddMemberDuplicateTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(participant.mssv, "23520000")
+
+
+class AddMemberDraftMoveTests(TestCase):
+    """A member sitting in an unsubmitted (draft/rejected) team is moved out of
+    it rather than blocking the add; a submitted team locks the member."""
+
+    def _account(self, mssv, name, email):
+        return Account.objects.create(
+            username=mssv, email=email, password_hash="x",
+            role=Account.ROLE_PARTICIPANT, mssv=mssv, full_name=name,
+        )
+
+    def _team_with_captain(self, code, captain):
+        team, _ = create_team(code, owner_account=captain)
+        add_member(
+            team, captain.mssv, full_name=captain.full_name,
+            email=captain.email, is_captain=True, actor=captain,
+        )
+        return team
+
+    def test_move_solo_draft_member_dissolves_old_team(self):
+        a_cap = self._account("23520001", "Captain A", "23520001@x.com")
+        team_a = self._team_with_captain("A1", a_cap)
+        b_cap = self._account("23520002", "Bee", "23520002@x.com")
+        team_b = self._team_with_captain("B1", b_cap)  # B: solo draft captain
+
+        participant, error = add_member(
+            team_a, "23520002", full_name="Bee",
+            email="23520002@x.com", actor=a_cap,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(participant)
+        moved = TeamMembership.objects.get(participant__mssv="23520002")
+        self.assertEqual(moved.team_id, team_a.id)
+        self.assertFalse(moved.is_captain)  # captaincy not inherited
+        self.assertFalse(Team.objects.filter(pk=team_b.pk).exists())
+
+    def test_move_draft_captain_dissolves_team_and_frees_other_members(self):
+        a_cap = self._account("23520010", "Captain A", "23520010@x.com")
+        team_a = self._team_with_captain("A2", a_cap)
+        b_cap = self._account("23520011", "Bee", "23520011@x.com")
+        team_b = self._team_with_captain("B2", b_cap)
+        add_member(  # C is a plain member of B's draft team
+            team_b, "23520012", full_name="Cee",
+            email="23520012@x.com", actor=b_cap,
+        )
+
+        _, error = add_member(
+            team_a, "23520011", full_name="Bee",
+            email="23520011@x.com", actor=a_cap,
+        )
+
+        self.assertIsNone(error)
+        self.assertFalse(Team.objects.filter(pk=team_b.pk).exists())
+        # The whole draft team was dissolved: C is now teamless.
+        self.assertFalse(
+            TeamMembership.objects.filter(participant__mssv="23520012").exists()
+        )
+        self.assertEqual(
+            TeamMembership.objects.get(participant__mssv="23520011").team_id,
+            team_a.id,
+        )
+
+    def test_move_plain_draft_member_keeps_old_team(self):
+        x_cap = self._account("23520020", "Ex Captain", "23520020@x.com")
+        team_x = self._team_with_captain("X3", x_cap)
+        add_member(  # B is a plain member of X's draft team
+            team_x, "23520021", full_name="Bee",
+            email="23520021@x.com", actor=x_cap,
+        )
+        a_cap = self._account("23520022", "Captain A", "23520022@x.com")
+        team_a = self._team_with_captain("A3", a_cap)
+
+        _, error = add_member(
+            team_a, "23520021", full_name="Bee",
+            email="23520021@x.com", actor=a_cap,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            TeamMembership.objects.get(participant__mssv="23520021").team_id,
+            team_a.id,
+        )
+        # X's team survives — B was only a member, and X still captains it.
+        self.assertTrue(Team.objects.filter(pk=team_x.pk).exists())
+        self.assertTrue(
+            TeamMembership.objects.filter(
+                team=team_x, participant__mssv="23520020"
+            ).exists()
+        )
+
+    def test_member_in_submitted_team_is_locked(self):
+        b_cap = self._account("23520030", "Bee", "23520030@x.com")
+        team_b = self._team_with_captain("B4", b_cap)
+        Team.objects.filter(pk=team_b.pk).update(
+            approval_status=Team.APPROVAL_PENDING
+        )
+        a_cap = self._account("23520031", "Captain A", "23520031@x.com")
+        team_a = self._team_with_captain("A4", a_cap)
+
+        participant, error = add_member(
+            team_a, "23520030", full_name="Bee",
+            email="23520030@x.com", actor=a_cap,
+        )
+
+        self.assertEqual(error, "mssv_in_submitted_team")
+        self.assertIsNone(participant)
+        # B stays put, and the submitted team is untouched.
+        self.assertEqual(
+            TeamMembership.objects.get(participant__mssv="23520030").team_id,
+            team_b.id,
+        )
+        self.assertTrue(Team.objects.filter(pk=team_b.pk).exists())

@@ -237,7 +237,8 @@ def add_member(
     if current_count >= max_members:
         return None, "team_full"
 
-    # Check if participant is already in a submitted (pending/approved) team
+    # A submitted team (pending/approved) has a final roster: the member is
+    # locked to it and cannot be pulled into another team.
     submitted_member = TeamMembership.objects.filter(
         participant__mssv=mssv,
         team__approval_status__in=[Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED],
@@ -248,12 +249,30 @@ def add_member(
         # Same team already submitted — can't add more members
         return None, "team_locked"
 
-    # Check if participant already in another (draft/rejected) team
-    existing_member = TeamMembership.objects.filter(
-        participant__mssv=mssv,
-    ).select_related("team").first()
+    # The participant may still sit in another team that has NOT been submitted
+    # (draft/rejected). Registration is not final there, so rather than reject
+    # the add we move them out of the stale team. Capture what to dissolve now,
+    # while the membership row still points at the old team, but defer the
+    # destructive delete until every validation below has passed and the move
+    # has committed (see the cleanup after membership creation).
+    existing_member = (
+        TeamMembership.objects.filter(participant__mssv=mssv)
+        .select_related("team", "team__owner_account")
+        .first()
+    )
+    release_old_team = None
     if existing_member and existing_member.team_id != team.id:
-        return None, "mssv_in_other_team"
+        old_team = existing_member.team
+        old_owner_mssv = ""
+        if old_team.owner_account_id and old_team.owner_account:
+            old_owner_mssv = (old_team.owner_account.mssv or "").strip()
+        # B owns the stale team when they captain it or their account created it.
+        # Owner => dissolve the whole team; plain member => just detach B.
+        b_owns_old_team = bool(
+            existing_member.is_captain
+            or (old_owner_mssv and old_owner_mssv == mssv)
+        )
+        release_old_team = (old_team, b_owns_old_team)
 
     # An MSSV identifies the student, so the same MSSV already on this team is the
     # same person entered twice — reject it instead of the old update_or_create
@@ -322,20 +341,34 @@ def add_member(
         defaults=defaults,
     )
 
-    # Create or reuse membership. We already verified the participant is not in
-    # another team above, so any existing membership belongs to this team — keep
-    # its captain flag instead of recreating (which would silently drop it).
+    # Create or move the membership. Membership is unique per participant, so
+    # update_or_create moves an existing row from a stale draft/rejected team
+    # onto this one in place. When moving in from another team, decide captaincy
+    # solely from the caller's intent and set it in the SAME update — inheriting
+    # a stale is_captain would violate the one-captain-per-team constraint.
+    move_defaults = {"team": team}
+    if release_old_team is not None:
+        move_defaults["is_captain"] = bool(is_captain)
     try:
         with transaction.atomic():
             membership, created = TeamMembership.objects.update_or_create(
                 participant=participant,
-                defaults={"team": team},
+                defaults=move_defaults,
             )
-            if is_captain and not membership.is_captain:
+            if release_old_team is None and is_captain and not membership.is_captain:
+                # Same-team re-add: keep an existing captain flag, only ever raise.
                 membership.is_captain = True
                 membership.save(update_fields=["is_captain", "updated_at"])
     except IntegrityError:
         return None, "already_in_team"
+
+    # The move committed. Dissolve/clean the stale team B came from:
+    #   - B owned it     -> delete the whole team (remaining members go teamless)
+    #   - B was a member -> the row already moved out; delete it if now empty
+    if release_old_team is not None:
+        old_team, b_owns_old_team = release_old_team
+        if b_owns_old_team or not TeamMembership.objects.filter(team=old_team).exists():
+            Team.objects.filter(pk=old_team.pk).delete()
 
     return participant, None
 
