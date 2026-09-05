@@ -8,6 +8,7 @@ import universityLogo from "./assets/organizer-university.webp";
 import youthUnionLogo from "./assets/organizer-youth-union.webp";
 import facultyLogo from "./assets/organizer-faculty.webp";
 import SiteHeader from "./SiteHeader.jsx";
+import SiteFooter from "./SiteFooter.jsx";
 /* ==========================================================================
    DỮ LIỆU — theo Hồ sơ tài trợ VNU Tour 2026
    ========================================================================== */
@@ -427,6 +428,7 @@ export default function TaiTro() {
           <p className="mt-8 text-xs uppercase tracking-[0.08em] text-white/75">{EVENT.organizer}</p>
         </div>
       </section>
+      <SiteFooter />
     </main>
   );
 }

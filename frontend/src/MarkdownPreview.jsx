@@ -17,6 +17,7 @@ export default function MarkdownPreview({ content, emptyMessage = 'Chưa có mô
     || /^[-*+]\s+/.test(line)
     || /^\d+\.\s+/.test(line)
     || line.trim().startsWith('```')
+    || /^!\[([^\]]*)\]\(([^)]+)\)$/.test(line.trim())
   )
 
   while (index < lines.length) {
@@ -102,6 +103,27 @@ export default function MarkdownPreview({ content, emptyMessage = 'Chưa có mô
           ))}
         </blockquote>,
       )
+      continue
+    }
+
+    const imageMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/)
+    if (imageMatch) {
+      blocks.push(
+        <figure key={`img-${blocks.length}`} className="my-2">
+          <img
+            src={imageMatch[2]}
+            alt={imageMatch[1]}
+            className="max-w-full rounded-lg border border-stone"
+            loading="lazy"
+          />
+          {imageMatch[1] && (
+            <figcaption className="mt-1 text-xs text-ink/40 italic">
+              {imageMatch[1]}
+            </figcaption>
+          )}
+        </figure>,
+      )
+      index += 1
       continue
     }
 
