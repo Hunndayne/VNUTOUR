@@ -718,7 +718,7 @@ function FramePage() {
 
         {/* VIEW 3: STUDIO GHÉP KHUNG ẢNH CỤ THỂ (/frame/:id) */}
         {selectedFrame && (
-          <div className="mx-auto w-full max-w-[1400px] px-4 py-8 sm:px-6 md:py-12">
+          <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 md:py-12">
             {/* THANH ĐIỀU HƯỚNG VÀ CHIA SẺ */}
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <button
@@ -788,8 +788,8 @@ function FramePage() {
             {!frameImgLoading && !frameImgError && frameImg && (
               <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
                 {/* CỘT TRÁI: CANVAS HIỂN THỊ */}
-                <div className="flex flex-col items-center">
-                  <div className="w-full max-w-xl rounded-2xl border border-[#00B6F1]/25 bg-white p-3 sm:p-5 shadow-[0_12px_35px_rgba(12,29,51,0.08)]">
+                <div className="flex flex-col">
+                  <div className="w-full rounded-2xl border border-[#00B6F1]/25 bg-white p-3 sm:p-5 shadow-[0_12px_35px_rgba(12,29,51,0.08)]">
                     <div
                       className="relative mx-auto overflow-hidden rounded-xl border border-[#00B6F1]/20 shadow-inner"
                       style={{ ...CHECKER_BG, aspectRatio: `${frameSize.width} / ${frameSize.height}` }}
