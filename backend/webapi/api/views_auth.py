@@ -10,11 +10,15 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
 from django.conf import settings
 from django.core.cache import cache
+from django.utils.html import escape
 
 from api.services.auth_service import (
     authenticate, generate_session, revoke_session,
     find_by_token, register_account, register_with_google,
+    create_password_reset_token, consume_password_reset_token,
 )
+from api.services.email_service import enqueue_email_messages
+from api.services.email_templates import render_branded_email, email_paragraph
 from api.services.registration_service import validate_account_mssv_claim
 from api.services.team_service import (
     link_account_profile, registration_is_open,
@@ -208,6 +212,93 @@ def change_password_view(request: HttpRequest):
 
     acc.password_hash = make_password(new_password)
     acc.save(update_fields=["password_hash"])
+    return JsonResponse({"status": "password_changed"})
+
+
+@csrf_exempt
+def forgot_password_view(request: HttpRequest):
+    """POST /auth/forgot-password — request a reset link by email.
+
+    Always answers 200 with a generic message, whether or not the email is
+    registered — the response must not be usable to enumerate accounts.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    email = str((data.get("email") or "").strip())
+    limited, _ = _consume_rate_limit(
+        request,
+        scope="forgot-password",
+        identifier=email,
+        limit=settings.AUTH_LOOKUP_RATE_LIMIT,
+        window_seconds=settings.AUTH_LOOKUP_RATE_WINDOW_SECONDS,
+    )
+    if limited:
+        return limited
+
+    if email:
+        acc = Account.objects.filter(email__iexact=email, is_active=True).first()
+        # Google accounts have no password to reset — silently skip sending
+        # rather than mailing a link that can never be used.
+        if acc and not acc.google_sub:
+            raw_token = create_password_reset_token(acc)
+            base_url = (settings.WEB_BASE_URL or "").rstrip("/")
+            if not base_url:
+                base_url = f"{request.scheme}://{request.get_host()}"
+            reset_link = f"{base_url}/reset-password?token={raw_token}"
+            ttl_hours = int(getattr(settings, "PASSWORD_RESET_TOKEN_TTL_HOURS", 2))
+
+            body = (
+                email_paragraph(f"Xin chào {escape(acc.full_name or acc.username)},")
+                + email_paragraph(
+                    "Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản VNUTour "
+                    f"của bạn. Liên kết bên dưới có hiệu lực trong {ttl_hours} giờ."
+                )
+                + email_paragraph(
+                    "Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này — "
+                    "mật khẩu hiện tại của bạn vẫn giữ nguyên."
+                )
+            )
+            html_body = render_branded_email(
+                title="ĐẶT LẠI MẬT KHẨU",
+                body_html=body,
+                cta={"url": reset_link, "label": "Đặt lại mật khẩu"},
+            )
+            enqueue_email_messages(
+                messages=[{
+                    "to_emails": [acc.email],
+                    "subject": "Đặt lại mật khẩu VNUTour",
+                    "html_body": html_body,
+                }],
+                created_by=None,
+            )
+
+    return JsonResponse({"status": "ok"})
+
+
+@csrf_exempt
+def reset_password_view(request: HttpRequest):
+    """POST /auth/reset-password — apply a new password using a mailed token."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    token = str((data.get("token") or "").strip())
+    new_password = str((data.get("new_password") or "").strip())
+    if not token or not new_password:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    err = consume_password_reset_token(token, new_password)
+    if err:
+        return JsonResponse({"error": err}, status=400)
+
     return JsonResponse({"status": "password_changed"})
 
 

@@ -8,6 +8,8 @@ import CoopDashboard from './CoopDashboard.jsx'
 import FramePage from './FramePage.jsx'
 import StationRunPage from './StationRunPage.jsx'
 import TaiTro from './tai-tro.jsx'
+import ForgotPasswordPage from './ForgotPasswordPage.jsx'
+import ResetPasswordPage from './ResetPasswordPage.jsx'
 import { getStoredAuthToken, getStoredUser, isAdminRole, roleHomePath } from './api.js'
 import { navigate, useLocation } from './router.js'
 
@@ -42,6 +44,8 @@ const LEGACY_PATHS = {
 const PUBLIC_ROUTES = {
   '/frame': FramePage,
   '/tai-tro': TaiTro,
+  '/forgot-password': ForgotPasswordPage,
+  '/reset-password': ResetPasswordPage,
 }
 const PUBLIC_PATHS = new Set(Object.keys(PUBLIC_ROUTES))
 

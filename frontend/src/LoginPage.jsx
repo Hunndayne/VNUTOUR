@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import logoImage from './assets/vnutour-logo.webp'
 import { roleHomePath } from './api.js'
+import { navigate } from './router.js'
 import { TurnstileWidget, HoneypotField } from './antibot.jsx'
 import { useFormSignals, ANTIBOT_ERROR_TEXT, ANTIBOT_ERROR_CODES } from './antibot.js'
 
@@ -439,7 +440,13 @@ function LoginPage() {
                   {errors.username && <p className="mt-1 text-xs text-rose-400">{errors.username}</p>}
                 </div>
                 <div>
-                  <label htmlFor="password" className={labelCls}>Mật khẩu</label>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="password" className={labelCls}>Mật khẩu</label>
+                    <button type="button" onClick={() => navigate('/forgot-password')}
+                      className="text-xs text-white/40 underline underline-offset-4 transition hover:text-white/60">
+                      Quên mật khẩu?
+                    </button>
+                  </div>
                   <input id="password" name="password" type="password" value={form.password} onChange={handleChange}
                     placeholder="Nhập mật khẩu" className={inputClass(!!errors.password)} disabled={isLoading} />
                   {errors.password && <p className="mt-1 text-xs text-rose-400">{errors.password}</p>}

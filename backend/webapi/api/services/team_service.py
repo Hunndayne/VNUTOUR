@@ -14,6 +14,7 @@ from api.models import (
     Account, Participant, Team, TeamMembership, ProgramPhase, PhaseRoster, SystemSetting,
     MssvLinkAudit,
 )
+from api.services import registration_emails
 
 
 def _get_setting(key: str, default=None):
@@ -424,6 +425,7 @@ def approve_team(team: Team, reviewer: Account) -> Team:
         "provision_state", "updated_at",
     ])
     _ensure_default_qualifying_roster(team)
+    registration_emails.send_team_approved_email(team, created_by=reviewer)
     return team
 
 

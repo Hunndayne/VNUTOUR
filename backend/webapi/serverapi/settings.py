@@ -186,6 +186,16 @@ EMAIL_QUEUE_INTERVAL_SECONDS = int(os.getenv("EMAIL_QUEUE_INTERVAL_SECONDS", "10
 EMAIL_QUEUE_MAX_ATTEMPTS = int(os.getenv("EMAIL_QUEUE_MAX_ATTEMPTS", "5"))
 EMAIL_QUEUE_STALE_SECONDS = int(os.getenv("EMAIL_QUEUE_STALE_SECONDS", "600"))
 
+# Public base URL of the web frontend, used to build links inside transactional
+# emails (password reset, etc). Falls back to building from the request when
+# unset (see views_auth.forgot_password_view).
+WEB_BASE_URL = os.getenv("WEB_BASE_URL", "")
+PASSWORD_RESET_TOKEN_TTL_HOURS = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_HOURS", "2"))
+
+# Shared Discord invite link used in transactional emails (e.g. team-approved
+# notification). Empty until the organisers configure it.
+DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "")
+
 REPORT_TEMPLATE_PATH = os.getenv(
     "REPORT_TEMPLATE_PATH",
     str(REPO_ROOT / "assets" / "vnutour-report-template.xlsx"),
