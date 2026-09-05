@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 import shutil
 import tempfile
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -24,6 +25,7 @@ from django.utils import timezone
 
 from api.models import Account, Participant, SystemSetting, Team, TeamMembership
 from api.services.auth_service import generate_session
+from api.services.timo_service import TimoConfirmResult
 from api.services.payment_service import (
     DEFAULT_PAYMENT_CONFIG,
     build_payment_info,
@@ -314,7 +316,11 @@ class PaymentProofUploadTests(PaymentApiTestBase):
 
         self.assertTrue(response.json()["has_proof"])
 
-    def test_cancel_payment_clears_proof_and_deletes_stored_file(self):
+    @patch(
+        "api.views_participant.confirm_team_payment_via_timo",
+        return_value=TimoConfirmResult("not_found", "Chưa thấy giao dịch."),
+    )
+    def test_cancel_checks_payment_then_clears_proof_and_stored_file(self, check_payment):
         self._upload()
         self.team.refresh_from_db()
         stored_entry = self.team.payment_proof_file
@@ -340,6 +346,67 @@ class PaymentProofUploadTests(PaymentApiTestBase):
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
         )
         self.assertFalse(overview.json()["team"]["has_payment_proof"])
+        check_payment.assert_called_once()
+
+    @patch(
+        "api.views_participant.confirm_team_payment_via_timo",
+        return_value=TimoConfirmResult("confirmed", "Đã tìm thấy giao dịch."),
+    )
+    def test_cancel_is_blocked_when_payment_check_finds_transaction(self, check_payment):
+        self._upload()
+        self.team.refresh_from_db()
+        stored_entry = self.team.payment_proof_file
+        stored_path = Path(self.media_root) / stored_entry["key"]
+
+        with override_settings(MEDIA_ROOT=self.media_root):
+            response = self.client.post(
+                "/api/my-team/payment/cancel",
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "payment_already_confirmed")
+        self.team.refresh_from_db()
+        self.assertIsNotNone(self.team.roster_locked_at)
+        self.assertEqual(self.team.payment_proof_file, stored_entry)
+        self.assertTrue(stored_path.exists())
+        check_payment.assert_called_once()
+
+    @patch(
+        "api.views_participant.confirm_team_payment_via_timo",
+        return_value=TimoConfirmResult("error", "Không kết nối được tới Timo."),
+    )
+    def test_cancel_is_blocked_when_payment_check_fails(self, _check_payment):
+        self._upload()
+
+        response = self.client.post(
+            "/api/my-team/payment/cancel",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"], "payment_check_failed")
+        self.team.refresh_from_db()
+        self.assertIsNotNone(self.team.roster_locked_at)
+        self.assertIsNotNone(self.team.payment_proof_file)
+
+    @patch(
+        "api.views_participant.confirm_team_payment_via_timo",
+        return_value=TimoConfirmResult("not_configured", "BTC chưa cấu hình Timo."),
+    )
+    def test_cancel_is_blocked_when_payment_cannot_be_checked(self, _check_payment):
+        self._upload()
+
+        response = self.client.post(
+            "/api/my-team/payment/cancel",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"], "payment_check_unavailable")
+        self.team.refresh_from_db()
+        self.assertIsNotNone(self.team.roster_locked_at)
+        self.assertIsNotNone(self.team.payment_proof_file)
 
     def test_get_file_after_upload_serves_or_redirects(self):
         self._upload()

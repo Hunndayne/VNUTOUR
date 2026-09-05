@@ -225,6 +225,9 @@ function explainApiError(error) {
     team_locked: 'Đội đã khóa chỉnh sửa.',
     roster_locked: 'Đội đã được xác nhận để thanh toán nên thông tin đã bị khóa. Cần thay đổi thì hãy liên hệ BTC.',
     roster_not_locked: 'Bạn cần xác nhận lại danh sách đội trước khi tải minh chứng hoặc gửi duyệt.',
+    payment_already_confirmed: 'Hệ thống đã tìm thấy giao dịch. Thanh toán đã được xác nhận nên không thể hủy.',
+    payment_check_unavailable: 'Chưa thể kiểm tra trạng thái thanh toán. BTC cần cấu hình lại kết nối Timo trước khi bạn có thể hủy.',
+    payment_check_failed: 'Không kiểm tra được trạng thái thanh toán lúc này. Vui lòng thử lại sau; danh sách và minh chứng vẫn được giữ nguyên.',
     team_full: 'Đội đã đủ số lượng thành viên.',
     mssv_in_other_team: 'MSSV này đang nằm trong đội khác. Hãy liên hệ BTC nếu cần chuyển đội.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
@@ -1323,6 +1326,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const handleCancelPayment = async () => {
     setCancelling(true)
     setError('')
+    setPaidNotice('')
     try {
       await apiRequest('/my-team/payment/cancel', { method: 'POST' })
       setHasProof(false)
@@ -1340,6 +1344,10 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
       params.set('step', 'team')
       navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     } catch (err) {
+      if (err?.data?.error === 'payment_already_confirmed') {
+        setInfo((current) => (current ? { ...current, payment_confirmed: true } : current))
+        await onProofChange?.()
+      }
       setError(explainApiError(err))
     } finally {
       setCancelling(false)
@@ -1385,7 +1393,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
       {isCaptain && info?.roster_locked && (
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/60 px-4 py-3">
           {info?.timo_configured && !info?.payment_confirmed && (
-            <button type="button" onClick={handleMarkPaid} disabled={checkingPaid} className={SECONDARY_BUTTON}>
+            <button type="button" onClick={handleMarkPaid} disabled={checkingPaid || cancelling} className={SECONDARY_BUTTON}>
               <Icon name="checkPlain" className="h-4 w-4" />
               {checkingPaid ? 'Đang kiểm tra...' : 'Đã chuyển tiền'}
             </button>
@@ -1394,10 +1402,10 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             <button
               type="button"
               onClick={handleCancelPayment}
-              disabled={cancelling}
+              disabled={cancelling || checkingPaid}
               className="rounded-lg border border-[#D6492B]/25 bg-white px-3 py-1.5 text-xs font-semibold text-[#D6492B] transition hover:bg-[#D6492B]/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {cancelling ? 'Đang hủy...' : 'Hủy thanh toán'}
+              {cancelling ? 'Đang kiểm tra thanh toán...' : 'Hủy thanh toán'}
             </button>
           )}
           {paidNotice && <p className="w-full text-xs leading-5 text-ink/55">{paidNotice}</p>}
@@ -1755,6 +1763,24 @@ function ParticipantDashboard() {
     || (stepStates.approved === 'done' ? 'approved' : 'submit')
   const [stepParam] = useEnumSearchParam('step', STEP_KEYS, currentStepKey)
   const activeStep = stepUnlocked(stepParam) ? stepParam : currentStepKey
+  const pendingStepScroll = useRef(null)
+
+  // Wait until React has rendered the destination step, then bring its form
+  // back under the sticky header. Without this, Next swaps the content while
+  // preserving the old document offset, often leaving the user below the next
+  // form on both mobile and desktop.
+  useEffect(() => {
+    if (pendingStepScroll.current !== activeStep) return undefined
+    pendingStepScroll.current = null
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById('registration-step-form')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeStep])
+
   // Always spell the step out in the URL instead of going through
   // `setStepParam` — that drops a parameter equal to its fallback, and the
   // fallback tracks live data. Leaving the param out is what let the team
@@ -1762,9 +1788,21 @@ function ParticipantDashboard() {
   // the user and yank them to a later step, e.g. straight to Thanh toán.
   const gotoStep = (key) => {
     if (!stepUnlocked(key)) return
+    pendingStepScroll.current = key
     const params = new URLSearchParams(window.location.search)
     params.set('step', key)
     navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
+    // A shortcut can target the step already on screen. That does not change
+    // activeStep, so its effect will not rerun; scroll it immediately instead.
+    if (key === activeStep) {
+      pendingStepScroll.current = null
+      window.requestAnimationFrame(() => {
+        document.getElementById('registration-step-form')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      })
+    }
   }
 
   // `useEnumSearchParam`'s fallback is `currentStepKey`, recomputed on every
@@ -1935,7 +1973,9 @@ function ParticipantDashboard() {
       // move to payment would be silently dropped.
       const params = new URLSearchParams(window.location.search)
       const isApproved = team?.approval_status === 'approved'
-      params.set('step', isApproved ? 'approved' : 'payment')
+      const destination = isApproved ? 'approved' : 'payment'
+      pendingStepScroll.current = destination
+      params.set('step', destination)
       navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     })
   }
@@ -2318,7 +2358,7 @@ function ParticipantDashboard() {
 
         {!isFullyApproved && (
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
-          <div className="space-y-5 min-w-0">
+          <div id="registration-step-form" className="min-w-0 scroll-mt-24 space-y-5">
             {registrationOpen && !isFullyApproved ? (
               <>
                 {/* BƯỚC 1 — HỒ SƠ */}

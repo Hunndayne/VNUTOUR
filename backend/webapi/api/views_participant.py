@@ -826,11 +826,13 @@ def my_team_payment_confirm_auto_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    if not team.roster_locked_at:
-        return JsonResponse({"error": "roster_not_locked"}, status=409)
-
-    result = confirm_team_payment_via_timo(team)
+    # Serialize confirmation with cancellation. Both operations query the same
+    # payment source and must not commit opposite outcomes for one roster.
+    with transaction.atomic():
+        team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if not team.roster_locked_at:
+            return JsonResponse({"error": "roster_not_locked"}, status=409)
+        result = confirm_team_payment_via_timo(team)
     return JsonResponse({
         "status": result.status,
         "message": result.message,
@@ -840,8 +842,7 @@ def my_team_payment_confirm_auto_view(request: HttpRequest):
 
 @csrf_exempt
 def my_team_payment_cancel_view(request: HttpRequest):
-    """POST: captain cancels payment — unlocks the roster so members can be
-    added/removed again. Refused once payment is confirmed (final)."""
+    """POST: verify payment once, then cancel only when no transfer is found."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -854,17 +855,46 @@ def my_team_payment_cancel_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    if team.payment_confirmed_at:
-        return JsonResponse({"error": "payment_already_confirmed"}, status=409)
-    proof_entry = team.payment_proof_file or {}
-    team.roster_locked_at = None
-    # A receipt records the amount for the roster that was locked when it was
-    # uploaded. Unlocking lets the captain change that roster, so the receipt
-    # must be invalidated at the same time or it could approve a different
-    # headcount and amount later.
-    team.payment_proof_file = None
-    team.save(update_fields=["roster_locked_at", "payment_proof_file", "updated_at"])
+    proof_entry = {}
+    with transaction.atomic():
+        team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if team.payment_confirmed_at:
+            return JsonResponse({"error": "payment_already_confirmed"}, status=409)
+        if not team.roster_locked_at and not team.payment_proof_file:
+            return JsonResponse({"status": "ok", "roster_locked": False, "has_proof": False})
+
+        # Cancellation is destructive: it unlocks the priced roster and clears
+        # its receipt. Poll the authoritative payment source first. A failed or
+        # unavailable check must leave both pieces of evidence untouched.
+        check = confirm_team_payment_via_timo(team)
+        if check.status == "confirmed" or team.payment_confirmed_at:
+            if not team.payment_confirmed_at:
+                team.payment_confirmed_at = timezone.now()
+                team.save(update_fields=["payment_confirmed_at", "updated_at"])
+            return JsonResponse({
+                "error": "payment_already_confirmed",
+                "message": check.message,
+            }, status=409)
+        if check.status != "not_found":
+            error_code = (
+                "payment_check_unavailable"
+                if check.status == "not_configured"
+                else "payment_check_failed"
+            )
+            return JsonResponse({
+                "error": error_code,
+                "message": check.message,
+            }, status=503)
+
+        proof_entry = team.payment_proof_file or {}
+        team.roster_locked_at = None
+        # A receipt records the amount for the roster that was locked when it
+        # was uploaded. Unlocking lets the captain change that roster, so the
+        # receipt must be invalidated at the same time or it could approve a
+        # different headcount and amount later.
+        team.payment_proof_file = None
+        team.save(update_fields=["roster_locked_at", "payment_proof_file", "updated_at"])
+
     delete_stored_object(proof_entry.get("storage"), proof_entry.get("key"))
     return JsonResponse({"status": "ok", "roster_locked": False, "has_proof": False})
 
