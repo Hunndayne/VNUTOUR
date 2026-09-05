@@ -110,7 +110,7 @@ export default function FeedPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="font-display text-2xl font-bold text-[#20312B] sm:text-3xl">
-              📢 Bảng tin Ban tổ chức
+              Bảng tin Ban tổ chức
             </h1>
             <p className="mt-1 text-sm text-[#20312B]/60">
               Thông báo, thể lệ và cập nhật sự kiện chính thức từ BTC VNUTour
@@ -168,10 +168,9 @@ export default function FeedPage() {
         {/* Empty state */}
         {!loading && !error && posts.length === 0 && (
           <div className="rounded-xl border border-[#DCD8CC] bg-white p-8 text-center text-sm text-[#20312B]/60">
-            <p className="text-2xl mb-2">📭</p>
             <p className="font-semibold text-[#20312B]">Hiện chưa có thông báo nào từ BTC</p>
             <p className="mt-1 text-xs text-[#20312B]/50">
-              Vui lòng quay lại sau khi có thông báo mới!
+              Vui lòng quay lại sau khi có thông báo mới.
             </p>
           </div>
         )}

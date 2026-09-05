@@ -112,33 +112,38 @@ export default function FeedAdminPanel() {
     }
   }
 
-  // Handle Body Image upload & insert into textarea
+  // Handle Body Image upload (one or many) & insert into textarea
   const handleBodyImageUpload = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
     setUploadingBodyImg(true)
     setEditorError('')
+
+    // Capture the caret up front — focus can drift across the awaits below.
+    const textarea = textareaRef.current
+    const start = textarea ? textarea.selectionStart : body.length
+    const end = textarea ? textarea.selectionEnd : body.length
+
     try {
-      const compressed = await compressImage(file, { maxDim: 1600, quality: 0.8 })
-      const formData = new FormData()
-      formData.append('image', compressed, compressed.name || 'image.webp')
-      if (editingPost?.id) formData.append('post_id', editingPost.id)
-      const res = await apiRequest('/admin/feed/upload-image', {
-        method: 'POST',
-        body: formData,
-      })
-      if (res.url) {
-        const altText = file.name.replace(/\.[^/.]+$/, '')
-        const markdownTag = `\n\n![${altText}](${res.url})\n\n`
-        const textarea = textareaRef.current
-        if (textarea) {
-          const start = textarea.selectionStart || body.length
-          const end = textarea.selectionEnd || body.length
-          const newBody = body.substring(0, start) + markdownTag + body.substring(end)
-          setBody(newBody)
-        } else {
-          setBody((prev) => prev + markdownTag)
+      const tags = []
+      for (const file of files) {
+        const compressed = await compressImage(file, { maxDim: 1600, quality: 0.8 })
+        const formData = new FormData()
+        formData.append('image', compressed, compressed.name || 'image.webp')
+        if (editingPost?.id) formData.append('post_id', editingPost.id)
+        const res = await apiRequest('/admin/feed/upload-image', {
+          method: 'POST',
+          body: formData,
+        })
+        if (res.url) {
+          const altText = file.name.replace(/\.[^/.]+$/, '')
+          tags.push(`![${altText}](${res.url})`)
         }
+      }
+
+      if (tags.length > 0) {
+        const markdownTag = `\n\n${tags.join('\n\n')}\n\n`
+        setBody(body.substring(0, start) + markdownTag + body.substring(end))
       }
     } catch {
       setEditorError('Tải ảnh chèn vào nội dung thất bại.')
@@ -343,12 +348,12 @@ export default function FeedAdminPanel() {
                           }`}
                           title="Bấm để bật/tắt ghim"
                         >
-                          {post.is_pinned ? '📌 Ghim' : '—'}
+                          {post.is_pinned ? 'Đã ghim' : '—'}
                         </button>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap font-mono text-xs text-ink/70">
                         {totalReactions > 0 ? (
-                          <span title={JSON.stringify(post.reaction_counts)}>❤️ {totalReactions}</span>
+                          <span title={JSON.stringify(post.reaction_counts)}>{totalReactions}</span>
                         ) : (
                           '0'
                         )}
@@ -359,7 +364,7 @@ export default function FeedAdminPanel() {
                           onClick={() => handleOpenComments(post)}
                           className="font-mono text-xs text-trail hover:underline font-semibold"
                         >
-                          💬 {post.comment_count || 0}
+                          {post.comment_count || 0}
                         </button>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-xs text-ink/60">
@@ -482,6 +487,7 @@ export default function FeedAdminPanel() {
                         ref={bodyImgInputRef}
                         type="file"
                         accept="image/png,image/jpeg,image/webp"
+                        multiple
                         onChange={handleBodyImageUpload}
                         className="hidden"
                       />
@@ -491,7 +497,7 @@ export default function FeedAdminPanel() {
                         disabled={uploadingBodyImg}
                         className="text-xs font-semibold text-trail hover:underline"
                       >
-                        {uploadingBodyImg ? 'Đang tải ảnh...' : '📷 Chèn ảnh vào bài'}
+                        {uploadingBodyImg ? 'Đang tải ảnh...' : 'Chèn ảnh vào bài'}
                       </button>
                     </div>
                   </div>
@@ -536,7 +542,7 @@ export default function FeedAdminPanel() {
                       onChange={(e) => setIsPinned(e.target.checked)}
                       className="accent-[#E0A23A] rounded"
                     />
-                    <span>📌 Ghim bài lên đầu</span>
+                    <span>Ghim bài lên đầu</span>
                   </label>
                 </div>
               </div>
@@ -550,7 +556,7 @@ export default function FeedAdminPanel() {
                   <div className="flex items-center gap-2 text-xs text-ink/50">
                     {isPinned && (
                       <span className="rounded bg-[#E0A23A]/15 px-2 py-0.5 text-xs font-semibold text-[#9A6B12]">
-                        📌 Đã ghim
+                        Đã ghim
                       </span>
                     )}
                     <span>BTC VNUTour</span>

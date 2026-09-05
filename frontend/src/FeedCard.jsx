@@ -182,7 +182,7 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
         <div className="flex items-center gap-2 text-xs text-ink/60 mb-2">
           {postState.is_pinned && (
             <span className="inline-flex items-center rounded bg-[#E0A23A]/15 px-2 py-0.5 text-[11px] font-semibold text-[#9A6B12]">
-              📌 Ghim
+              Đã ghim
             </span>
           )}
           <span className="font-medium text-ink/80">{postState.author_name || 'BTC VNUTour'}</span>
@@ -212,12 +212,12 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
         <div className="mt-3 flex items-center justify-between border-t border-[#DCD8CC]/60 pt-3 text-xs text-ink/60">
           <div className="flex items-center gap-2">
             {totalReactions > 0 ? (
-              <span className="font-medium text-ink/80">❤️ {totalReactions} tương tác</span>
+              <span className="font-medium text-ink/80">{totalReactions} tương tác</span>
             ) : (
               <span>Chưa có tương tác</span>
             )}
           </div>
-          <div>💬 {commentCount} bình luận</div>
+          <div>{commentCount} bình luận</div>
         </div>
       </article>
     )
@@ -230,7 +230,7 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
       <div className="mb-3 flex items-center gap-2 text-xs text-ink/60">
         {postState.is_pinned && (
           <span className="inline-flex items-center rounded bg-[#E0A23A]/15 px-2.5 py-0.5 text-xs font-semibold text-[#9A6B12]">
-            📌 Đã ghim
+            Đã ghim
           </span>
         )}
         <span className="font-semibold text-ink/90">{postState.author_name || 'BTC VNUTour'}</span>
@@ -285,9 +285,8 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
 
       {/* Comment Section */}
       <section className="mt-6 border-t border-[#DCD8CC]/70 pt-5">
-        <h3 className="font-display text-sm font-bold text-ink/90 mb-3 flex items-center gap-1.5">
-          <span>💬</span>
-          <span>{commentCount} bình luận</span>
+        <h3 className="font-display text-sm font-bold text-ink/90 mb-3">
+          {commentCount} bình luận
         </h3>
 
         {/* Comment input */}

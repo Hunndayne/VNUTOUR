@@ -2171,7 +2171,7 @@ function ParticipantDashboard() {
             {team?.approval_status === 'approved' && latestPost && (
               <section className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-lg font-bold text-ink sm:text-xl">📢 Bảng tin Ban tổ chức</h2>
+                  <h2 className="font-display text-lg font-bold text-ink sm:text-xl">Bảng tin Ban tổ chức</h2>
                   <a
                     href="/feed"
                     onClick={(e) => {
