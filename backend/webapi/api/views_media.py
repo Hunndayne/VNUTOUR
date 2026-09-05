@@ -23,6 +23,7 @@ from api.models import Account, Station, StationAssignment, Team, TeamMembership
 from .views_shared import _auth_or_401
 
 SUBMISSION_KEY = re.compile(r"^submissions/st(?P<station_id>\d+)/(?P<team_code>[^/]+)/[^/]+$")
+FEED_KEY = re.compile(r"^feed/[^/]+$")
 
 
 def _forbidden():
@@ -63,8 +64,19 @@ def submission_media_view(request: HttpRequest, path: str):
     # Normalise first: `..` segments must not escape MEDIA_ROOT, and the
     # normalised form is what the key pattern has to match.
     key = posixpath.normpath(path.replace("\\", "/")).lstrip("/")
+    if key.startswith("../") or ".." in key.split("/"):
+        return _not_found()
+
+    root = Path(settings.MEDIA_ROOT).resolve()
+
+    if FEED_KEY.match(key):
+        target = (root / key).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            return _not_found()
+        return FileResponse(target.open("rb"))
+
     match = SUBMISSION_KEY.match(key)
-    if not match or key.startswith("../") or ".." in key.split("/"):
+    if not match:
         return _not_found()
 
     station_id = int(match.group("station_id"))

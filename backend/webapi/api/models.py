@@ -1221,3 +1221,135 @@ class PasswordResetToken(models.Model):
 
     def __str__(self) -> str:
         return f"reset token for {self.account.username} (used={bool(self.used_at)})"
+
+
+# =====================================================================
+# 25. FeedPost
+# =====================================================================
+
+class FeedPost(models.Model):
+    """A markdown announcement published by an organizer, visible to approved teams."""
+
+    STATUS_DRAFT = "draft"
+    STATUS_PUBLISHED = "published"
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_PUBLISHED, "Published"),
+    ]
+
+    title = models.CharField(max_length=300)
+    body = models.TextField(help_text="Markdown content")
+    cover_image_url = models.CharField(max_length=500, blank=True, default="")
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    is_pinned = models.BooleanField(default=False)
+    author = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="feed_posts",
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "feed_post"
+        ordering = ["-is_pinned", "-published_at"]
+
+    def __str__(self) -> str:
+        return f"[{self.status}] {self.title}"
+
+
+# =====================================================================
+# 26. FeedImage
+# =====================================================================
+
+class FeedImage(models.Model):
+    """An image uploaded for use inside a FeedPost's markdown body."""
+
+    post = models.ForeignKey(
+        FeedPost, on_delete=models.CASCADE, related_name="images",
+        null=True, blank=True,
+    )
+    image_url = models.CharField(max_length=500)
+    storage_type = models.CharField(max_length=10, default="local")
+    storage_key = models.CharField(max_length=500, blank=True, default="")
+    original_filename = models.CharField(max_length=255, blank=True, default="")
+    uploaded_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "feed_image"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"FeedImage {self.id} (post={self.post_id})"
+
+
+# =====================================================================
+# 27. FeedReaction
+# =====================================================================
+
+class FeedReaction(models.Model):
+    """An emoji reaction on a feed post by a participant."""
+
+    REACTION_HEART = "heart"       # ❤️
+    REACTION_LIKE = "like"         # 👍
+    REACTION_FIRE = "fire"         # 🔥
+    REACTION_HAHA = "haha"        # 😂
+    REACTION_WOW = "wow"          # 😮
+    REACTION_CHOICES = [
+        (REACTION_HEART, "❤️"),
+        (REACTION_LIKE, "👍"),
+        (REACTION_FIRE, "🔥"),
+        (REACTION_HAHA, "😂"),
+        (REACTION_WOW, "😮"),
+    ]
+
+    post = models.ForeignKey(
+        FeedPost, on_delete=models.CASCADE, related_name="reactions",
+    )
+    account = models.ForeignKey(
+        Account, on_delete=models.CASCADE, related_name="feed_reactions",
+    )
+    reaction_type = models.CharField(max_length=10, choices=REACTION_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "feed_reaction"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["post", "account"],
+                name="uq_feed_reaction_one_per_user",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.account.username} reacted {self.reaction_type} on post {self.post_id}"
+
+
+# =====================================================================
+# 28. FeedComment
+# =====================================================================
+
+class FeedComment(models.Model):
+    """A comment on a feed post by a participant or admin."""
+
+    post = models.ForeignKey(
+        FeedPost, on_delete=models.CASCADE, related_name="comments",
+    )
+    author = models.ForeignKey(
+        Account, on_delete=models.CASCADE, related_name="feed_comments",
+    )
+    body = models.TextField(max_length=1000)
+    is_deleted = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "feed_comment"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Comment by {self.author.username} on post {self.post_id}"
+

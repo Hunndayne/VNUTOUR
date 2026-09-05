@@ -3,6 +3,7 @@ import logoImage from './assets/vnutour-logo.webp'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
+import FeedCard from './FeedCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
@@ -1516,6 +1517,7 @@ function ParticipantDashboard() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [confirmPaymentLoading, setConfirmPaymentLoading] = useState(false)
+  const [latestPost, setLatestPost] = useState(null)
 
   const loadDashboard = async () => {
     const me = await apiRequest('/auth/me')
@@ -1543,6 +1545,17 @@ function ParticipantDashboard() {
     setRegistrationSchema(schemaPayload)
     setExperience(experiencePayload)
     setCaptainVote(normalizedTeam ? await fetchCaptainVote() : null)
+
+    if (normalizedTeam?.approval_status === 'approved') {
+      try {
+        const feedRes = await apiRequest('/feed/latest')
+        setLatestPost(feedRes?.post || null)
+      } catch {
+        setLatestPost(null)
+      }
+    } else {
+      setLatestPost(null)
+    }
   }
 
   useEffect(() => {
@@ -2154,6 +2167,26 @@ function ParticipantDashboard() {
                 })}
               />
             )}
+            {/* Feed Announcement Card for approved teams */}
+            {team?.approval_status === 'approved' && latestPost && (
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-lg font-bold text-ink sm:text-xl">📢 Bảng tin Ban tổ chức</h2>
+                  <a
+                    href="/feed"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      navigate('/feed')
+                    }}
+                    className="text-sm font-semibold text-trail hover:underline"
+                  >
+                    Xem tất cả →
+                  </a>
+                </div>
+                <FeedCard post={latestPost} compact />
+              </section>
+            )}
+
             {/* Once registration closes or the team is approved, they just need
                 to run the course. Stations are now a separate page. */}
             {team && (
