@@ -13,6 +13,18 @@ const organizerLogos = [
   { src: facultyLogo, alt: 'Khoa Mạng máy tính và Truyền thông' },
 ]
 
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+
+const qualificationDate = new Date("2026-09-20");
+qualificationDate.setHours(0, 0, 0, 0);
+
+const finalDate = new Date("2026-09-27");
+finalDate.setHours(0, 0, 0, 0);
+
+// Xác định mốc gần nhất cần highlight
+const isQualificationActive = today <= qualificationDate;
+const isFinalActive = today > qualificationDate && today <= finalDate;
 const aboutItems = [
   {
     title: 'Kết nối',
@@ -426,11 +438,46 @@ function LandingPage() {
   Hành trình chào mừng <br className="hidden sm:block" />
   Tân Sinh Viên khóa 2026
 </h2>
-
-      <p className="mx-auto mt-6 max-w-[680px] text-base font-medium leading-relaxed text-[#023e8a]/90 md:text-lg">
-        Khám phá khu đô thị ĐHQG-HCM
-      </p>
     </Reveal>
+<div className="mx-auto mt-6 flex w-full justify-center">
+  <div className="inline-flex items-center gap-5 rounded-full border border-[#FFD166]/40 bg-[#032b43]/70 px-8 py-4 shadow-xl backdrop-blur-md">
+
+    {/* Vòng loại */}
+    <span className="flex items-center gap-2.5 text-base font-semibold text-white md:text-lg">
+      <span
+        className={`inline-block h-3 w-3 rounded-full ${
+          isQualificationActive
+            ? "bg-[#00B4D8] animate-pulse shadow-[0_0_12px_rgba(0,180,216,0.9)]"
+            : "bg-white/30"
+        }`}
+      ></span>
+
+      Vòng loại:
+      <strong className="font-bold text-[#FFD166] text-lg md:text-xl">
+        20/9
+      </strong>
+    </span>
+
+    <span className="text-lg text-[#FFD166]/40">|</span>
+
+    {/* Vòng chung kết */}
+    <span className="flex items-center gap-2.5 text-base font-semibold text-white md:text-lg">
+      <span
+        className={`inline-block h-3 w-3 rounded-full ${
+          isFinalActive
+            ? "bg-[#00B4D8] animate-pulse shadow-[0_0_12px_rgba(0,180,216,0.9)]"
+            : "bg-white/30"
+        }`}
+      ></span>
+
+      Vòng chung kết:
+      <strong className="font-bold text-[#FFD166] text-lg md:text-xl">
+        27/9
+      </strong>
+    </span>
+
+  </div>
+</div>
 
 {/* NỘI DUNG CARD KÍNH MỜ (GLASSMORPHISM) + HOVER GLOW */}
 <div className="mt-12 grid gap-8 md:grid-cols-2 lg:grid-cols-3 lg:mt-16 lg:gap-8">
