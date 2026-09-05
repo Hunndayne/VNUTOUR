@@ -10,6 +10,6 @@ resources:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: fcae181
+  newTag: 96d0bff
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: fcae181
+  newTag: 96d0bff
