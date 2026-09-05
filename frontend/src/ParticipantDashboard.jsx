@@ -1469,6 +1469,31 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   )
 }
 
+// A member's MSSV is their identity, so the roster must never show the same one
+// twice. The server never returns duplicates, but an optimistic update or two
+// overlapping loads briefly could — dedupe defensively so the UI can't flash a
+// doubled row. Keep a captain entry over a plain one when both share an MSSV.
+function dedupeMembersByMssv(list) {
+  if (!Array.isArray(list)) return []
+  const byMssv = new Map()
+  const order = []
+  for (const member of list) {
+    const key = String(member?.mssv || '').trim().toLowerCase()
+    if (!key) {
+      order.push(member)
+      continue
+    }
+    const existing = byMssv.get(key)
+    if (!existing) {
+      byMssv.set(key, member)
+      order.push(key)
+    } else if (member?.is_captain && !existing.is_captain) {
+      byMssv.set(key, member)
+    }
+  }
+  return order.map((item) => (typeof item === 'string' ? byMssv.get(item) : item))
+}
+
 function ParticipantDashboard() {
   const [user, setUser] = useState(() => getStoredUser() || {
     username: 'participant',
@@ -1540,7 +1565,7 @@ function ParticipantDashboard() {
     setTeamNameDraft(
       normalizedTeam && !normalizedTeam.name_is_placeholder ? normalizedTeam.team_name : '',
     )
-    setMembers(Array.isArray(teamPayload?.members) ? teamPayload.members : [])
+    setMembers(dedupeMembersByMssv(teamPayload?.members))
     setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
     setRegistrationSchema(schemaPayload)
     setExperience(experiencePayload)
@@ -1582,6 +1607,31 @@ function ParticipantDashboard() {
     bootstrap()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // A member can be pulled into another team by that team's captain, which
+  // silently shrinks this roster on the server. There's no realtime channel, so
+  // refetch whenever the tab regains focus — the stale roster then self-corrects
+  // the moment the user looks at it again, without flashing the page loader.
+  const reloadingRef = useRef(false)
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible' || reloadingRef.current) return
+      reloadingRef.current = true
+      loadDashboard()
+        .catch((error) => {
+          if (error?.status === 401) logoutAndRedirect('/')
+        })
+        .finally(() => {
+          reloadingRef.current = false
+        })
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
     }
   }, [])
 
