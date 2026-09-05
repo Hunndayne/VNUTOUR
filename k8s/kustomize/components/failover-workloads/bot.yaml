@@ -1,0 +1,60 @@
+# Adapted from k8s/07.bot.yaml: same singleton, same image/env/command, but
+# baselined at replicas: 0. The site-activator owns the actual replica count
+# (scales to 1 on the site holding the DB leader, 0 elsewhere) -- never add an
+# HPA here, and never hand-edit replicas in this file; it will just get
+# overwritten by the next activator loop tick.
+#
+# On homelab this ADOPTS the currently-imperative `bot` Deployment. ArgoCD
+# prune is off on prod, so bringing it under GitOps here does not delete
+# anything -- it briefly scales to 0 (until the activator scales it back to 1
+# on its next tick, since homelab holds the DB leader today).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot
+spec:
+  replicas: 0
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: bot
+
+  template:
+    metadata:
+      labels:
+        app: bot
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: bot
+          image: ghcr.io/hunndayne/vnutour-backend:latest
+
+          command:
+            - python
+            - main.py
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          env:
+            - name: DJANGO_AUTOSTART
+              value: "0"
+
+            - name: RUN_DISCORD_BOT
+              value: "1"
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

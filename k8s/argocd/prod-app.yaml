@@ -1,0 +1,67 @@
+# =============================================================================
+# Zone 1 (homelab) prod Application.
+#
+# Model B hub: this ArgoCD runs on Zone 2 (Linode) and manages the homelab
+# cluster over the WireGuard mesh (destination.server below; the cluster is
+# registered as zone1-homelab).
+#
+# Scope = APP TIER ONLY (postgres + backend + frontend + ingress + migrate),
+# with prune DISABLED. ArgoCD keeps backend/frontend on the tag in
+# components/images (the same tag Zone 2 runs, so the two zones stay in sync),
+# and never deletes anything it does not own. The Discord bot, email-worker,
+# monitoring (11-15) and backup CronJob stay OUTSIDE GitOps for now — they keep
+# running as deployed and are handed to a later automation phase. With prune off
+# ArgoCD will not touch or remove them.
+#
+# selfHeal is on so out-of-band kubectl drift on the app tier is reverted; prune
+# is off so nothing gets deleted. PVCs/StatefulSet also carry Prune=false
+# (components/prod-config) as a second line of defence.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vnutour-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Hunndayne/VNUTOUR.git
+    targetRevision: main
+    path: k8s/kustomize/overlays/prod
+
+  destination:
+    server: https://192.168.1.110:6443   # homelab k3s API over the wg mesh (registered as zone1-homelab)
+    namespace: vnutour
+
+  # The StatefulSet's volumeClaimTemplates get server-defaulted fields
+  # (apiVersion/kind/status/volumeMode) that ArgoCD does not normalize, leaving
+  # postgres-ha permanently OutOfSync though `kubectl diff` is clean. Ignore that
+  # subtree so a Healthy DB reports Synced; VCTs are immutable anyway.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: postgres-ha
+      jsonPointers:
+        - /spec/volumeClaimTemplates
+    # bot / email-worker are singletons scaled 0<->1 by the site-activator
+    # controller off the DB leader; ArgoCD must not fight it via selfHeal.
+    - group: apps
+      kind: Deployment
+      name: bot
+      jsonPointers:
+        - /spec/replicas
+    - group: apps
+      kind: Deployment
+      name: email-worker
+      jsonPointers:
+        - /spec/replicas
+
+  syncPolicy:
+    automated:
+      prune: false     # app-tier only; never delete the imperative bot/email/monitoring/backup
+      selfHeal: true   # revert out-of-band drift on the resources ArgoCD owns
+    syncOptions:
+      - ServerSideApply=true

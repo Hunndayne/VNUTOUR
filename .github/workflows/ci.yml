@@ -111,10 +111,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Update the Kustomize overlay with the new image SHA so ArgoCD picks it up.
+  # Update the Kustomize image tag with the new SHA so ArgoCD picks it up.
+  # staging -> overlays/staging/kustomization.yaml (staging cluster only).
+  # main    -> components/images/kustomization.yaml, the SINGLE source shared by
+  #            overlays/prod (Zone 1 homelab) and overlays/prod-standby (Zone 2
+  #            Linode) — one bump keeps both prod zones on the same version.
+  # Commits back to the SAME branch with [skip ci] so it does not re-trigger.
+  # NOTE: on main this pushes a bot commit to main; main must allow
+  # github-actions[bot] to push (branch protection). If main is protected against
+  # direct pushes, point the prod Applications at a dedicated `deploy` branch and
+  # push there instead.
   update-manifest:
     needs: [build-push]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write # needed to push the manifest commit back to the repo
@@ -122,7 +131,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: staging
+          ref: ${{ github.ref_name }}
 
       - name: Compute short SHA
         id: meta
@@ -138,10 +147,19 @@ jobs:
           chmod +x /usr/local/bin/kustomize
           kustomize version
 
+      - name: Pick target directory
+        id: target
+        run: |
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            echo "dir=k8s/kustomize/overlays/staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=k8s/kustomize/components/images" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Update Kustomize image tags
         run: |
           SHA="${{ steps.meta.outputs.sha }}"
-          cd k8s/kustomize/overlays/staging
+          cd "${{ steps.target.outputs.dir }}"
           kustomize edit set image \
             ghcr.io/hunndayne/vnutour-backend:${SHA} \
             ghcr.io/hunndayne/vnutour-frontend:${SHA}
@@ -150,8 +168,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add k8s/kustomize/overlays/staging/kustomization.yaml
+          git add "${{ steps.target.outputs.dir }}/kustomization.yaml"
           # Skip commit if nothing changed (e.g. re-run on same SHA)
           git diff --cached --quiet && echo "No changes to commit" && exit 0
-          git commit -m "ci: update staging image tags to ${{ steps.meta.outputs.sha }} [skip ci]"
-          git push origin staging
+          git commit -m "ci: update ${{ github.ref_name }} image tags to ${{ steps.meta.outputs.sha }} [skip ci]"
+          git push origin "${{ github.ref_name }}"

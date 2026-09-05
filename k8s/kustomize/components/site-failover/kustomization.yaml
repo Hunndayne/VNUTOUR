@@ -1,0 +1,55 @@
+# Component: site-activator control loop (RBAC + script + Deployment).
+#
+# Prerequisites before enabling this component in an overlay:
+#   1. postgres-ha (Patroni HA StatefulSet + headless Service on :8008) must
+#      already be running in the cluster -- see components/db-patroni.
+#   2. Secret `cf-dns-secret` must be created OUT-OF-BAND (not by GitOps) in
+#      the `vnutour` namespace, with keys:
+#        CF_API_TOKEN  -- Cloudflare API token, Zone.DNS:Edit scope on hunn.io.vn
+#        CF_ZONE_ID    -- the hunn.io.vn zone id
+#   3. The overlay including this component must ALSO patch the Deployment
+#      `site-activator`, container `site-activator`, adding the per-site env:
+#        SITE                -- "homelab" or "linode"
+#        MEMBER_NAME          -- this site's Patroni member name (only the
+#                                 homelab site uses it, for failback)
+#        DNS_TARGET_TYPE      -- "CNAME" (homelab) or "A" (linode)
+#        DNS_TARGET_CONTENT   -- "vpn.hunn.io.vn" (homelab) or the Linode
+#                                 static IP (linode)
+#        FAILBACK_STABILIZE   -- homelab only; seconds of healthy-replica
+#                                 state required before it reclaims leadership
+#      Example (strategic-merge, in the overlay's `patches:` list):
+#        - patch: |-
+#            apiVersion: apps/v1
+#            kind: Deployment
+#            metadata:
+#              name: site-activator
+#            spec:
+#              template:
+#                spec:
+#                  containers:
+#                    - name: site-activator
+#                      env:
+#                        - name: SITE
+#                          value: "homelab"
+#                        - name: MEMBER_NAME
+#                          value: "vnutour-w1"
+#                        - name: DNS_TARGET_TYPE
+#                          value: "CNAME"
+#                        - name: DNS_TARGET_CONTENT
+#                          value: "vpn.hunn.io.vn"
+#                        - name: FAILBACK_STABILIZE
+#                          value: "300"
+#          target:
+#            kind: Deployment
+#            name: site-activator
+#
+# Only the site holding the DB leader writes DNS and scales bot/email-worker
+# up; see components/failover-workloads for the replicas:0 baseline those
+# singletons need in every overlay that includes this component.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - rbac.yaml
+  - script.yaml
+  - deployment.yaml

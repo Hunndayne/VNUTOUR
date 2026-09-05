@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# SINGLE SOURCE OF THE PROD APP VERSION.
+#
+# Both prod overlays (overlays/prod = homelab Zone 1, overlays/prod-standby =
+# Linode Zone 2) include this component, so whatever tag is set here is the
+# tag deployed to BOTH zones. That is what keeps Zone 1 and Zone 2 on the same
+# application version — there is exactly one place to change it.
+#
+# CI updates newTag after a successful image push (do NOT edit by hand once CI
+# is wired). Until then it tracks `latest`.
+images:
+- name: ghcr.io/hunndayne/vnutour-backend
+  newTag: b06fb60
+- name: ghcr.io/hunndayne/vnutour-frontend
+  newTag: b06fb60

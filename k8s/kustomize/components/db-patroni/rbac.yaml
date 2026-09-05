@@ -1,0 +1,42 @@
+# RBAC for Spilo/Patroni. Even with an external etcd DCS, Spilo still runs its
+# k8s callbacks (labels the pod spilo-role=master/replica and updates a service
+# endpoint). Without these permissions it logs 403s on every role change. Our
+# traffic routing is HAProxy + Patroni REST, so the labels are cosmetic — but
+# granting the standard minimal RBAC keeps the logs clean and lets tooling that
+# reads spilo-role work.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: patroni
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: patroni
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "patch", "update", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "patch", "update", "create", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "patch", "update", "watch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: patroni
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: patroni
+subjects:
+  - kind: ServiceAccount
+    name: patroni

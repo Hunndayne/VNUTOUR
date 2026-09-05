@@ -1,0 +1,88 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# PROD STANDBY — Zone 2 (Linode), namespace vnutour, warm copy of the app tier.
+#
+# App-tier only, plus the bot/email-worker singletons at replicas: 0 via
+# components/failover-workloads — site-activator (components/site-failover)
+# scales them to 1 here only while Linode holds the DB leader. Running a
+# second bot with the same token concurrently would open a duplicate gateway
+# session and every slash command would fire twice, so the replicas:0
+# baseline + activator is load-bearing, not decorative. The standby exists to
+# hold the SAME application version as Zone 1 (via the shared
+# components/images) and to be promotable after a DB restore. NO backup
+# CronJob here.
+#
+# It shares components/prod-config and components/images with overlays/prod, so
+# the backend/frontend image tag here is always identical to Zone 1's.
+#
+# db-patroni here = the Linode REPLICA member of the vnutour-pg cluster. The
+# inline patch flips the homelab-primary defaults to advertise the Linode mesh
+# IP 10.88.0.2 and a distinct member name. It streams async from the homelab
+# primary and is promotable on failover. Prereqs: etcd 3-site up, the Linode
+# node labelled vnutour/storage=true, Secret patroni-secret present (identical
+# to homelab). The patch is inline (not a file path) on purpose — kustomize's
+# load-restrictor forbids a patch file outside the overlay dir.
+namespace: vnutour
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/prod-config
+  - ../../components/images
+  - ../../components/db-patroni
+  - ../../components/failover-workloads
+  - ../../components/site-failover
+
+patches:
+  # A replica must NOT run Django migrations — it is read-only and receives all
+  # schema/data by streaming from the primary. The base ships vnutour-migrate as
+  # a PreSync hook; on the standby it can never reach a writable DB, so it hangs
+  # the whole sync (postgres-ha never gets applied). Drop it here. The homelab
+  # primary keeps it (that is where migrations run).
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: vnutour-migrate
+        namespace: vnutour-staging
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres-ha
+      spec:
+        template:
+          spec:
+            containers:
+              - name: patroni
+                env:
+                  # Spilo advertises from POD_IP (ignores PATRONI_*_CONNECT_ADDRESS).
+                  # The Linode node hostname is "localhost" -> resolves to ::1, so
+                  # POD_IP must be pinned to the mesh IP or failover to Linode breaks.
+                  - name: POD_IP
+                    value: "10.88.0.2"
+  # site-activator per-site knobs: this is the LINODE site. It never performs
+  # auto-failback (that's homelab-only), so no MEMBER_NAME/FAILBACK_STABILIZE
+  # are needed here.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: site-activator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: site-activator
+                env:
+                  - name: SITE
+                    value: "linode"
+                  - name: MEMBER_NAME
+                    value: "localhost"
+                  - name: DNS_TARGET_TYPE
+                    value: "A"
+                  - name: DNS_TARGET_CONTENT
+                    value: "172.104.186.118"

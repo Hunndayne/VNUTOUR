@@ -1,6 +1,25 @@
-# Staging Postgres - own StatefulSet + PVC, fully isolated from the prod database
-# in the vnutour namespace. Trimmed vs prod: no postgres-exporter sidecar and no
-# prometheus annotations (staging has no monitoring stack).
+# Plain single-node Postgres engine for STAGING only.
+#
+# Moved out of base/ so prod & prod-standby can swap in a Patroni-managed HA
+# engine (components/db-patroni) without carrying this simple StatefulSet. Prod's
+# live database is intentionally NOT managed by GitOps (see the DB HA runbook /
+# Phase 0.5) — it runs on external Patroni + etcd. Staging stays disposable and
+# fine on this single pod.
+#
+# Trimmed vs prod: no postgres-exporter sidecar, no prometheus annotations.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: vnutour-staging
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
 apiVersion: v1
 kind: Service
 metadata:

@@ -6,6 +6,11 @@ namespace: vnutour-staging
 resources:
 - ../../base
 
+components:
+  # Staging keeps a plain single-node Postgres (moved out of base). Prod and the
+  # Linode standby do NOT include this — their DB is external Patroni HA.
+  - ../../components/db-simple
+
 # Image tags are updated automatically by the CI pipeline after a successful
 # image push to GHCR. Do NOT edit newTag manually.
 images:

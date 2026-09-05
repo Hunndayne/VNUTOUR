@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Patroni + HAProxy HA Postgres engine for PROD. Included by overlays/prod
+# (homelab primary, defaults as-is) and overlays/prod-standby (Linode replica,
+# which ALSO applies linode-patch.yaml to flip the member name + advertised IP).
+#
+# NOT wired into the overlays yet — the external 3-site etcd must exist first, or
+# these pods crash-loop on the DCS. Wire in at bring-up (DB HA runbook Phase 2):
+#   overlays/prod:         components: [ ..., ../../components/db-patroni ]
+#   overlays/prod-standby: components: [ ..., ../../components/db-patroni ]
+# and flip DB_HOST postgres -> pg-primary in components/prod-config.
+#
+# For the Linode member, apply linode-patch.yaml's changes from the standby
+# overlay. Kustomize's load-restrictor forbids a `patches: path:` pointing OUTSIDE
+# the overlay dir (../../components/...), so DO NOT reference this file by path
+# from the overlay — instead either copy linode-patch.yaml into
+# overlays/prod-standby/ and reference it locally, or inline it:
+#   patches:
+#     - target: { kind: StatefulSet, name: postgres-ha }
+#       patch: |-
+#         - { op: replace, path: /spec/template/spec/containers/0/env/2/value, value: linode }
+#   (simplest: keep the strategic-merge copy local to the overlay).
+#
+# Needs a Secret `patroni-secret` (keys: superuser-password, replication-password)
+# created out-of-band per cluster, same as backend-secret.
+resources:
+  - rbac.yaml
+  - patroni-statefulset.yaml
+  - haproxy.yaml

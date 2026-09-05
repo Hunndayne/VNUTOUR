@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# PROD — Zone 1 (homelab), namespace vnutour, host vnutour.suctremmt.com.
+#
+# NOTE: renders the APP TIER + the Patroni HA database engine (db-patroni) as
+# the HOMELAB PRIMARY member. The live homelab prod also runs the Discord bot,
+# email-worker, monitoring (11-15) and the backup CronJob (16). Those are NOT
+# here yet, so DO NOT point an auto-sync/prune ArgoCD Application at the homelab
+# cluster from this overlay — it would prune those workloads. Port them into a
+# homelab-only component first (see k8s/argocd/prod-app.yaml).
+#
+# db-patroni prerequisites (DB HA runbook): external 3-site etcd up, node
+# vnutour-w1 labelled vnutour/storage=true, Secret patroni-secret present. The
+# member advertises 192.168.1.111 (the db-patroni default = homelab primary).
+namespace: vnutour
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/prod-config
+  - ../../components/images
+  - ../../components/db-patroni
+  - ../../components/failover-workloads
+  - ../../components/site-failover
+
+# site-activator per-site knobs: this is the HOMELAB site, and the site that
+# performs auto-failback. See components/site-failover/kustomization.yaml for
+# the full prereqs (postgres-ha, Secret cf-dns-secret out-of-band).
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: site-activator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: site-activator
+                env:
+                  - name: SITE
+                    value: "homelab"
+                  - name: MEMBER_NAME
+                    value: "vnutour-w1"
+                  - name: DNS_TARGET_TYPE
+                    value: "CNAME"
+                  - name: DNS_TARGET_CONTENT
+                    value: "vpn.hunn.io.vn"
+                  - name: FAILBACK_STABILIZE
+                    value: "300"
