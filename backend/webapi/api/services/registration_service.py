@@ -238,6 +238,10 @@ def _validate_person(schema: dict, data: dict, who: str) -> Tuple[dict, dict, Op
         key = f["key"]
         raw = data.get(key)
         value = raw.strip() if isinstance(raw, str) else raw
+        if key == "mssv" and isinstance(value, str):
+            value = value.upper()
+        elif key == "email" and isinstance(value, str):
+            value = value.lower()
         # A field hidden by a conditional is not required from the user.
         if f.get("required") and not value and not _is_hidden(f, data):
             return {}, {}, f"missing:{who}:{key}"
@@ -428,8 +432,8 @@ def lookup_participant(mssv: str, email: str) -> dict:
       {"status": "email_mismatch"}
       {"status": "match", "full_name", "school", "faculty"}
     """
-    mssv = (mssv or "").strip()
-    email = (email or "").strip()
+    mssv = (mssv or "").strip().upper()
+    email = (email or "").strip().lower()
     if not mssv:
         return {"status": "not_found"}
 
@@ -451,7 +455,7 @@ def lookup_participant(mssv: str, email: str) -> dict:
 
 def validate_account_mssv_claim(account: Account, mssv: str) -> Optional[str]:
     """Return an error code if an account is not allowed to claim this MSSV."""
-    mssv = (mssv or "").strip()
+    mssv = (mssv or "").strip().upper()
     if not account or not mssv:
         return None
 

@@ -5,7 +5,7 @@ export function normalizeUrl(url = '') {
 }
 
 export function renderInlineMarkdown(text, keyPrefix = 'md') {
-  const pattern = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g
+  const pattern = /(!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g
   const nodes = []
   let cursor = 0
   let match
@@ -15,8 +15,20 @@ export function renderInlineMarkdown(text, keyPrefix = 'md') {
       nodes.push(text.slice(cursor, match.index))
     }
 
-    if (match[2]) {
-      const href = normalizeUrl(match[3])
+    if (match[0].startsWith('![')) {
+      const alt = match[2] || ''
+      const src = match[3]
+      nodes.push(
+        <img
+          key={`${keyPrefix}-${nodes.length}`}
+          src={src}
+          alt={alt}
+          className="inline-block max-h-64 rounded border border-stone"
+          loading="lazy"
+        />,
+      )
+    } else if (match[4]) {
+      const href = normalizeUrl(match[5])
       if (href) {
         nodes.push(
           <a
@@ -26,25 +38,25 @@ export function renderInlineMarkdown(text, keyPrefix = 'md') {
             rel="noreferrer"
             className="font-medium text-[#3E7CA8] underline underline-offset-2 hover:opacity-80"
           >
-            {match[2]}
+            {match[4]}
           </a>,
         )
       } else {
-        nodes.push(match[2])
+        nodes.push(match[4])
       }
-    } else if (match[4]) {
-      nodes.push(<strong key={`${keyPrefix}-${nodes.length}`} className="font-semibold text-ink">{match[4]}</strong>)
-    } else if (match[5]) {
+    } else if (match[6]) {
+      nodes.push(<strong key={`${keyPrefix}-${nodes.length}`} className="font-semibold text-ink">{match[6]}</strong>)
+    } else if (match[7]) {
       nodes.push(
         <code
           key={`${keyPrefix}-${nodes.length}`}
           className="rounded bg-ink/[0.06] px-1.5 py-0.5 font-mono text-[0.92em] text-ink"
         >
-          {match[5]}
+          {match[7]}
         </code>,
       )
-    } else if (match[6]) {
-      nodes.push(<em key={`${keyPrefix}-${nodes.length}`} className="italic text-ink">{match[6]}</em>)
+    } else if (match[8]) {
+      nodes.push(<em key={`${keyPrefix}-${nodes.length}`} className="italic text-ink">{match[8]}</em>)
     }
 
     cursor = pattern.lastIndex
@@ -62,6 +74,7 @@ export function stripMarkdown(markdown = '') {
     .replace(/\r\n/g, '\n')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
     .replace(/^>\s?/gm, '')
     .replace(/^#{1,6}\s+/gm, '')

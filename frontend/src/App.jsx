@@ -7,6 +7,7 @@ import FormResponses from './FormResponses.jsx'
 import CoopDashboard from './CoopDashboard.jsx'
 import FramePage from './FramePage.jsx'
 import StationRunPage from './StationRunPage.jsx'
+import FeedPage from './FeedPage.jsx'
 import TaiTro from './tai-tro.jsx'
 import ForgotPasswordPage from './ForgotPasswordPage.jsx'
 import ResetPasswordPage from './ResetPasswordPage.jsx'
@@ -23,6 +24,7 @@ const ROUTES = {
   '/participant': { render: () => <ParticipantDashboard />, allows: (role) => role === 'participant' },
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
   '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
+  '/feed': { render: () => <FeedPage />, allows: (role) => role === 'participant' },
 }
 
 // Paths that used to exist, kept alive so old links and bookmarks still land

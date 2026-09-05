@@ -32,6 +32,12 @@ export async function listPublicFrames() {
   return data?.frames || []
 }
 
+/** Get a single active public frame by ID. */
+export async function getPublicFrame(frameId) {
+  const data = await apiRequest(`/public/frames/${frameId}`, { auth: false })
+  return data?.frame || null
+}
+
 /**
  * Record one successful compose + download. Best-effort telemetry — it must
  * never block or fail the user's download, so it swallows errors.

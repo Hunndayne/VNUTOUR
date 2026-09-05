@@ -11,7 +11,7 @@ import json
 
 from django.test import TestCase
 
-from api.models import Account, SystemSetting, Participant
+from api.models import Account, SystemSetting, Participant, Team, TeamMembership
 from api.services.auth_service import generate_session
 from api.services.team_service import (
     registration_is_open, set_registration_open,
@@ -39,13 +39,19 @@ class PublicSiteConfigViewTests(TestCase):
         self.assertIn("antibot", response.json())
 
     def test_get_reflects_registration_full(self):
+        # Only members of a submitted team count toward the cap.
         set_max_registrations(2)
-        Participant.objects.create(mssv="SV901", full_name="One")
+        team = Team.objects.create(
+            code="RT1", name="T", approval_status=Team.APPROVAL_PENDING,
+        )
+        p1 = Participant.objects.create(mssv="SV901", full_name="One")
+        TeamMembership.objects.create(team=team, participant=p1)
         response = self.client.get("/api/public/site-config")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["registration_full"])
 
-        Participant.objects.create(mssv="SV902", full_name="Two")
+        p2 = Participant.objects.create(mssv="SV902", full_name="Two")
+        TeamMembership.objects.create(team=team, participant=p2)
         response2 = self.client.get("/api/public/site-config")
         self.assertEqual(response2.status_code, 200)
         self.assertTrue(response2.json()["registration_full"])

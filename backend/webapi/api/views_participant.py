@@ -24,7 +24,7 @@ from api.services.checkin_qr_service import team_qr_visible
 
 from api.services.station_service import set_submission_score, replay_lock_reason
 from api.services.submission_storage_service import (
-    save_submission_files, save_payment_proof, proof_file_response,
+    delete_stored_object, save_submission_files, save_payment_proof, proof_file_response,
 )
 from api.services.payment_service import build_payment_info
 from api.services.timo_service import confirm_team_payment_via_timo, is_timo_configured
@@ -44,9 +44,16 @@ from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
     link_account_profile, ensure_default_phase_roster_for_team, registration_is_open,
-    profile_is_account_owned_by_other,
+    profile_is_account_owned_by_other, draft_membership_move_error,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
+
+
+class _TeamCreationAborted(Exception):
+    def __init__(self, code: str, status: int = 409):
+        super().__init__(code)
+        self.code = code
+        self.status = status
 
 
 def _registration_mismatch_response(account: Account, mssv: str) -> JsonResponse:
@@ -88,8 +95,8 @@ def _registration_mismatch_response(account: Account, mssv: str) -> JsonResponse
 def _prepare_member_submission(data: dict, who: str):
     """Merge trusted existing profile data before validating a team member form."""
     payload = dict(data or {})
-    mssv = str((payload.get("mssv") or "").strip())
-    email = str((payload.get("email") or "").strip())
+    mssv = str((payload.get("mssv") or "").strip()).upper()
+    email = str((payload.get("email") or "").strip()).lower()
     if not mssv:
         return {}, {}, "missing:%s:mssv" % who
     if not email:
@@ -122,7 +129,7 @@ def _prepare_member_submission(data: dict, who: str):
     return validate_person_submission(payload, who)
 
 
-def _member_resolution(data: dict):
+def _member_resolution(data: dict, team: Team | None = None):
     payload = dict(data or {})
     mssv = str((payload.get("mssv") or "").strip())
     email = str((payload.get("email") or "").strip())
@@ -130,6 +137,8 @@ def _member_resolution(data: dict):
         return None, "missing:member:mssv"
     if not email:
         return None, "missing:member:email"
+    payload["mssv"] = mssv
+    payload["email"] = email
 
     # Block if this MSSV is already in a submitted (pending/approved) team
     submitted_member = TeamMembership.objects.filter(
@@ -138,6 +147,17 @@ def _member_resolution(data: dict):
     ).select_related("team").first()
     if submitted_member:
         return None, "mssv_in_submitted_team"
+
+    # Mirror add_member's transfer rule so the captain sees the conflict while
+    # typing. Only the participant's auto-created solo draft may be dissolved;
+    # every real roster requires an explicit leave/transfer.
+    b_membership = TeamMembership.objects.filter(
+        participant__mssv=mssv,
+    ).select_related("team", "team__owner_account").first()
+    if b_membership and (team is None or b_membership.team_id != team.id):
+        move_error = draft_membership_move_error(b_membership, mssv)
+        if move_error:
+            return None, move_error
 
     account = Account.objects.filter(mssv=mssv, is_active=True).first()
     participant = Participant.objects.filter(mssv=mssv).first()
@@ -482,7 +502,7 @@ def me_profile_view(request: HttpRequest):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
-        mssv = str((data.get("mssv") or acc.mssv or "").strip())
+        mssv = str((data.get("mssv") or acc.mssv or "").strip()).upper()
         if not mssv:
             return JsonResponse({"error": "missing_mssv"}, status=400)
 
@@ -625,13 +645,6 @@ def my_team_view(request: HttpRequest):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
         name = str((data.get("team_name") or data.get("name") or "").strip())
-        # Check participant doesn't already own a team via membership
-        existing = TeamMembership.objects.filter(
-            participant__mssv=acc.mssv,
-        ).first()
-        if existing:
-            return JsonResponse({"error": "already_has_team", "team_code": existing.team.code}, status=409)
-
         # Creation stays unnamed: the dashboard flow enters members first and
         # names the team on its team step, via the PATCH below.
         if name:
@@ -639,23 +652,52 @@ def my_team_view(request: HttpRequest):
                 {"error": "team_created_unnamed"},
                 status=409,
             )
-        team, err = create_team(_placeholder_team_name(acc.mssv), owner_account=acc)
-        if err:
-            return JsonResponse({"error": err}, status=400)
+        try:
+            with transaction.atomic():
+                # Serialise duplicate create requests for the same account and
+                # repeat every precondition under that lock. Team creation and
+                # captain attachment either both commit or both roll back.
+                locked_acc = Account.objects.select_for_update().get(pk=acc.pk)
+                existing = TeamMembership.objects.filter(
+                    participant__mssv=locked_acc.mssv,
+                ).select_related("team").first()
+                if existing:
+                    raise _TeamCreationAborted("already_has_team")
+                owned_team = Team.objects.select_for_update().filter(
+                    owner_account=locked_acc,
+                ).first()
+                if owned_team:
+                    raise _TeamCreationAborted("already_has_team")
 
-        # Add creator as member + captain, then link the profile to the account
-        add_member(
-            team,
-            acc.mssv,
-            full_name=acc.full_name,
-            email=acc.email,
-            phone=acc.phone,
-            faculty=acc.faculty,
-            school=acc.school,
-            is_captain=True,
-            actor=acc,
-        )
-        link_account_profile(acc)
+                team, create_error = create_team(
+                    _placeholder_team_name(locked_acc.mssv),
+                    owner_account=locked_acc,
+                )
+                if create_error:
+                    raise _TeamCreationAborted(create_error, status=400)
+
+                participant, attach_error = add_member(
+                    team,
+                    locked_acc.mssv,
+                    full_name=locked_acc.full_name,
+                    email=locked_acc.email,
+                    phone=locked_acc.phone,
+                    faculty=locked_acc.faculty,
+                    school=locked_acc.school,
+                    is_captain=True,
+                    actor=locked_acc,
+                )
+                if attach_error or participant is None:
+                    raise _TeamCreationAborted(attach_error or "captain_attach_failed")
+                link_account_profile(locked_acc)
+        except _TeamCreationAborted as exc:
+            payload = {"error": exc.code}
+            existing = TeamMembership.objects.filter(
+                participant__mssv=acc.mssv,
+            ).select_related("team").first()
+            if existing:
+                payload["team_code"] = existing.team.code
+            return JsonResponse(payload, status=exc.status)
 
         return JsonResponse({
             "code": team.code,
@@ -784,11 +826,13 @@ def my_team_payment_confirm_auto_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    if not team.roster_locked_at:
-        return JsonResponse({"error": "roster_not_locked"}, status=409)
-
-    result = confirm_team_payment_via_timo(team)
+    # Serialize confirmation with cancellation. Both operations query the same
+    # payment source and must not commit opposite outcomes for one roster.
+    with transaction.atomic():
+        team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if not team.roster_locked_at:
+            return JsonResponse({"error": "roster_not_locked"}, status=409)
+        result = confirm_team_payment_via_timo(team)
     return JsonResponse({
         "status": result.status,
         "message": result.message,
@@ -798,8 +842,7 @@ def my_team_payment_confirm_auto_view(request: HttpRequest):
 
 @csrf_exempt
 def my_team_payment_cancel_view(request: HttpRequest):
-    """POST: captain cancels payment — unlocks the roster so members can be
-    added/removed again. Refused once payment is confirmed (final)."""
+    """POST: verify payment once, then cancel only when no transfer is found."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -812,15 +855,48 @@ def my_team_payment_cancel_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    if team.payment_confirmed_at:
-        return JsonResponse({"error": "payment_already_confirmed"}, status=409)
-    if not team.roster_locked_at:
-        return JsonResponse({"status": "ok", "roster_locked": False})
+    proof_entry = {}
+    with transaction.atomic():
+        team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if team.payment_confirmed_at:
+            return JsonResponse({"error": "payment_already_confirmed"}, status=409)
+        if not team.roster_locked_at and not team.payment_proof_file:
+            return JsonResponse({"status": "ok", "roster_locked": False, "has_proof": False})
 
-    team.roster_locked_at = None
-    team.save(update_fields=["roster_locked_at", "updated_at"])
-    return JsonResponse({"status": "ok", "roster_locked": False})
+        # Cancellation is destructive: it unlocks the priced roster and clears
+        # its receipt. Poll the authoritative payment source first. A failed or
+        # unavailable check must leave both pieces of evidence untouched.
+        check = confirm_team_payment_via_timo(team)
+        if check.status == "confirmed" or team.payment_confirmed_at:
+            if not team.payment_confirmed_at:
+                team.payment_confirmed_at = timezone.now()
+                team.save(update_fields=["payment_confirmed_at", "updated_at"])
+            return JsonResponse({
+                "error": "payment_already_confirmed",
+                "message": check.message,
+            }, status=409)
+        if check.status != "not_found":
+            error_code = (
+                "payment_check_unavailable"
+                if check.status == "not_configured"
+                else "payment_check_failed"
+            )
+            return JsonResponse({
+                "error": error_code,
+                "message": check.message,
+            }, status=503)
+
+        proof_entry = team.payment_proof_file or {}
+        team.roster_locked_at = None
+        # A receipt records the amount for the roster that was locked when it
+        # was uploaded. Unlocking lets the captain change that roster, so the
+        # receipt must be invalidated at the same time or it could approve a
+        # different headcount and amount later.
+        team.payment_proof_file = None
+        team.save(update_fields=["roster_locked_at", "payment_proof_file", "updated_at"])
+
+    delete_stored_object(proof_entry.get("storage"), proof_entry.get("key"))
+    return JsonResponse({"status": "ok", "roster_locked": False, "has_proof": False})
 
 
 PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
@@ -853,6 +929,8 @@ def my_team_payment_proof_view(request: HttpRequest):
     # every other team-editing endpoint in this file.
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
+    if not team.roster_locked_at:
+        return JsonResponse({"error": "roster_not_locked"}, status=409)
 
     uploaded = request.FILES.get("file")
     if not uploaded:
@@ -910,6 +988,8 @@ def my_team_submit_view(request: HttpRequest):
     # enabled/required flags no longer opt out of it.
     if not team.payment_proof_file:
         return JsonResponse({"error": "missing:team:payment_proof"}, status=400)
+    if not team.roster_locked_at:
+        return JsonResponse({"error": "roster_not_locked"}, status=409)
 
     for index, member in enumerate(members, start=1):
         payload = {**member, **(member.get("extra") or {})}
@@ -951,7 +1031,7 @@ def my_team_member_resolve_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    payload, error = _member_resolution(data)
+    payload, error = _member_resolution(data, team=membership.team)
     if error:
         return JsonResponse({"error": error}, status=400)
     return JsonResponse(payload)
@@ -1032,7 +1112,7 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
 
     team = membership.team
     is_captain = membership.is_captain
-    target_mssv = (mssv or "").strip()
+    target_mssv = (mssv or "").strip().upper()
 
     if request.method == "DELETE" and not is_captain:
         return JsonResponse({"error": "not_team_owner"}, status=403)
@@ -1054,7 +1134,7 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
 
         target_membership = TeamMembership.objects.filter(
             team=team,
-            participant__mssv=mssv,
+            participant__mssv=target_mssv,
         ).select_related("participant").first()
         if profile_is_account_owned_by_other(
             target_membership.participant if target_membership else None, acc
@@ -1069,13 +1149,13 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
             target_membership.participant.email if target_membership else None
         ) or data.get("email")
         columns, extra, schema_error = _prepare_member_submission(
-            {**data, "mssv": mssv, "email": locked_email}, "member"
+            {**data, "mssv": target_mssv, "email": locked_email}, "member"
         )
         if schema_error:
             return JsonResponse({"error": schema_error}, status=400)
 
         participant, err = update_member(
-            team, mssv,
+            team, target_mssv,
             full_name=columns.get("full_name"),
             email=columns.get("email"),
             phone=columns.get("phone"),
@@ -1106,10 +1186,10 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         return JsonResponse(member_payload)
 
     if request.method == "DELETE":
-        success, err = remove_member(team, mssv)
+        success, err = remove_member(team, target_mssv)
         if not success:
             return JsonResponse({"error": err}, status=404)
-        return JsonResponse({"status": "removed", "mssv": mssv})
+        return JsonResponse({"status": "removed", "mssv": target_mssv})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 

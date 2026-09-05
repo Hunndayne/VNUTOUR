@@ -34,7 +34,9 @@ export function NavLinks({ className = '' }) {
       className={`items-center gap-7 text-xs font-bold uppercase tracking-[0.08em] text-[#0c1d33] ${className}`}
     >
       {navigationItems.map(item => {
-        const isActive = item.href === '/tai-tro' && path === '/tai-tro'
+        const isActive =
+          (item.href === '/tai-tro' && path === '/tai-tro') ||
+          (item.href === '/frame' && (path === '/frame' || path.startsWith('/frame/')))
 
         return (
           <a

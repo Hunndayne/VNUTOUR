@@ -1,10 +1,13 @@
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from unittest.mock import patch
 
-from api.models import Account, Participant, Team, TeamMembership
+from api.models import Account, Participant, SystemSetting, Team, TeamMembership
+from api.services.auth_service import generate_session
 from api.services.team_service import (
     add_member,
     create_team,
+    get_current_registrations,
     get_team_members,
     link_account_profile,
 )
@@ -21,6 +24,94 @@ class TeamServiceTests(TestCase):
         self.assertEqual(team.code, "T9002")
         self.assertTrue(Team.objects.filter(code="T9002", name="New team").exists())
         self.assertEqual(next_code.call_count, 2)
+
+    def test_one_account_cannot_own_two_teams(self):
+        owner = Account.objects.create(
+            username="owner", email="owner@example.com", password_hash="x",
+            role=Account.ROLE_PARTICIPANT, mssv="SV-OWNER",
+        )
+        Team.objects.create(code="T9101", name="First", owner_account=owner)
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Team.objects.create(code="T9102", name="Second", owner_account=owner)
+
+    def test_identity_fields_are_normalized_and_case_insensitively_unique(self):
+        account = Account.objects.create(
+            username="case-owner", email=" Owner@Example.COM ", password_hash="x",
+            mssv=" acc-case ",
+        )
+        first = Participant.objects.create(
+            mssv=" sv-case ", full_name="First", email=" FIRST@Example.COM ",
+        )
+
+        self.assertEqual(account.mssv, "ACC-CASE")
+        self.assertEqual(account.email, "owner@example.com")
+        self.assertEqual(first.mssv, "SV-CASE")
+        self.assertEqual(first.email, "first@example.com")
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Account.objects.create(
+                username="case-email", email="OWNER@example.com", password_hash="x",
+                mssv="ACC-OTHER",
+            )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Account.objects.create(
+                username="case-mssv", email="case-mssv@example.com", password_hash="x",
+                mssv="acc-case",
+            )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Participant.objects.create(
+                mssv="sv-case", full_name="Duplicate", email="other@example.com",
+            )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Participant.objects.create(
+                mssv="SV-OTHER", full_name="Duplicate email", email="First@example.com",
+            )
+
+
+class TeamCreationAtomicityTests(TestCase):
+    def setUp(self):
+        SystemSetting.objects.create(key="registration_open", value=True)
+        self.account = Account.objects.create(
+            username="captain-race", email="captain-race@example.com", password_hash="x",
+            role=Account.ROLE_PARTICIPANT, mssv="RACE001", full_name="Captain Race",
+        )
+        Participant.objects.create(
+            account=self.account, mssv="RACE001", full_name="Captain Race",
+            email="captain-race@example.com",
+        )
+        self.auth = {"HTTP_AUTHORIZATION": f"Bearer {generate_session(self.account)}"}
+
+    @patch("api.views_participant.add_member", return_value=(None, "mssv_in_submitted_team"))
+    def test_create_team_rolls_back_when_captain_attach_loses_race(self, _add_member):
+        response = self.client.post(
+            "/api/my-team", data={}, content_type="application/json", **self.auth,
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "mssv_in_submitted_team")
+        self.assertFalse(Team.objects.filter(owner_account=self.account).exists())
+
+
+class AdminTeamCreationOwnershipTests(TestCase):
+    def test_admin_can_create_multiple_unassigned_teams(self):
+        admin = Account.objects.create(
+            username="team-admin", email="team-admin@example.com", password_hash="x",
+            role=Account.ROLE_ADMIN,
+        )
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {generate_session(admin)}"}
+
+        first = self.client.post(
+            "/api/teams", data={"name": "Admin team 1"},
+            content_type="application/json", **auth,
+        )
+        second = self.client.post(
+            "/api/teams", data={"name": "Admin team 2"},
+            content_type="application/json", **auth,
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(Team.objects.filter(owner_account__isnull=True).count(), 2)
 
     def test_get_team_members_syncs_active_account_profile(self):
         account = Account.objects.create(
@@ -312,3 +403,232 @@ class AddMemberDuplicateTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(participant.mssv, "23520000")
+
+
+class AddMemberDraftMoveTests(TestCase):
+    """Only an auto-created solo draft shell may be dissolved automatically.
+
+    A real team, a rejected team, or a team where the person is a plain member
+    requires an explicit leave/transfer instead of silently moving the member.
+    """
+
+    def _account(self, mssv, name, email):
+        return Account.objects.create(
+            username=mssv, email=email, password_hash="x",
+            role=Account.ROLE_PARTICIPANT, mssv=mssv, full_name=name,
+        )
+
+    def _team_with_captain(self, code, captain):
+        team, _ = create_team(f"Pending team {captain.mssv}", owner_account=captain)
+        add_member(
+            team, captain.mssv, full_name=captain.full_name,
+            email=captain.email, is_captain=True, actor=captain,
+        )
+        return team
+
+    def test_move_solo_draft_member_dissolves_old_team(self):
+        a_cap = self._account("23520001", "Captain A", "23520001@x.com")
+        team_a = self._team_with_captain("A1", a_cap)
+        b_cap = self._account("23520002", "Bee", "23520002@x.com")
+        team_b = self._team_with_captain("B1", b_cap)  # B: solo draft captain
+
+        participant, error = add_member(
+            team_a, "23520002", full_name="Bee",
+            email="23520002@x.com", actor=a_cap,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(participant)
+        moved = TeamMembership.objects.get(participant__mssv="23520002")
+        self.assertEqual(moved.team_id, team_a.id)
+        self.assertFalse(moved.is_captain)  # captaincy not inherited
+        self.assertFalse(Team.objects.filter(pk=team_b.pk).exists())
+
+    def test_add_captain_leading_team_with_members_is_blocked(self):
+        a_cap = self._account("23520010", "Captain A", "23520010@x.com")
+        team_a = self._team_with_captain("A2", a_cap)
+        b_cap = self._account("23520011", "Bee", "23520011@x.com")
+        team_b = self._team_with_captain("B2", b_cap)
+        add_member(  # C is a plain member of B's draft team
+            team_b, "23520012", full_name="Cee",
+            email="23520012@x.com", actor=b_cap,
+        )
+
+        participant, error = add_member(
+            team_a, "23520011", full_name="Bee",
+            email="23520011@x.com", actor=a_cap,
+        )
+
+        # B leads a team other people joined — refuse rather than silently
+        # dissolving it and kicking C out.
+        self.assertEqual(error, "mssv_leads_other_team")
+        self.assertIsNone(participant)
+        # B's team is untouched: B still captains it and C is still a member.
+        self.assertTrue(Team.objects.filter(pk=team_b.pk).exists())
+        self.assertEqual(
+            TeamMembership.objects.get(participant__mssv="23520011").team_id,
+            team_b.id,
+        )
+        self.assertTrue(
+            TeamMembership.objects.filter(
+                team=team_b, participant__mssv="23520012",
+            ).exists()
+        )
+        # A's team gained no one (just its own captain).
+        self.assertEqual(TeamMembership.objects.filter(team=team_a).count(), 1)
+
+    def test_plain_draft_member_is_not_silently_moved(self):
+        x_cap = self._account("23520020", "Ex Captain", "23520020@x.com")
+        team_x = self._team_with_captain("X3", x_cap)
+        add_member(  # B is a plain member of X's draft team
+            team_x, "23520021", full_name="Bee",
+            email="23520021@x.com", actor=x_cap,
+        )
+        a_cap = self._account("23520022", "Captain A", "23520022@x.com")
+        team_a = self._team_with_captain("A3", a_cap)
+
+        participant, error = add_member(
+            team_a, "23520021", full_name="Bee",
+            email="23520021@x.com", actor=a_cap,
+        )
+
+        self.assertIsNone(participant)
+        self.assertEqual(error, "mssv_in_other_team")
+        self.assertEqual(
+            TeamMembership.objects.get(participant__mssv="23520021").team_id,
+            team_x.id,
+        )
+        self.assertTrue(Team.objects.filter(pk=team_x.pk).exists())
+        self.assertTrue(
+            TeamMembership.objects.filter(
+                team=team_x, participant__mssv="23520020"
+            ).exists()
+        )
+
+    def test_named_solo_draft_team_is_not_dissolved(self):
+        a_cap = self._account("23520023", "Captain A", "23520023@x.com")
+        team_a = self._team_with_captain("A5", a_cap)
+        b_cap = self._account("23520024", "Bee", "23520024@x.com")
+        team_b = self._team_with_captain("B5", b_cap)
+        team_b.name = "Đội B đã đặt tên"
+        team_b.save(update_fields=["name", "updated_at"])
+
+        participant, error = add_member(
+            team_a, b_cap.mssv, full_name=b_cap.full_name,
+            email=b_cap.email, actor=a_cap,
+        )
+
+        self.assertIsNone(participant)
+        self.assertEqual(error, "mssv_in_other_team")
+        self.assertTrue(Team.objects.filter(pk=team_b.pk).exists())
+
+    def test_rejected_solo_team_is_not_dissolved(self):
+        a_cap = self._account("23520025", "Captain A", "23520025@x.com")
+        team_a = self._team_with_captain("A6", a_cap)
+        b_cap = self._account("23520026", "Bee", "23520026@x.com")
+        team_b = self._team_with_captain("B6", b_cap)
+        team_b.approval_status = Team.APPROVAL_REJECTED
+        team_b.save(update_fields=["approval_status", "updated_at"])
+
+        participant, error = add_member(
+            team_a, b_cap.mssv, full_name=b_cap.full_name,
+            email=b_cap.email, actor=a_cap,
+        )
+
+        self.assertIsNone(participant)
+        self.assertEqual(error, "mssv_in_other_team")
+        self.assertTrue(Team.objects.filter(pk=team_b.pk).exists())
+
+    def test_late_joiner_is_never_deleted_with_old_solo_team(self):
+        a_cap = self._account("23520027", "Captain A", "23520027@x.com")
+        team_a = self._team_with_captain("A7", a_cap)
+        b_cap = self._account("23520028", "Bee", "23520028@x.com")
+        team_b = self._team_with_captain("B7", b_cap)
+        original_update_or_create = TeamMembership.objects.update_or_create
+        inserted = False
+
+        def join_c_then_move_b(*args, **kwargs):
+            nonlocal inserted
+            if not inserted:
+                inserted = True
+                c = Participant.objects.create(
+                    mssv="23520029", full_name="Cee", email="23520029@x.com",
+                )
+                TeamMembership.objects.create(team=team_b, participant=c)
+            return original_update_or_create(*args, **kwargs)
+
+        with patch.object(
+            TeamMembership.objects,
+            "update_or_create",
+            side_effect=join_c_then_move_b,
+        ):
+            participant, error = add_member(
+                team_a, b_cap.mssv, full_name=b_cap.full_name,
+                email=b_cap.email, actor=a_cap,
+            )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(participant)
+        self.assertTrue(Team.objects.filter(pk=team_b.pk).exists())
+        self.assertTrue(
+            TeamMembership.objects.filter(team=team_b, participant__mssv="23520029").exists()
+        )
+
+    def test_member_in_submitted_team_is_locked(self):
+        b_cap = self._account("23520030", "Bee", "23520030@x.com")
+        team_b = self._team_with_captain("B4", b_cap)
+        Team.objects.filter(pk=team_b.pk).update(
+            approval_status=Team.APPROVAL_PENDING
+        )
+        a_cap = self._account("23520031", "Captain A", "23520031@x.com")
+        team_a = self._team_with_captain("A4", a_cap)
+
+        participant, error = add_member(
+            team_a, "23520030", full_name="Bee",
+            email="23520030@x.com", actor=a_cap,
+        )
+
+        self.assertEqual(error, "mssv_in_submitted_team")
+        self.assertIsNone(participant)
+        # B stays put, and the submitted team is untouched.
+        self.assertEqual(
+            TeamMembership.objects.get(participant__mssv="23520030").team_id,
+            team_b.id,
+        )
+        self.assertTrue(Team.objects.filter(pk=team_b.pk).exists())
+
+
+class CurrentRegistrationsCountTests(TestCase):
+    """The registration cap counts only members of submitted teams (pending/
+    approved/rejected) — never draft teams or teamless participants."""
+
+    def _member(self, team, mssv):
+        participant = Participant.objects.create(
+            mssv=mssv, full_name=mssv, email=f"{mssv}@x.com",
+        )
+        TeamMembership.objects.create(team=team, participant=participant)
+        return participant
+
+    def test_counts_only_submitted_team_members(self):
+        draft = Team.objects.create(
+            code="D1", name="Draft", approval_status=Team.APPROVAL_DRAFT,
+        )
+        pending = Team.objects.create(
+            code="P1", name="Pending", approval_status=Team.APPROVAL_PENDING,
+        )
+        approved = Team.objects.create(
+            code="A1", name="Approved", approval_status=Team.APPROVAL_APPROVED,
+        )
+        rejected = Team.objects.create(
+            code="R1", name="Rejected", approval_status=Team.APPROVAL_REJECTED,
+        )
+
+        self._member(draft, "1001")     # draft -> not counted
+        self._member(pending, "1002")   # counted
+        self._member(pending, "1003")   # counted
+        self._member(approved, "1004")  # counted
+        self._member(rejected, "1005")  # rejected still counted
+        # A participant not on any team must not count either.
+        Participant.objects.create(mssv="1006", full_name="Lone", email="1006@x.com")
+
+        self.assertEqual(get_current_registrations(), 4)

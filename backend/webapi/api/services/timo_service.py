@@ -2,10 +2,10 @@
 Đối soát thanh toán tự động qua hũ Timo của BTC (một hũ chung, không phải theo
 đội — khác caulongdi, nơi mỗi nhóm có hũ riêng).
 
-Cơ chế poll khi bấm nút — CỐ TÌNH không có cron/quét định kỳ, để tránh gọi API
-Timo (không chính thức) quá nhiều lần và bị chặn. Đội trưởng bấm "Đã chuyển
-tiền" -> quét một lượt lịch sử giao dịch hũ -> khớp payment_code + số tiền của
-CHÍNH đội đó. Không khớp thì trả về thông báo để bấm lại sau.
+Cơ chế poll theo thao tác rõ ràng — CỐ TÌNH không có cron/quét định kỳ, để tránh
+gọi API Timo (không chính thức) quá nhiều lần và bị chặn. Nút "Đã chuyển tiền"
+quét để xác nhận; nút "Hủy thanh toán" cũng quét một lượt trước khi được phép
+mở khóa danh sách. Mỗi lượt khớp payment_code + số tiền của CHÍNH đội đó.
 
 Tham khảo cơ chế đã chạy thật ở dự án caulongdi (worker/src/timoPot.ts,
 worker/src/paymentConfirm.ts) rồi port sang Python/Django. Khác biệt chính:
@@ -166,10 +166,11 @@ class TimoConfirmResult:
 
 
 def confirm_team_payment_via_timo(team: Team) -> TimoConfirmResult:
-    """Poll the BTC's Timo pot ONCE (only ever called from the captain's
-    "Đã chuyển tiền" button — no background/cron polling) and look for a
-    transaction whose content contains this team's payment_code and whose
-    amount matches what's owed. On a match, sets `payment_confirmed_at`.
+    """Poll the BTC's Timo pot once for an explicit confirm/cancel action.
+
+    Look for a transaction whose content contains this team's payment_code and
+    whose amount matches what's owed. On a match, set `payment_confirmed_at`.
+    There is still no background or cron polling.
     """
     if team.payment_confirmed_at:
         return TimoConfirmResult("confirmed", "Đội đã được xác nhận thanh toán trước đó.")

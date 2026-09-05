@@ -10,6 +10,7 @@ import {
   getFrameStats,
 } from './frameApi.js'
 import { stripMarkdown } from './markdownUtils.jsx'
+import MarkdownPreview from './MarkdownPreview.jsx'
 
 // ─────────────────────────────────────────────────────────────────────
 // Admin panel for the "ghép khung ảnh" (photo frame) tool — upload new
@@ -241,23 +242,161 @@ function UploadFrameForm({ onCreated }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// One frame card — thumbnail, inline edit, active toggle, sort order,
-// replace image, delete. Owns its own busy/error state so one card's
-// in-flight action never blocks or hides the others.
+// Comprehensive edit modal — title, markdown description (with live
+// preview), public/hidden, sort order, and image replacement, all saved
+// in one call. Mirrors the split-pane editor idiom used for the Feed.
+// ─────────────────────────────────────────────────────────────────────
+function EditFrameModal({ frame, onClose, onSaved }) {
+  const [title, setTitle] = useState(frame.title || '')
+  const [description, setDescription] = useState(frame.description || '')
+  const [isActive, setIsActive] = useState(Boolean(frame.is_active))
+  const [sortOrder, setSortOrder] = useState(Number(frame.sort_order) || 0)
+  const [file, setFile] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const fileRef = useRef(null)
+
+  // Live preview of a freshly picked replacement file; revoked on change.
+  useEffect(() => {
+    if (!file) { setPreviewUrl(''); return undefined }
+    const url = URL.createObjectURL(file)
+    setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  const handleSave = async () => {
+    if (!title.trim()) { setError('Tiêu đề không được để trống.'); return }
+    setSaving(true)
+    setError('')
+    try {
+      const patch = {
+        title: title.trim(),
+        description: description.trim(),
+        is_active: isActive,
+        sort_order: Math.max(0, Number(sortOrder) || 0),
+      }
+      if (file) patch.file = file
+      await updateFrame(frame.id, patch)
+      onSaved?.()
+    } catch (err) {
+      setError(explainFrameError(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-stone bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-stone bg-paper px-6 py-4">
+          <h3 className="font-display text-lg font-bold text-ink">Chỉnh sửa khung ảnh</h3>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-ink/40 hover:bg-stone/30 hover:text-ink">✕</button>
+        </div>
+
+        {error && (
+          <div className="border-b border-clay/20 bg-clay/10 px-6 py-2.5 text-xs text-clay">{error}</div>
+        )}
+
+        <div className="grid flex-1 grid-cols-1 divide-y divide-stone overflow-y-auto md:grid-cols-2 md:divide-x md:divide-y-0">
+          {/* Left: form */}
+          <div className="space-y-4 p-6">
+            <div>
+              <label className={LABEL_CLASS}>Tiêu đề *</label>
+              <input value={title} onChange={e => setTitle(e.target.value)} className={FIELD_CLASS} placeholder="Khung ảnh VNUTour 2026" maxLength={200} />
+            </div>
+
+            <div>
+              <label className={LABEL_CLASS}>Mô tả (hỗ trợ Markdown)</label>
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                rows={5}
+                className={`${FIELD_CLASS} resize-y font-mono text-xs leading-relaxed`}
+                placeholder="Mô tả khung ảnh — có thể dùng **đậm**, *nghiêng*, [liên kết](url), ảnh ![mô tả](url)..."
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <label className="flex items-center gap-2 text-sm text-ink/70">
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  onChange={e => setIsActive(e.target.checked)}
+                  className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/30"
+                />
+                Hiển thị công khai
+              </label>
+              <div>
+                <label className={LABEL_CLASS}>Thứ tự hiển thị</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={sortOrder}
+                  onChange={e => setSortOrder(e.target.value)}
+                  className={FIELD_CLASS}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className={LABEL_CLASS}>Ảnh khung</label>
+              <div className="flex items-center gap-2">
+                <input ref={fileRef} type="file" accept={ACCEPT_TYPES} className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
+                <button type="button" onClick={() => fileRef.current?.click()} className={SECONDARY_BTN}>
+                  {file ? 'Chọn ảnh khác' : 'Đổi ảnh khung'}
+                </button>
+                {file && (
+                  <button type="button" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = '' }} className="text-xs font-semibold text-clay hover:underline">
+                    Bỏ ảnh mới
+                  </button>
+                )}
+              </div>
+              <p className="mt-1.5 text-xs leading-5 text-ink/40">
+                Giữ nguyên nếu không muốn đổi ảnh. Nên dùng PNG nền trong suốt.
+              </p>
+            </div>
+          </div>
+
+          {/* Right: preview */}
+          <div className="space-y-4 bg-paper/40 p-6">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink/40">Xem trước</p>
+            <div className="flex h-48 items-center justify-center overflow-hidden rounded-lg border border-stone" style={CHECKER_BG}>
+              <img
+                src={previewUrl || frameImageUrl(frame.id)}
+                alt={title || 'Xem trước khung ảnh'}
+                className="h-full w-full object-contain p-3"
+              />
+            </div>
+            <div className="rounded-lg border border-stone bg-white p-4">
+              <h4 className="font-display text-base font-bold text-ink">{title || '(Chưa có tiêu đề)'}</h4>
+              <div className="mt-2 text-sm text-ink/70">
+                <MarkdownPreview content={description} emptyMessage="Mô tả sẽ hiển thị ở đây..." />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-stone bg-paper px-6 py-3.5">
+          <button type="button" onClick={onClose} disabled={saving} className={SECONDARY_BTN}>Huỷ</button>
+          <button type="button" onClick={handleSave} disabled={saving} className={PRIMARY_BTN}>
+            {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// One frame card — thumbnail, quick active toggle / sort / delete, and a
+// "Sửa" button that opens the comprehensive edit modal. Owns its own
+// busy/error state so one card's in-flight action never blocks the others.
 // ─────────────────────────────────────────────────────────────────────
 function FrameCard({ frame, onChanged }) {
-  const [editing, setEditing] = useState(false)
-  const [editTitle, setEditTitle] = useState(frame.title || '')
-  const [editDescription, setEditDescription] = useState(frame.description || '')
+  const [editOpen, setEditOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [cardError, setCardError] = useState('')
-
-  const startEdit = () => {
-    setEditTitle(frame.title || '')
-    setEditDescription(frame.description || '')
-    setCardError('')
-    setEditing(true)
-  }
 
   const runAction = async (key, task) => {
     setBusy(key)
@@ -272,14 +411,6 @@ function FrameCard({ frame, onChanged }) {
     }
   }
 
-  const handleSaveEdit = () => {
-    if (!editTitle.trim()) { setCardError('Tiêu đề không được để trống.'); return }
-    runAction('edit', async () => {
-      await updateFrame(frame.id, { title: editTitle.trim(), description: editDescription.trim() })
-      setEditing(false)
-    })
-  }
-
   const handleToggleActive = () => {
     runAction('active', () => updateFrame(frame.id, { is_active: !frame.is_active }))
   }
@@ -289,13 +420,6 @@ function FrameCard({ frame, onChanged }) {
     runAction('sort', () => updateFrame(frame.id, { sort_order: next }))
   }
 
-  const handleReplaceFile = (event) => {
-    const picked = event.target.files?.[0]
-    event.target.value = ''
-    if (!picked) return
-    runAction('replace', () => updateFrame(frame.id, { file: picked }))
-  }
-
   const handleDelete = () => {
     if (!window.confirm(`Xoá khung ảnh "${frame.title}"? Hành động này không thể hoàn tác.`)) return
     runAction('delete', () => deleteFrame(frame.id))
@@ -303,6 +427,14 @@ function FrameCard({ frame, onChanged }) {
 
   return (
     <div className={`${CARD} flex flex-col overflow-hidden`}>
+      {editOpen && (
+        <EditFrameModal
+          frame={frame}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => { setEditOpen(false); onChanged?.() }}
+        />
+      )}
+
       <div className="relative flex h-40 items-center justify-center border-b border-stone" style={CHECKER_BG}>
         <img src={frameImageUrl(frame.id)} alt={frame.title} className="h-full w-full object-contain p-3" />
         <span className="absolute right-2 top-2">
@@ -316,36 +448,15 @@ function FrameCard({ frame, onChanged }) {
       <div className="flex flex-1 flex-col gap-3 p-4">
         {cardError && <ErrorNote>{cardError}</ErrorNote>}
 
-        {editing ? (
-          <div className="space-y-2">
-            <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className={FIELD_CLASS} placeholder="Tiêu đề" />
-            <textarea
-              value={editDescription}
-              onChange={e => setEditDescription(e.target.value)}
-              rows={2}
-              className={`${FIELD_CLASS} resize-y`}
-              placeholder="Mô tả"
-            />
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={handleSaveEdit} disabled={busy === 'edit'} className={PRIMARY_BTN}>
-                {busy === 'edit' ? 'Đang lưu...' : 'Lưu'}
-              </button>
-              <button type="button" onClick={() => setEditing(false)} disabled={busy === 'edit'} className={SECONDARY_BTN}>
-                Huỷ
-              </button>
-            </div>
+        <div>
+          <div className="flex items-start justify-between gap-2">
+            <h4 className="font-semibold text-ink">{frame.title}</h4>
+            <button type="button" onClick={() => setEditOpen(true)} className="shrink-0 text-xs font-semibold text-trail hover:underline">
+              Sửa
+            </button>
           </div>
-        ) : (
-          <div>
-            <div className="flex items-start justify-between gap-2">
-              <h4 className="font-semibold text-ink">{frame.title}</h4>
-              <button type="button" onClick={startEdit} className="shrink-0 text-xs font-semibold text-trail hover:underline">
-                Sửa
-              </button>
-            </div>
-            {frame.description && <p className="mt-1 line-clamp-3 text-sm text-ink/55">{stripMarkdown(frame.description)}</p>}
-          </div>
-        )}
+          {frame.description && <p className="mt-1 line-clamp-3 text-sm text-ink/55">{stripMarkdown(frame.description)}</p>}
+        </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-ink/40">
           <span>{frame.width}×{frame.height}px</span>
@@ -379,11 +490,6 @@ function FrameCard({ frame, onChanged }) {
               <Icon name="chevronR" className="h-3.5 w-3.5 rotate-90" />
             </button>
           </div>
-
-          <label className={`${SECONDARY_BTN} cursor-pointer ${busy === 'replace' ? 'pointer-events-none opacity-40' : ''}`}>
-            {busy === 'replace' ? 'Đang tải...' : 'Đổi ảnh'}
-            <input type="file" accept={ACCEPT_TYPES} className="hidden" onChange={handleReplaceFile} disabled={busy === 'replace'} />
-          </label>
 
           <button
             type="button"

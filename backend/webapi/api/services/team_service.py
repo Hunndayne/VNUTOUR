@@ -67,8 +67,21 @@ def set_max_registrations(value: int) -> int:
 
 
 def get_current_registrations() -> int:
-    """Return the total number of registered participants."""
-    return Participant.objects.count()
+    """Number of people registered through a team that was sent for approval.
+
+    Only members of *submitted* teams count toward the cap — pending, approved,
+    and rejected teams all count (a rejected team still consumed a slot), but
+    draft teams that were never submitted, and participants not yet on any team,
+    do not. Membership is unique per participant, so counting membership rows in
+    submitted teams counts each registered person exactly once.
+    """
+    return TeamMembership.objects.filter(
+        team__approval_status__in=[
+            Team.APPROVAL_PENDING,
+            Team.APPROVAL_APPROVED,
+            Team.APPROVAL_REJECTED,
+        ],
+    ).count()
 
 
 def registration_capacity_remaining() -> Optional[int]:
@@ -197,6 +210,45 @@ def _next_team_code() -> str:
     return "T0001"
 
 
+def draft_membership_move_error(
+    membership: TeamMembership,
+    mssv: str,
+) -> Optional[str]:
+    """Return why a membership cannot be auto-moved, or None for a solo shell.
+
+    The dashboard creates an unnamed one-person draft as soon as a participant
+    reaches the member step. That exact shell may be dissolved when another
+    captain adds the participant. Every real roster requires an explicit leave
+    or transfer so two captains cannot silently pull the same person back and
+    forth.
+    """
+    team = membership.team
+    normalized_mssv = (mssv or "").strip().upper()
+    if team.approval_status in (Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED):
+        return "mssv_in_submitted_team"
+    if team.approval_status != Team.APPROVAL_DRAFT:
+        return "mssv_in_other_team"
+
+    owner_mssv = ""
+    if team.owner_account_id and team.owner_account:
+        owner_mssv = (team.owner_account.mssv or "").strip().upper()
+    owns_team = bool(membership.is_captain or owner_mssv == normalized_mssv)
+    has_other_members = (
+        TeamMembership.objects.filter(team=team)
+        .exclude(participant__mssv=normalized_mssv)
+        .exists()
+    )
+    if owns_team and has_other_members:
+        return "mssv_leads_other_team"
+    if not owns_team:
+        return "mssv_in_other_team"
+
+    expected_name = f"Pending team {normalized_mssv}"
+    if (team.name or "").strip().casefold() != expected_name.casefold():
+        return "mssv_in_other_team"
+    return None
+
+
 @transaction.atomic
 def add_member(
     team: Team,
@@ -219,17 +271,48 @@ def add_member(
     already claimed by a different account are left untouched — the membership is
     still created, but the owner's own data wins.
     """
-    mssv = (mssv or "").strip()
+    mssv = (mssv or "").strip().upper()
+    normalized_email = (email or "").strip().lower()
     if not mssv:
         return None, "missing_mssv"
 
-    # Membership count is a team-level invariant. Lock the same Team row used
-    # by batch merge before reading the count, so concurrent adds and merges are
-    # serialized instead of both acting on a stale roster size.
-    locked_team = Team.objects.select_for_update().filter(pk=team.pk).first()
-    if not locked_team:
+    # Serialize every operation involving an existing participant first. Then
+    # lock the source and destination teams in primary-key order so roster
+    # checks cannot race a join, move, or delete and cross-team moves cannot
+    # deadlock by taking the two team locks in opposite orders.
+    existing_participant = (
+        Participant.objects.select_for_update().filter(mssv=mssv).first()
+    )
+    initial_membership = (
+        TeamMembership.objects.filter(participant__mssv=mssv)
+        .select_related("team", "team__owner_account")
+        .first()
+    )
+    team_ids = {team.pk}
+    if initial_membership:
+        team_ids.add(initial_membership.team_id)
+    locked_teams = {
+        item.pk: item
+        for item in Team.objects.select_for_update().filter(pk__in=team_ids).order_by("pk")
+    }
+    if team.pk not in locked_teams:
         return None, "not_found"
-    team = locked_team
+    team = locked_teams[team.pk]
+
+    existing_member = (
+        TeamMembership.objects.select_for_update()
+        .filter(participant__mssv=mssv)
+        # Do not join the nullable owner_account relation in this locking
+        # query: PostgreSQL rejects FOR UPDATE on the nullable side of an outer
+        # join. The owner is fetched lazily only if transfer policy needs it.
+        .select_related("team")
+        .first()
+    )
+    # A writer that does not yet use these locks may have moved the membership
+    # while this transaction waited. Refuse against stale locks and let the UI
+    # reload the authoritative roster.
+    if existing_member and existing_member.team_id not in locked_teams:
+        return None, "membership_changed"
 
     # Check team limits
     max_members = _get_setting("team_max_members", 5)
@@ -237,23 +320,27 @@ def add_member(
     if current_count >= max_members:
         return None, "team_full"
 
-    # Check if participant is already in a submitted (pending/approved) team
-    submitted_member = TeamMembership.objects.filter(
-        participant__mssv=mssv,
-        team__approval_status__in=[Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED],
-    ).select_related("team").first()
+    # A submitted team (pending/approved) has a final roster: the member is
+    # locked to it and cannot be pulled into another team.
+    submitted_member = existing_member if (
+        existing_member
+        and existing_member.team.approval_status in [Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED]
+    ) else None
     if submitted_member:
         if submitted_member.team_id != team.id:
             return None, "mssv_in_submitted_team"
         # Same team already submitted — can't add more members
         return None, "team_locked"
 
-    # Check if participant already in another (draft/rejected) team
-    existing_member = TeamMembership.objects.filter(
-        participant__mssv=mssv,
-    ).select_related("team").first()
+    # Only the auto-created solo draft is a disposable shell. Capture that team
+    # while the membership still points to it, and delete it after the move.
+    release_old_team = None
     if existing_member and existing_member.team_id != team.id:
-        return None, "mssv_in_other_team"
+        old_team = existing_member.team
+        move_error = draft_membership_move_error(existing_member, mssv)
+        if move_error:
+            return None, move_error
+        release_old_team = old_team
 
     # An MSSV identifies the student, so the same MSSV already on this team is the
     # same person entered twice — reject it instead of the old update_or_create
@@ -264,7 +351,7 @@ def add_member(
     if not is_captain:
         owner_mssv = ""
         if team.owner_account_id:
-            owner_mssv = (team.owner_account.mssv or "").strip()
+            owner_mssv = (team.owner_account.mssv or "").strip().upper()
         already_on_team = bool(existing_member and existing_member.team_id == team.id)
         if already_on_team or (owner_mssv and owner_mssv == mssv):
             return None, "already_in_team"
@@ -274,7 +361,6 @@ def add_member(
         # may share it, and neither may an account belonging to someone else. The
         # MSSV dedup above misses this because the clashing rows carry different
         # MSSVs. Captain adds are the owner's own creation step and are exempt.
-        normalized_email = (email or "").strip().lower()
         if normalized_email:
             # Every Participant carries a distinct MSSV, so a different MSSV using
             # this email is genuinely another person. An Account is only a clash
@@ -296,7 +382,6 @@ def add_member(
 
     # A profile claimed by another account is self-managed: create the membership
     # but never overwrite its registration fields with caller-supplied values.
-    existing_participant = Participant.objects.filter(mssv=mssv).first()
     defaults = {}
     if not profile_is_account_owned_by_other(existing_participant, actor):
         for key, value in {
@@ -317,25 +402,51 @@ def add_member(
 
     # Get or create participant without clearing existing registration fields
     # when the caller only has partial account data (e.g. captain team create).
-    participant, _ = Participant.objects.update_or_create(
-        mssv=mssv,
-        defaults=defaults,
-    )
+    try:
+        with transaction.atomic():
+            participant, _ = Participant.objects.update_or_create(
+                mssv=mssv,
+                defaults=defaults,
+            )
+    except IntegrityError:
+        # A concurrent request may have claimed either identity after our
+        # pre-check. Report the stable conflict once its transaction commits.
+        if normalized_email and (
+            Participant.objects.filter(email__iexact=normalized_email)
+            .exclude(mssv=mssv)
+            .exists()
+        ):
+            return None, "email_in_team"
+        return None, "membership_changed"
 
-    # Create or reuse membership. We already verified the participant is not in
-    # another team above, so any existing membership belongs to this team — keep
-    # its captain flag instead of recreating (which would silently drop it).
+    # Create or move the membership. Membership is unique per participant, so
+    # update_or_create moves an existing row from a stale draft/rejected team
+    # onto this one in place. When moving in from another team, decide captaincy
+    # solely from the caller's intent and set it in the SAME update — inheriting
+    # a stale is_captain would violate the one-captain-per-team constraint.
+    move_defaults = {"team": team}
+    if release_old_team is not None:
+        move_defaults["is_captain"] = bool(is_captain)
     try:
         with transaction.atomic():
             membership, created = TeamMembership.objects.update_or_create(
                 participant=participant,
-                defaults={"team": team},
+                defaults=move_defaults,
             )
-            if is_captain and not membership.is_captain:
+            if release_old_team is None and is_captain and not membership.is_captain:
+                # Same-team re-add: keep an existing captain flag, only ever raise.
                 membership.is_captain = True
                 membership.save(update_fields=["is_captain", "updated_at"])
     except IntegrityError:
         return None, "already_in_team"
+
+    # The move committed. Delete the verified disposable shell if still empty.
+    if release_old_team is not None:
+        # The source team was locked and verified as an auto-created solo
+        # shell. Still re-check before deleting so an unexpected writer can
+        # never cascade-delete a membership that appeared after validation.
+        if not TeamMembership.objects.filter(team=release_old_team).exists():
+            Team.objects.filter(pk=release_old_team.pk).delete()
 
     return participant, None
 
@@ -359,7 +470,7 @@ def update_member(
     overwritten here, even if the caller passes new values — remove the
     member and add a new one instead if they must change.
     """
-    mssv = (mssv or "").strip()
+    mssv = (mssv or "").strip().upper()
     membership = TeamMembership.objects.filter(
         team=team, participant__mssv=mssv,
     ).select_related("participant").first()
@@ -384,7 +495,7 @@ def update_member(
 
 def remove_member(team: Team, mssv: str) -> Tuple[bool, Optional[str]]:
     """Remove a participant from a team. Returns (success, error_code)."""
-    mssv = (mssv or "").strip()
+    mssv = (mssv or "").strip().upper()
     try:
         deleted, _ = TeamMembership.objects.filter(
             team=team, participant__mssv=mssv,
@@ -462,7 +573,11 @@ def get_team_members(
     ``basic`` exposes only name, school and student id.
     ``self`` exposes the requester's full profile and basic data for teammates.
     """
-    memberships = TeamMembership.objects.filter(team=team).select_related("participant")
+    memberships = (
+        TeamMembership.objects.filter(team=team)
+        .select_related("participant")
+        .order_by("created_at", "id")
+    )
     result = []
     for m in memberships:
         p = m.participant

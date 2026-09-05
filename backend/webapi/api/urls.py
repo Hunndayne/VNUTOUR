@@ -22,6 +22,7 @@ from .urls_report import urlpatterns as report_patterns
 from .urls_backup import urlpatterns as backup_patterns
 from .urls_frame import urlpatterns as frame_patterns
 from .urls_shortlink import urlpatterns as shortlink_patterns
+from .urls_feed import urlpatterns as feed_post_patterns
 
 urlpatterns = (
     auth_patterns
@@ -42,4 +43,6 @@ urlpatterns = (
     + backup_patterns
     + frame_patterns
     + shortlink_patterns
+    + feed_post_patterns
 )
+
