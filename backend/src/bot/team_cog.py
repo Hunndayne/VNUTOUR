@@ -96,11 +96,22 @@ class DiscordIntegrationCog(commands.Cog):
     async def _heartbeat(self) -> None:
         from api.services.discord_service import record_bot_heartbeat
 
+        guild = self._guild()
+        channels = [
+            {
+                "id": int(channel.id),
+                "name": channel.name,
+                "category": channel.category.name if channel.category else "",
+            }
+            for channel in (guild.text_channels if guild else [])
+        ]
+
         await database_call(
             record_bot_heartbeat,
             str(self.bot.user) if self.bot.user else "starting",
             [guild.id for guild in self.bot.guilds],
             self.bot.latency * 1000,
+            channels,
         )
 
     @tasks.loop(seconds=10)

@@ -922,11 +922,13 @@ class DiscordBroadcast(models.Model):
     TARGET_APPROVED = "approved"
     TARGET_PENDING = "pending"
     TARGET_TEAM_IDS = "team_ids"
+    TARGET_CHANNELS = "channels"
     TARGET_CHOICES = [
         (TARGET_ALL, "All"),
         (TARGET_APPROVED, "Approved"),
         (TARGET_PENDING, "Pending"),
         (TARGET_TEAM_IDS, "Specific Teams"),
+        (TARGET_CHANNELS, "Discord Channels"),
     ]
 
     STATUS_DRAFT = "draft"

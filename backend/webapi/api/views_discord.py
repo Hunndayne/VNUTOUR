@@ -11,6 +11,7 @@ from api.services.discord_service import (
     create_broadcast, list_broadcasts,
     list_members, sync_member,
     get_bot_runtime_status,
+    get_discord_channels,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -43,6 +44,14 @@ def provisioning_queue_view(request: HttpRequest):
         return err
 
     return JsonResponse({"queue": get_provisioning_queue()})
+
+
+def channels_view(request: HttpRequest):
+    """GET: text channels last reported by the connected Discord bot."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    return JsonResponse({"items": get_discord_channels()})
 
 
 @csrf_exempt
