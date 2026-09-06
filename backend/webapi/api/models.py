@@ -252,6 +252,31 @@ class TeamMembership(models.Model):
         return f"{self.team.code} <- {self.participant.mssv}"
 
 
+class TeamInviteLink(models.Model):
+    """Reusable, revocable team invitation; only the token hash is persisted."""
+
+    team = models.OneToOneField(
+        Team, on_delete=models.CASCADE, related_name="invite_link",
+    )
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="created_team_invites",
+    )
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    use_count = models.PositiveIntegerField(default=0)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "team_invite_link"
+
+    def __str__(self) -> str:
+        return f"invite for {self.team.code}"
+
+
 # =====================================================================
 # 5. ProgramPhase
 # =====================================================================

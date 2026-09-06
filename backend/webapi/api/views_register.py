@@ -10,7 +10,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from api.services import registration_service
-from api.services.team_service import registration_is_open, registration_is_full
+from api.services.team_service import (
+    registration_capacity_remaining,
+    registration_is_full,
+    registration_is_open,
+)
 from .views_shared import _json_body, _consume_rate_limit, _require_antibot
 
 
@@ -45,6 +49,7 @@ def schema_view(request: HttpRequest):
     schema = registration_service.get_schema()
     payload = dict(schema)
     payload["registration_full"] = registration_is_full()
+    payload["registration_slots_remaining"] = registration_capacity_remaining()
     return JsonResponse(payload)
 
 

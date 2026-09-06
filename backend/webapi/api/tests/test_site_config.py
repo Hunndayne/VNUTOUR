@@ -49,12 +49,22 @@ class PublicSiteConfigViewTests(TestCase):
         response = self.client.get("/api/public/site-config")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["registration_full"])
+        self.assertEqual(response.json()["registration_slots_remaining"], 1)
 
         p2 = Participant.objects.create(mssv="SV902", full_name="Two")
         TeamMembership.objects.create(team=team, participant=p2)
         response2 = self.client.get("/api/public/site-config")
         self.assertEqual(response2.status_code, 200)
         self.assertTrue(response2.json()["registration_full"])
+        self.assertEqual(response2.json()["registration_slots_remaining"], 0)
+
+    def test_get_reports_unlimited_capacity_as_null(self):
+        set_max_registrations(0)
+
+        response = self.client.get("/api/public/site-config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["registration_slots_remaining"])
 
     def test_non_get_is_method_not_allowed(self):
         response = self.client.post("/api/public/site-config")

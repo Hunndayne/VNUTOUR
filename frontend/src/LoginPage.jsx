@@ -147,7 +147,11 @@ function LoginPage() {
     localStorage.setItem('user', JSON.stringify(data.user))
     // Straight to the role's own screen. Going via `/` worked, but it made the
     // first thing after signing in a visible redirect off the landing page.
-    window.location.replace(roleHomePath(data.user?.role))
+    const requestedPath = new URLSearchParams(window.location.search).get('return_to') || ''
+    const safeReturnPath = requestedPath.startsWith('/join-team?')
+      ? requestedPath
+      : ''
+    window.location.replace(safeReturnPath || roleHomePath(data.user?.role))
   }, [])
 
   // ── Login ───────────────────────────────────────────────────────────
