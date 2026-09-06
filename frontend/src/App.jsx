@@ -11,6 +11,7 @@ import FeedPage from './FeedPage.jsx'
 import TaiTro from './tai-tro.jsx'
 import ForgotPasswordPage from './ForgotPasswordPage.jsx'
 import ResetPasswordPage from './ResetPasswordPage.jsx'
+import JoinTeamPage from './JoinTeamPage.jsx'
 import { getStoredAuthToken, getStoredUser, isAdminRole, roleHomePath } from './api.js'
 import { navigate, useLocation } from './router.js'
 
@@ -48,6 +49,7 @@ const PUBLIC_ROUTES = {
   '/tai-tro': TaiTro,
   '/forgot-password': ForgotPasswordPage,
   '/reset-password': ResetPasswordPage,
+  '/join-team': JoinTeamPage,
 }
 const PUBLIC_PATHS = new Set(Object.keys(PUBLIC_ROUTES))
 

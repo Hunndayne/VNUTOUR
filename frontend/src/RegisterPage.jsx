@@ -3,6 +3,7 @@ import { apiRequest } from './api.js'
 import { Icon } from './ui.jsx'
 import { TurnstileWidget, HoneypotField } from './antibot.jsx'
 import { useFormSignals, ANTIBOT_ERROR_TEXT, ANTIBOT_ERROR_CODES } from './antibot.js'
+import RegistrationCapacityNotice from './RegistrationCapacityNotice.jsx'
 
 // ── Program timeline (from the 2025 brief). Shown as trail waypoints. ──────────
 const STAGES = [
@@ -385,6 +386,11 @@ export default function RegisterPage() {
           ))}
         </ol>
       </header>
+
+      <RegistrationCapacityNotice
+        remaining={schema.registration_slots_remaining}
+        className="mb-6"
+      />
 
       {/* Mode picker — two passes */}
       {!mode ? (

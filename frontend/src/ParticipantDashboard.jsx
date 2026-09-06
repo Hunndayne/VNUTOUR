@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import logoImage from './assets/vnutour-logo.webp'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
+import RegistrationCapacityNotice from './RegistrationCapacityNotice.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
 import FeedCard from './FeedCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
@@ -1579,6 +1580,8 @@ function ParticipantDashboard() {
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [confirmPaymentLoading, setConfirmPaymentLoading] = useState(false)
   const [latestPost, setLatestPost] = useState(null)
+  const [teamInvite, setTeamInvite] = useState(null)
+  const [inviteNotice, setInviteNotice] = useState('')
 
   const loadDashboard = async () => {
     const me = await apiRequest('/auth/me')
@@ -2017,6 +2020,30 @@ function ParticipantDashboard() {
     }
   }
 
+  const copyInviteUrl = async (url) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setInviteNotice('Đã copy link mời.')
+    } catch {
+      setInviteNotice('Không tự copy được. Hãy chọn và copy link bên dưới.')
+    }
+  }
+
+  const createTeamInvite = () => withBusy('team-invite', async () => {
+    await ensureTeamExists()
+    const payload = await apiRequest('/my-team/invite', { method: 'POST', body: {} })
+    const url = `${window.location.origin}/join-team?token=${encodeURIComponent(payload.token)}`
+    setTeamInvite({ url, expiresAt: payload.expires_at })
+    await copyInviteUrl(url)
+    await loadDashboard()
+  })
+
+  const revokeTeamInvite = () => withBusy('team-invite-revoke', async () => {
+    await apiRequest('/my-team/invite', { method: 'DELETE' })
+    setTeamInvite(null)
+    setInviteNotice('Đã thu hồi link mời.')
+  })
+
   const castCaptainVote = (candidateMssv) => withBusy('captain-vote', async () => {
     if (!candidateMssv) return
     try {
@@ -2061,6 +2088,10 @@ function ParticipantDashboard() {
       if (isProfileComplete(updatedProfile, personFields)) setProfileDetailsOpen(false)
       setProfileSaved(true)
       window.setTimeout(() => setProfileSaved(false), 1400)
+      const inviteToken = new URLSearchParams(window.location.search).get('team_invite')
+      if (inviteToken && updatedProfile.mssv) {
+        window.location.replace(`/join-team?token=${encodeURIComponent(inviteToken)}`)
+      }
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
@@ -2242,6 +2273,10 @@ function ParticipantDashboard() {
           <div className="rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
             {apiError}
           </div>
+        )}
+
+        {!showSettings && registrationOpen && (!team || team.approval_status === 'draft') && (
+          <RegistrationCapacityNotice remaining={registrationSchema?.registration_slots_remaining} />
         )}
 
         {showSettings ? (
@@ -2741,6 +2776,59 @@ function ParticipantDashboard() {
               </div>
 
               <div className="divide-y divide-stone">
+                {editable && !rosterLocked && amCaptain && displayedMemberCount < maxMembers && (
+                  <div className="bg-[#1F7A6B]/[0.045] px-5 py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1F7A6B]/12 text-[#1F7A6B]">
+                          <Icon name="users" className="h-4 w-4" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-ink">Mời thành viên bằng link</p>
+                          <p className="mt-0.5 text-xs text-ink/45">Người được mời tự dùng MSSV và email trong tài khoản của họ.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={createTeamInvite}
+                        disabled={Boolean(busyAction)}
+                        className={TRAIL_BUTTON}
+                      >
+                        <Icon name="link" className="h-4 w-4" />
+                        {busyAction === 'team-invite' ? 'Đang tạo...' : teamInvite ? 'Tạo link mới' : 'Tạo link mời 3 giờ'}
+                      </button>
+                    </div>
+
+                    {teamInvite && (
+                      <div className="mt-4 rounded-xl border border-dashed border-[#1F7A6B]/35 bg-white p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <input
+                            type="text"
+                            readOnly
+                            value={teamInvite.url}
+                            onFocus={(event) => event.target.select()}
+                            className="min-w-0 flex-1 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1] px-3 py-2 font-mono text-xs text-ink/65 outline-none focus:border-[#1F7A6B]/50"
+                          />
+                          <button type="button" onClick={() => copyInviteUrl(teamInvite.url)} className={SECONDARY_BUTTON}>
+                            Copy link
+                          </button>
+                          <button
+                            type="button"
+                            onClick={revokeTeamInvite}
+                            disabled={Boolean(busyAction)}
+                            className="rounded-lg px-3 py-2 text-xs font-semibold text-[#D6492B] hover:bg-[#D6492B]/[0.07] disabled:opacity-40"
+                          >
+                            Thu hồi
+                          </button>
+                        </div>
+                        <p className="mt-2 text-xs text-ink/40">
+                          Hết hạn lúc {formatDateTime(teamInvite.expiresAt)}. Tạo link mới sẽ làm link cũ hết hiệu lực.
+                        </p>
+                      </div>
+                    )}
+                    {inviteNotice && <p className="mt-2 text-xs font-medium text-[#1F7A6B]">{inviteNotice}</p>}
+                  </div>
+                )}
                 {showProfileAsCaptain && (
                   <div id="captain-profile">
                     <div className={`grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center ${!profileComplete ? 'border-l-4 border-[#D6492B] bg-[#D6492B]/[0.04] pl-4' : ''}`}>

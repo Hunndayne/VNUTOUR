@@ -40,6 +40,10 @@ from api.services.submission_config_service import (
 )
 from api.services.team_form_variant_service import variant_item_ids
 from api.services import team_merge_service
+from api.services.team_invite_service import (
+    accept_team_invite, account_profile_is_complete, inspect_team_invite,
+    issue_team_invite, revoke_team_invite,
+)
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -494,7 +498,7 @@ def me_profile_view(request: HttpRequest):
             "account_mssv": acc.mssv,
             # FE (esp. the post-Google-signup page) uses this to decide whether
             # to force the supplementary-info form before anything else.
-            "profile_complete": bool(acc.mssv and participant and participant.full_name),
+            "profile_complete": account_profile_is_complete(acc, participant),
         })
 
     if request.method in ("PUT", "PATCH"):
@@ -1034,6 +1038,61 @@ def my_team_member_resolve_view(request: HttpRequest):
     payload, error = _member_resolution(data, team=membership.team)
     if error:
         return JsonResponse({"error": error}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+def my_team_invite_view(request: HttpRequest):
+    """POST a fresh three-hour invite or DELETE the team's current invite."""
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    team = membership.team
+    if request.method == "DELETE":
+        revoke_team_invite(team)
+        return JsonResponse({"status": "revoked"})
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if not _team_edits_allowed(team):
+        return _registration_closed_response()
+    if not team_is_editable(team) or team.roster_locked_at:
+        return JsonResponse({"error": "team_locked"}, status=409)
+
+    schema = get_schema()
+    maximum = int(schema.get("team_size_max") or schema.get("team_size") or 5)
+    if TeamMembership.objects.filter(team=team).count() >= maximum:
+        return JsonResponse({"error": "team_full"}, status=409)
+
+    invite, raw_token = issue_team_invite(team, acc)
+    return JsonResponse({
+        "token": raw_token,
+        "expires_at": invite.expires_at.isoformat(),
+        "ttl_seconds": 3 * 60 * 60,
+    }, status=201)
+
+
+@csrf_exempt
+def team_invite_detail_view(request: HttpRequest, token: str):
+    """Public invite summary; authenticated acceptance uses the same URL."""
+    if request.method == "GET":
+        payload = inspect_team_invite(token)
+        return JsonResponse(payload, status=200 if payload["status"] == "active" else 410)
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    payload, accept_error = accept_team_invite(token, acc)
+    if accept_error:
+        status = 403 if accept_error == "participant_required" else 409
+        return JsonResponse({"error": accept_error}, status=status)
     return JsonResponse(payload)
 
 
