@@ -78,7 +78,7 @@ _LAYOUT = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "htt
                               <table cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse: collapse; border-spacing: 0px;">
                                 <tr>
                                   <td align="center" style="padding: 10px; margin: 0; font-size: 0px;">
-                                    <img src="__HEADER_IMAGE_URL__" alt="" style="display: block; border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic;" width="294" height="59" />
+                                    <img class="adapt-img" src="__HEADER_IMAGE_URL__" alt="" style="display: block; width: 100%; max-width: 500px; height: auto; border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic;" width="500" />
                                   </td>
                                 </tr>
                               </table>

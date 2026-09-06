@@ -56,6 +56,8 @@ class EmailQueueApiTests(TestCase):
         self.assertIn("THÔNG BÁO VNUTOUR", html)
         self.assertIn("{{ten}}", html)
         self.assertIn("c%E1%BB%A5m%20logo_100%25-01.png", html)
+        self.assertIn('max-width: 500px; height: auto', html)
+        self.assertNotIn('width="294" height="59"', html)
 
     def test_standard_email_preserves_to_cc_and_bcc_in_queue(self):
         response = self._post({
