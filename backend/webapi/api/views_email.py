@@ -12,10 +12,31 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .models import Account, Participant
 from .services.email_service import enqueue_email_messages
+from .services.email_templates import email_paragraph, render_branded_email
 from .services.audit_service import record_audit
 from .views_shared import _require_role
 
 PLACEHOLDER_PATTERN = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
+
+
+def email_template_view(request: HttpRequest) -> JsonResponse:
+    """GET the branded HTML starter used by the admin email composer."""
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    body_html = (
+        email_paragraph("Xin chào <strong>{{ten}}</strong>,")
+        + email_paragraph("Nhập nội dung thông báo tại đây.")
+    )
+    return JsonResponse({
+        "html": render_branded_email(
+            title="THÔNG BÁO VNUTOUR",
+            body_html=body_html,
+        ),
+    })
 
 
 def _display_name_for_external(email: str) -> str:

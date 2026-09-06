@@ -85,6 +85,7 @@ export default function EmailPage() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [busy, setBusy] = useState(null)
   const [result, setResult] = useState(null)
+  const [templateHtml, setTemplateHtml] = useState('')
   const [recipientCounts, setRecipientCounts] = useState({ all: 0, admin: 0, collab: 0, participant: 0, inactive: 0 })
 
   const loadAccounts = useCallback(async () => {
@@ -111,7 +112,15 @@ export default function EmailPage() {
       try {
         setLoading(true)
         setApiError(null)
-        await loadAccounts()
+        const [, templatePayload] = await Promise.all([
+          loadAccounts(),
+          apiRequest('/admin/email-template'),
+        ])
+        const html = templatePayload?.html || ''
+        setTemplateHtml(html)
+        setCompose((current) => current.htmlBody.trim()
+          ? current
+          : { ...current, htmlBody: html, isHtmlMode: true })
       } catch (error) {
         if (cancelled) return
         if (error?.status === 401) {
@@ -126,6 +135,12 @@ export default function EmailPage() {
     void bootstrap()
     return () => { cancelled = true }
   }, [loadAccounts])
+
+  const loadBrandedTemplate = () => {
+    if (!templateHtml) return
+    if (compose.htmlBody.trim() && !window.confirm('Nạp lại template sẽ thay nội dung HTML hiện tại. Bạn có muốn tiếp tục?')) return
+    patchCompose({ htmlBody: templateHtml, isHtmlMode: true })
+  }
 
   const filteredAccounts = useMemo(() => accounts, [accounts])
 
@@ -445,6 +460,14 @@ export default function EmailPage() {
                 Có thể dùng thẻ HTML và placeholder cá nhân hóa.
               </span>
             )}
+            <button
+              type="button"
+              onClick={loadBrandedTemplate}
+              disabled={!templateHtml}
+              className="ml-auto rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-medium text-ink/60 transition hover:bg-paper hover:text-ink disabled:opacity-40"
+            >
+              Nạp template VNUTour
+            </button>
           </div>
 
           <div className="rounded-lg border border-stone bg-paper px-4 py-3 text-sm text-ink/70">
