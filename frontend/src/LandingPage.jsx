@@ -6,6 +6,7 @@ import youthUnionLogo from './assets/organizer-youth-union.webp'
 import facultyLogo from './assets/organizer-faculty.webp'
 import SiteHeader, { NavLinks } from './SiteHeader.jsx'
 import VNUTourJourneyMap from './VNUTourJourneyMap.jsx'
+import { useLocation } from './router.js'
 
 const organizerLogos = [
   { src: universityLogo, alt: 'Trường Đại học Công nghệ Thông tin' },
@@ -152,6 +153,7 @@ export function Reveal({ as = 'div', children, className = '', delay = 0, direct
 function LandingPage() {
   const [isCtaPopping, setIsCtaPopping] = useState(false)
   const [timeRemaining, setTimeRemaining] = useState(() => Math.max(0, registrationDeadline - Date.now()))
+  const location = useLocation()
 
   useEffect(() => {
     const updateCountdown = () => setTimeRemaining(Math.max(0, registrationDeadline - Date.now()))
@@ -160,6 +162,21 @@ function LandingPage() {
     updateCountdown()
     return () => window.clearInterval(intervalId)
   }, [registrationDeadline])
+
+  // Handle hash-based navigation and smooth scroll
+  useEffect(() => {
+    if (!location.hash) return
+    
+    const elementId = location.hash.substring(1) // Remove the leading #
+    const element = document.getElementById(elementId)
+    
+    if (element) {
+      // Use requestAnimationFrame to ensure the DOM is fully updated
+      requestAnimationFrame(() => {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    }
+  }, [location.hash])
 
   const handleCtaClick = () => {
     setIsCtaPopping(true)
@@ -649,7 +666,7 @@ function LandingPage() {
   {/* Đã loại bỏ border-t / landing-border-mid gây xuất hiện đường gạch ngang */}
   <Reveal className="relative z-10 mx-auto flex max-w-[1400px] flex-col items-center text-center">
     <div className="cta-heading-glow relative">
-      <h2 className="relative z-10 max-w-[920px] text-3xl font-bold uppercase leading-[1.4] tracking-normal !text-white sm:text-4xl md:text-5xl md:leading-[1.35] lg:text-6xl lg:leading-[1.35]">
+      <h2 className="relative z-10 max-w-[920px] text-2xl font-bold uppercase leading-[1.4] tracking-normal !text-white sm:text-3xl md:text-4xl md:leading-[1.35] lg:text-5xl lg:leading-[1.35]">
         Bạn đã sẵn sàng cho <br className="hidden sm:block" />
         hành trình đầu tiên chưa?
       </h2>
