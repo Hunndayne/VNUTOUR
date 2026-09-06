@@ -922,11 +922,13 @@ class DiscordBroadcast(models.Model):
     TARGET_APPROVED = "approved"
     TARGET_PENDING = "pending"
     TARGET_TEAM_IDS = "team_ids"
+    TARGET_CHANNELS = "channels"
     TARGET_CHOICES = [
         (TARGET_ALL, "All"),
         (TARGET_APPROVED, "Approved"),
         (TARGET_PENDING, "Pending"),
         (TARGET_TEAM_IDS, "Specific Teams"),
+        (TARGET_CHANNELS, "Discord Channels"),
     ]
 
     STATUS_DRAFT = "draft"
@@ -1400,4 +1402,23 @@ class FeedComment(models.Model):
 
     def __str__(self) -> str:
         return f"Comment by {self.author.username} on post {self.post_id}"
+
+
+# =====================================================================
+# 29. PendingDeprovision
+# =====================================================================
+
+class PendingDeprovision(models.Model):
+    """Queue of Discord resources to clean up after a team is deleted."""
+    discord_role_id = models.BigIntegerField(null=True, blank=True)
+    text_channel_id = models.BigIntegerField(null=True, blank=True)
+    voice_channel_id = models.BigIntegerField(null=True, blank=True)
+    team_code = models.CharField(max_length=10)
+    created_at = models.DateTimeField(auto_now_add=True)
+    attempts = models.IntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "pending_deprovision"
+
 

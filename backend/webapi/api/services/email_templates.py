@@ -18,7 +18,7 @@ from __future__ import annotations
 from django.utils.html import escape
 
 # Same brand assets as email_templates/registration_confirmation.html.
-_HEADER_IMAGE_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj-F2vvVtOhXRCuBgBh3zrIf_GLCUjgBGW1ghC7_ga4RuJUVzBnhxykvaOSulXQ1hAZs4kOxnG1oBqPKpKvXFikYXOcNKl-f_WFrTjman472c1VlHtq_bb2iS-8-_I8BfHG5MMzPZ8559p_x4HSyzqCvWQob6dSPIMA7Yd1UYoogx0JF4clTb56EzREMdo/s1600/PhoneHeader.png"
+_HEADER_IMAGE_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgIKfxm_IB69s1W686Xc4ax5fD2RApJHOqRmhUpjU2hf6_MPcjuEQLnStspS5iWknJ7eCPvjCF6Yyujf-M1YRVOShCbDXc5ED2IoneIXK0hYAR-R_CVs_LD-n1crSqSJG8LbVzpcDTqSE_x_djT3wUUhhbnnZyNBrukmKFECyAn07PLfGZUWLqoHfwvuJc/s1600/c%E1%BB%A5m%20logo_100%25-01.png"
 _CREST_IMAGE_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgr1sV9iF0WJ7xGivas3L6kYoIQK4A2j-UH1hErlftEDWlE7HWo0x29_d-QbTmpukTc7nSMJiMLsE9_voKUQJF-mN_C04VP2_a7wyUduDHKRRSeXD8kn17eeCVi2DPUfk2-WOsHG_c8APtKBv-S54SWnnJ6b6CVooRiYSmN8Uyqjeebmw8aO38RlWN67QQ/s1600/BieuTrung%20%281%29.png"
 _LOGO_IMAGE_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEiR3HMkD9bOqiXGRrXoF_IdF-gKbIFjVDkyS6PBVfjsz-xUNa6HVtGqPU3pQ5rstdTKj3fnwgDinnS39iP0hrJnAYRdSf6Lbr4bOZgEoMBT8RARxkg7e7Yoxa0iSg1_NieMQ_QX-u647CyeL7Xvr4qbqrwKlYMxy0BTYUwEaW6ZC79QzBYH969DNDaWnAw/s1600/logo%20%281%29.png"
 

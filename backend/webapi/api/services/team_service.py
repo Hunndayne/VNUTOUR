@@ -12,7 +12,7 @@ from django.db import IntegrityError, transaction
 
 from api.models import (
     Account, Participant, Team, TeamMembership, ProgramPhase, PhaseRoster, SystemSetting,
-    MssvLinkAudit,
+    MssvLinkAudit, PendingDeprovision,
 )
 from api.services import registration_emails
 
@@ -773,3 +773,62 @@ def team_is_editable(team: Team) -> bool:
         Team.APPROVAL_PENDING,
         Team.APPROVAL_REJECTED,
     )
+
+
+def delete_team(team: Team, actor: Account) -> dict:
+    """Permanently delete a team with audit logging and Discord cleanup queue.
+    
+    Snapshots team data before deletion for audit trail.
+    If team has Discord resources, queues them for cleanup via PendingDeprovision.
+    Django CASCADE handles deletion of TeamMembership, PhaseRoster, ScoreEntry, etc.
+    """
+    from api.models import PendingDeprovision
+    from api.services.audit_service import record_audit
+
+    # Snapshot before deletion
+    member_count = TeamMembership.objects.filter(team=team).count()
+    before_data = {
+        "code": team.code,
+        "name": team.name,
+        "owner_username": team.owner_account.username if team.owner_account else None,
+        "approval_status": team.approval_status,
+        "provision_state": team.provision_state,
+        "member_count": member_count,
+        "discord_role_id": team.discord_role_id,
+        "text_channel_id": team.text_channel_id,
+        "voice_channel_id": team.voice_channel_id,
+    }
+
+    discord_cleanup = False
+    with transaction.atomic():
+        # Queue Discord cleanup if team has provisioned resources
+        if any([team.discord_role_id, team.text_channel_id, team.voice_channel_id]):
+            PendingDeprovision.objects.create(
+                discord_role_id=team.discord_role_id,
+                text_channel_id=team.text_channel_id,
+                voice_channel_id=team.voice_channel_id,
+                team_code=team.code,
+            )
+            discord_cleanup = True
+
+        # Record audit before deletion (team_id will be gone after delete)
+        record_audit(
+            actor=actor,
+            action="team.delete",
+            summary=f"Xóa đội {team.code} ({team.name})",
+            target_type="Team",
+            target_id=team.code,
+            before_data=before_data,
+            after_data=None,
+            reversible=False,
+        )
+
+        team.delete()
+
+    return {
+        "code": before_data["code"],
+        "name": before_data["name"],
+        "members_removed": member_count,
+        "discord_cleanup": "queued" if discord_cleanup else "none",
+    }
+

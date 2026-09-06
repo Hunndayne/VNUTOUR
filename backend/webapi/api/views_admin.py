@@ -12,7 +12,7 @@ from django.db.models import Q, Count
 
 from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
-    create_team, approve_team, reject_team,
+    create_team, approve_team, reject_team, delete_team,
     get_team_members, add_member, link_account_profile,
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
@@ -310,9 +310,8 @@ def team_item_view(request: HttpRequest, team_key: str):
     if request.method == "DELETE":
         if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
-        code = team.code
-        team.delete()
-        return JsonResponse({"status": "deleted", "code": code})
+        result = delete_team(team, acc)
+        return JsonResponse({"status": "deleted", **result})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 

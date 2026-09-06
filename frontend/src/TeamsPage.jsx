@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD, APPROVAL, PROVISION, Badge } from './ui.jsx'
-import { apiRequest, apiDownload, formatDateTime, logoutAndRedirect } from './api.js'
+import { apiRequest, apiDownload, formatDateTime, logoutAndRedirect, getStoredUser, isAdminRole } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+
+const SECONDARY_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40'
+const DANGER_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-clay/30 bg-white px-3 py-2 text-sm font-semibold text-clay transition hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40'
+const DANGER_SOLID_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-clay px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.96] disabled:cursor-not-allowed disabled:opacity-40'
 
 const FILTERS = [
   { key: 'all', label: 'Tất cả' },
@@ -48,6 +52,7 @@ function explainApiError(error) {
     merge_duplicate_team_codes: 'Danh sách ghép đang chứa đội bị chọn trùng.',
     registration_phase_closed: 'Chỉ có thể ghép đội trong phase đăng ký.',
     team_not_submitted: 'Chỉ có thể duyệt hoặc từ chối đội đã gửi đăng ký.',
+    forbidden: 'Bạn không có quyền thực hiện thao tác này.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu đội.'
 }
@@ -56,6 +61,7 @@ function normalizeTeamSummary(team) {
   const genderCounts = team.gender_counts || {}
   return {
     id: team.code,
+    code: team.code,
     name: team.name || '',
     owner: team.owner_username || '',
     status: team.approval_status || 'draft',
@@ -214,13 +220,102 @@ function ProofImage({ teamId }) {
   )
 }
 
-function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
+function DeleteTeamModal({ team, deleting, error, onClose, onConfirm }) {
+  const [confirmCode, setConfirmCode] = useState('')
+
+  useEffect(() => {
+    setConfirmCode('')
+  }, [team?.id, team?.code])
+
+  if (!team) return null
+
+  const targetCode = team.code || team.id || ''
+  const isMatch = confirmCode.trim() === targetCode
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      onClick={e => {
+        e.stopPropagation()
+        if (e.target === e.currentTarget && !deleting) onClose()
+      }}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-stone bg-white p-6 shadow-2xl space-y-4 animate-[fadeIn_0.15s_ease-out]"
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="font-display text-lg font-bold text-ink">Xác nhận xoá đội</h3>
+        <p className="text-sm text-ink/70 leading-relaxed">
+          Bạn có chắc chắn muốn xoá đội <strong className="font-semibold text-ink">{team.name}</strong> ({targetCode})? Toàn bộ thành viên, điểm số, lịch sử check-in và tài nguyên Discord sẽ bị xoá vĩnh viễn.
+        </p>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-ink/70">
+            Nhập mã đội <span className="font-mono font-bold text-clay">{targetCode}</span> để xác nhận
+          </label>
+          <input
+            type="text"
+            value={confirmCode}
+            onChange={e => setConfirmCode(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && isMatch && !deleting) {
+                e.preventDefault()
+                onConfirm()
+              }
+            }}
+            placeholder={targetCode}
+            disabled={deleting}
+            autoFocus
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2 font-mono text-sm text-ink placeholder:text-ink/25 outline-none transition focus:border-clay/40 focus:ring-2 focus:ring-clay/10 disabled:opacity-50"
+          />
+        </div>
+
+        {error && (
+          <p className="rounded-lg border border-clay/20 bg-clay/10 px-3 py-2 text-xs text-clay">
+            {error}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className={SECONDARY_BTN}
+          >
+            Huỷ
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!isMatch || deleting}
+            className={DANGER_SOLID_BTN}
+          >
+            <Icon name="trash" className="h-4 w-4" />
+            {deleting ? 'Đang xoá...' : 'Xác nhận xoá'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, isAdmin: isAdminProp }) {
   const [mode, setMode] = useState('idle')
   const [note, setNote] = useState('')
+  const [teamToDelete, setTeamToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
+  const user = getStoredUser()
+  const isAdmin = isAdminProp !== undefined ? isAdminProp : isAdminRole(user?.role)
 
   useEffect(() => {
     setMode('idle')
     setNote('')
+    setTeamToDelete(null)
+    setDeleting(false)
+    setDeleteError('')
   }, [team?.id])
 
   if (!team) return null
@@ -228,6 +323,26 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
   const canAct = team.status === 'pending_approval'
   const withAccount = team.members.filter(member => member.has_account).length
   const withDiscord = team.members.filter(member => member.discord_id).length
+
+  const handleDeleteTeam = async () => {
+    if (!team) return
+    try {
+      setDeleting(true)
+      setDeleteError('')
+      await apiRequest(`/teams/${team.id}`, { method: 'DELETE' })
+      setTeamToDelete(null)
+      onClose?.()
+      onReload?.()
+    } catch (err) {
+      if (err?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setDeleteError(explainApiError(err) || 'Không thể xoá đội.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50">
@@ -319,22 +434,37 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
           )}
         </div>
 
-        {canAct && !loading && (
+        {!loading && (canAct || isAdmin) && (
           <div className="border-t border-stone bg-white">
             {mode === 'idle' && (
-              <div className="flex gap-2 px-4 py-4">
-                <button type="button" onClick={() => setMode('rejecting')} className="flex items-center gap-1.5 rounded-lg border border-clay/30 bg-white px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/[0.04]">
-                  <Icon name="xmark" className="h-4 w-4" />
-                  Từ chối
-                </button>
-                <button type="button" onClick={() => setMode('confirming')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-trail px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]">
-                  <Icon name="checkPlain" className="h-4 w-4" />
-                  Duyệt đội
-                </button>
+              <div className="space-y-2 px-4 py-4">
+                {canAct && (
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setMode('rejecting')} className="flex items-center gap-1.5 rounded-lg border border-clay/30 bg-white px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/[0.04]">
+                      <Icon name="xmark" className="h-4 w-4" />
+                      Từ chối
+                    </button>
+                    <button type="button" onClick={() => setMode('confirming')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-trail px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]">
+                      <Icon name="checkPlain" className="h-4 w-4" />
+                      Duyệt đội
+                    </button>
+                  </div>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setTeamToDelete(team)}
+                    disabled={busy || deleting}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-clay/30 bg-white px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Icon name="trash" className="h-4 w-4" />
+                    Xóa đội
+                  </button>
+                )}
               </div>
             )}
 
-            {mode === 'confirming' && (
+            {canAct && mode === 'confirming' && (
               <div className="space-y-3 px-4 py-4">
                 <div className="rounded-lg border border-trail/25 bg-trail/[0.06] px-4 py-3">
                   <p className="text-sm font-semibold text-ink">Xác nhận duyệt đội?</p>
@@ -354,7 +484,7 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
               </div>
             )}
 
-            {mode === 'rejecting' && (
+            {canAct && mode === 'rejecting' && (
               <div className="space-y-3 px-4 py-4">
                 <div>
                   <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
@@ -383,6 +513,22 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
           </div>
         )}
       </aside>
+
+      {/* Delete Confirmation Modal */}
+      {teamToDelete && (
+        <DeleteTeamModal
+          team={teamToDelete}
+          deleting={deleting}
+          error={deleteError}
+          onClose={() => {
+            if (!deleting) {
+              setTeamToDelete(null)
+              setDeleteError('')
+            }
+          }}
+          onConfirm={handleDeleteTeam}
+        />
+      )}
     </div>
   )
 }
@@ -736,7 +882,7 @@ function MergeTeamsModal({
   )
 }
 
-function TeamsPage() {
+function TeamsPage({ isAdmin: isAdminProp } = {}) {
   const [teams, setTeams] = useState([])
   const [statusCounts, setStatusCounts] = useState(null)
   const [filter, setFilter] = useSearchParam('status', 'all')
@@ -756,6 +902,9 @@ function TeamsPage() {
   const [mergeSelectedIds, setMergeSelectedIds] = useState([])
   const [mergeError, setMergeError] = useState('')
   const [mergeNotice, setMergeNotice] = useState('')
+
+  const currentUser = useMemo(() => getStoredUser() || {}, [])
+  const isAdmin = isAdminProp !== undefined ? isAdminProp : isAdminRole(currentUser?.role)
 
   const loadTeams = useCallback(async () => {
     const params = new URLSearchParams({ limit: '200' })
@@ -814,6 +963,7 @@ function TeamsPage() {
         if (cancelled) return
         setSelectedTeam({
           id: detail.code,
+          code: detail.code,
           teamId: detail.id ?? null,
           name: detail.name,
           owner: detail.owner_username || '',
@@ -884,6 +1034,7 @@ function TeamsPage() {
       const detail = await apiRequest(`/teams/${selectedId}`)
       setSelectedTeam({
         id: detail.code,
+        code: detail.code,
         teamId: detail.id ?? null,
         name: detail.name,
         owner: detail.owner_username || '',
@@ -909,6 +1060,7 @@ function TeamsPage() {
       const detail = await apiRequest(`/teams/${selectedId}`)
       setSelectedTeam({
         id: detail.code,
+        code: detail.code,
         teamId: detail.id ?? null,
         name: detail.name,
         owner: detail.owner_username || '',
@@ -1162,6 +1314,8 @@ function TeamsPage() {
         onClose={() => setSelectedId(null)}
         onApprove={handleApprove}
         onReject={handleReject}
+        onReload={loadTeams}
+        isAdmin={isAdmin}
       />
 
       <CreateTeamDrawer

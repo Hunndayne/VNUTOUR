@@ -104,7 +104,9 @@ class DiscordBotPostgresServiceTests(TestCase):
         self.assertIsNotNone(broadcast.sent_at)
 
     def test_bot_heartbeat_is_visible_to_the_web_status_endpoint(self):
-        record_bot_heartbeat("VNUTour#0001", [123], 42.5)
+        record_bot_heartbeat("VNUTour#0001", [123], 42.5, [
+            {"id": 501, "name": "announcements", "category": "Thông tin"},
+        ])
 
         status = get_bot_runtime_status()
 
@@ -119,6 +121,57 @@ class DiscordBotPostgresServiceTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["bot"]["online"])
+
+        channels_response = self.client.get(
+            "/api/discord/channels",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(self.account)}",
+        )
+        self.assertEqual(channels_response.status_code, 200)
+        self.assertEqual(channels_response.json()["items"], [{
+            "id": "501",
+            "name": "announcements",
+            "category": "Thông tin",
+        }])
+
+    def test_broadcast_can_target_selected_discord_channels(self):
+        record_bot_heartbeat("VNUTour#0001", [123], 42.5, [
+            {"id": 501, "name": "announcements", "category": "Thông tin"},
+            {"id": 502, "name": "timeline", "category": "Thông tin"},
+        ])
+        response = self.client.post(
+            "/api/discord/broadcasts",
+            data={
+                "title": "Schedule",
+                "message": "Updated timeline",
+                "target": "channels",
+                "target_payload": {"channel_ids": ["502", "501"]},
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(self.account)}",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        claimed = claim_next_broadcast()
+        self.assertEqual(claimed["channel_ids"], [501, 502])
+
+    def test_broadcast_rejects_channel_not_reported_by_bot(self):
+        record_bot_heartbeat("VNUTour#0001", [123], 42.5, [
+            {"id": 501, "name": "announcements", "category": "Thông tin"},
+        ])
+        response = self.client.post(
+            "/api/discord/broadcasts",
+            data={
+                "title": "Unsafe",
+                "message": "Wrong channel",
+                "target": "channels",
+                "target_payload": {"channel_ids": ["999"]},
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(self.account)}",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "invalid_channel_ids")
 
     def test_broadcast_api_rejects_unknown_target_instead_of_sending_to_every_team(self):
         response = self.client.post(

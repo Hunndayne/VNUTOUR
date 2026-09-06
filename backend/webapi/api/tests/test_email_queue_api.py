@@ -45,6 +45,18 @@ class EmailQueueApiTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
         )
 
+    def test_admin_can_load_branded_composer_template(self):
+        response = self.client.get(
+            "/api/admin/email-template",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        html = response.json()["html"]
+        self.assertIn("THÔNG BÁO VNUTOUR", html)
+        self.assertIn("{{ten}}", html)
+        self.assertIn("c%E1%BB%A5m%20logo_100%25-01.png", html)
+
     def test_standard_email_preserves_to_cc_and_bcc_in_queue(self):
         response = self._post({
             "recipient_type": "specific",
