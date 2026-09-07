@@ -11,16 +11,8 @@ const navigationItems = [
 ]
 
 function handleNavigation(event, href) {
-  // For anchor links on the same page (like /#about, /#tour, /#faq),
-  // let the browser handle them natively for automatic smooth scrolling
-  if (href.startsWith('/#')) {
-    return
-  }
-
-  // For other non-internal links, do nothing
   if (!href.startsWith('/')) return
-
-  // For other internal links, use the custom router
+  
   event.preventDefault()
   navigate(href)
 }
