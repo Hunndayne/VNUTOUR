@@ -138,6 +138,18 @@ class TeamNamingRuleTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(team.name, "Doi Ngu Manh")
 
+    def test_a_full_team_cannot_reuse_an_existing_name(self):
+        Team.objects.create(code="T9001", name="Đội  Sao Mai")
+
+        team, error = register_team({
+            "team_name": " ĐỘI SAO MAI ",
+            "captain": person("SV215"),
+            "members": [person(f"SV2{i:02d}") for i in range(16, 20)],
+        })
+
+        self.assertIsNone(team)
+        self.assertEqual(error, "duplicate_team_name")
+
     def test_an_under_strength_team_may_not_choose_a_name(self):
         team, error = register_team({
             "team_name": "Ten Dat Som",

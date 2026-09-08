@@ -1315,6 +1315,7 @@ class FeedPost(models.Model):
     title = models.CharField(max_length=300)
     body = models.TextField(help_text="Markdown content")
     cover_image_url = models.CharField(max_length=500, blank=True, default="")
+    image_urls = models.JSONField(default=list, blank=True)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     is_pinned = models.BooleanField(default=False)
     author = models.ForeignKey(

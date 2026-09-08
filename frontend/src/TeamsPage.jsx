@@ -25,6 +25,20 @@ const GENDER_META = {
   unknown: { short: 'Chưa rõ', cls: 'bg-ink/[0.06] text-ink/45' },
 }
 
+function normalizeCaptain(team) {
+  const captainName = String(team.captain_name || '').trim()
+  const captainMssv = String(team.captain_mssv || '').trim()
+  const legacyOwner = String(team.owner_username || '').trim()
+
+  return {
+    captainName,
+    captainMssv,
+    owner: captainName && captainMssv
+      ? `${captainName} · ${captainMssv}`
+      : captainName || captainMssv || legacyOwner,
+  }
+}
+
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   if (code?.startsWith('merge_would_exceed_max')) {
@@ -44,6 +58,7 @@ function explainApiError(error) {
     invalid_owner_role: 'Tài khoản này không phải participant.',
     owner_profile_incomplete: 'Đội trưởng cần có MSSV trước khi tạo đội từ admin.',
     owner_already_has_team: 'Tài khoản đội trưởng đã thuộc một đội khác.',
+    duplicate_team_name: 'Tên đội này đã được một đội khác sử dụng. Vui lòng chọn tên khác.',
     conflict: 'Dữ liệu đội bị trùng hoặc đang xung đột.',
     not_found: 'Không tìm thấy đội cần thao tác.',
     merge_same_team: 'Không thể ghép một đội với chính nó.',
@@ -63,7 +78,7 @@ function normalizeTeamSummary(team) {
     id: team.code,
     code: team.code,
     name: team.name || '',
-    owner: team.owner_username || '',
+    ...normalizeCaptain(team),
     status: team.approval_status || 'draft',
     provision: team.provision_state || 'none',
     memberCount: team.member_count || 0,
@@ -966,7 +981,7 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
           code: detail.code,
           teamId: detail.id ?? null,
           name: detail.name,
-          owner: detail.owner_username || '',
+          ...normalizeCaptain(detail),
           status: detail.approval_status,
           provision: detail.provision_state || 'none',
           submittedAt: detail.submitted_at,
@@ -1037,7 +1052,7 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
         code: detail.code,
         teamId: detail.id ?? null,
         name: detail.name,
-        owner: detail.owner_username || '',
+        ...normalizeCaptain(detail),
         status: detail.approval_status,
         provision: detail.provision_state || 'none',
         submittedAt: detail.submitted_at,
@@ -1063,7 +1078,7 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
         code: detail.code,
         teamId: detail.id ?? null,
         name: detail.name,
-        owner: detail.owner_username || '',
+        ...normalizeCaptain(detail),
         status: detail.approval_status,
         provision: detail.provision_state || 'none',
         submittedAt: detail.submitted_at,
@@ -1287,7 +1302,20 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
                   >
                     <td className="px-4 py-3.5 font-mono text-sm text-ink/55">{team.id}</td>
                     <td className="px-4 py-3.5 text-sm font-medium text-ink">{team.name}</td>
-                    <td className="px-4 py-3.5 text-sm text-ink/60">{team.owner || '—'}</td>
+                    <td className="px-4 py-3.5 text-sm text-ink/60">
+                      {team.captainName || team.captainMssv ? (
+                        <div className="min-w-[10rem]">
+                          <p className="font-medium text-ink/70">
+                            {team.captainName || '(Chưa điền họ tên)'}
+                          </p>
+                          {team.captainMssv && (
+                            <p className="mt-0.5 font-mono text-xs text-ink/40">{team.captainMssv}</p>
+                          )}
+                        </div>
+                      ) : (
+                        team.owner || '—'
+                      )}
+                    </td>
                     <td className="px-4 py-3.5 text-center font-mono text-sm text-ink/55">{team.memberCount}</td>
                     <td className="px-4 py-3.5">
                       <div className="flex flex-wrap gap-1.5">

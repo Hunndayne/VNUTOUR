@@ -95,6 +95,37 @@ class FeedServiceUnitTests(TestCase):
         self.assertTrue(ok)
         self.assertFalse(FeedPost.objects.filter(id=post.id).exists())
 
+    def test_create_and_reorder_post_gallery(self):
+        urls = [
+            "https://example.com/first.jpg",
+            "https://example.com/second.jpg",
+            "https://example.com/third.jpg",
+        ]
+        post = feed_service.create_post(
+            author=self.admin,
+            title="Gallery",
+            body="Body",
+            image_urls=urls,
+        )
+        self.assertEqual(post.image_urls, urls)
+        self.assertEqual(post.cover_image_url, urls[0])
+
+        reordered = feed_service.update_post(post.id, image_urls=[urls[2], urls[0]])
+        self.assertEqual(reordered.image_urls, [urls[2], urls[0]])
+        self.assertEqual(reordered.cover_image_url, urls[2])
+
+    def test_post_gallery_validation(self):
+        with self.assertRaisesMessage(ValueError, "invalid_image_urls"):
+            feed_service.create_post(self.admin, "Invalid", "Body", image_urls="not-a-list")
+
+        with self.assertRaisesMessage(ValueError, "too_many_images"):
+            feed_service.create_post(
+                self.admin,
+                "Too many",
+                "Body",
+                image_urls=[f"https://example.com/{i}.jpg" for i in range(11)],
+            )
+
     def test_delete_post_cleans_up_image_files(self):
         """Deleting a post removes stored files for both FK-linked images and
         orphan images (post is NULL) whose URL the post's body references."""
@@ -106,11 +137,17 @@ class FeedServiceUnitTests(TestCase):
                     author=self.admin,
                     post_id=None,
                 )
+                gallery_orphan = feed_service.upload_feed_image(
+                    SimpleUploadedFile("gallery.png", b"\x89PNG-gallery", content_type="image/png"),
+                    author=self.admin,
+                    post_id=None,
+                )
                 # A cover image linked to the post.
                 post = feed_service.create_post(
                     author=self.admin,
                     title="With images",
                     body=f"Intro\n\n![pic]({orphan.image_url})\n\nOutro",
+                    image_urls=[gallery_orphan.image_url],
                     status=FeedPost.STATUS_PUBLISHED,
                 )
                 linked = feed_service.upload_feed_image(
@@ -120,16 +157,20 @@ class FeedServiceUnitTests(TestCase):
                 )
 
                 orphan_path = Path(media_root) / orphan.storage_key
+                gallery_orphan_path = Path(media_root) / gallery_orphan.storage_key
                 linked_path = Path(media_root) / linked.storage_key
                 self.assertTrue(orphan_path.exists())
+                self.assertTrue(gallery_orphan_path.exists())
                 self.assertTrue(linked_path.exists())
 
                 feed_service.delete_post(post.id)
 
                 # Files gone, orphan row swept, FK-linked row cascaded away.
                 self.assertFalse(orphan_path.exists())
+                self.assertFalse(gallery_orphan_path.exists())
                 self.assertFalse(linked_path.exists())
                 self.assertFalse(FeedImage.objects.filter(id=orphan.id).exists())
+                self.assertFalse(FeedImage.objects.filter(id=gallery_orphan.id).exists())
                 self.assertFalse(FeedImage.objects.filter(id=linked.id).exists())
 
     def test_toggle_pin(self):
@@ -328,6 +369,10 @@ class FeedApiIntegrationTests(TestCase):
             data=json.dumps({
                 "title": "Bai viet moi",
                 "body": "Noi dung bai viet",
+                "image_urls": [
+                    "https://example.com/one.jpg",
+                    "https://example.com/two.jpg",
+                ],
                 "status": "draft",
             }),
             content_type="application/json",
@@ -335,6 +380,14 @@ class FeedApiIntegrationTests(TestCase):
         )
         self.assertEqual(create_resp.status_code, 201)
         post_id = create_resp.json()["post"]["id"]
+        self.assertEqual(
+            create_resp.json()["post"]["image_urls"],
+            ["https://example.com/one.jpg", "https://example.com/two.jpg"],
+        )
+        self.assertEqual(
+            create_resp.json()["post"]["cover_image_url"],
+            "https://example.com/one.jpg",
+        )
 
         # List
         list_resp = self.client.get("/api/admin/feed", **_auth(self.admin_token))

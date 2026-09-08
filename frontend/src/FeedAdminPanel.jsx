@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiRequest, formatDateTime } from './api.js'
 import { compressImage } from './imageCompress.js'
+import FeedImageCarousel from './FeedImageCarousel.jsx'
+import { getFeedImageUrls } from './feedImages.js'
 import MarkdownPreview from './MarkdownPreview.jsx'
 import { Badge, CARD, Icon } from './ui.jsx'
 
@@ -9,6 +11,7 @@ const LABEL_CLASS = 'mb-1.5 block font-mono text-[10px] uppercase tracking-wides
 const PRIMARY_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:cursor-not-allowed disabled:opacity-40'
 const SECONDARY_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40'
 const DANGER_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-clay/30 bg-white px-3 py-2 text-sm font-semibold text-clay transition hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40'
+const MAX_GALLERY_IMAGES = 10
 
 export default function FeedAdminPanel() {
   const [posts, setPosts] = useState([])
@@ -21,10 +24,10 @@ export default function FeedAdminPanel() {
   const [editingPost, setEditingPost] = useState(null)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
-  const [coverImageUrl, setCoverImageUrl] = useState('')
+  const [imageUrls, setImageUrls] = useState([])
   const [status, setStatus] = useState('draft')
   const [isPinned, setIsPinned] = useState(false)
-  const [uploadingCover, setUploadingCover] = useState(false)
+  const [uploadingGallery, setUploadingGallery] = useState(false)
   const [uploadingBodyImg, setUploadingBodyImg] = useState(false)
   const [savingPost, setSavingPost] = useState(false)
   const [editorError, setEditorError] = useState('')
@@ -41,7 +44,7 @@ export default function FeedAdminPanel() {
   const [deletingPost, setDeletingPost] = useState(false)
 
   const textareaRef = useRef(null)
-  const coverInputRef = useRef(null)
+  const galleryInputRef = useRef(null)
   const bodyImgInputRef = useRef(null)
 
   const fetchPosts = useCallback(async () => {
@@ -67,7 +70,7 @@ export default function FeedAdminPanel() {
     setEditingPost(null)
     setTitle('')
     setBody('')
-    setCoverImageUrl('')
+    setImageUrls([])
     setStatus('draft')
     setIsPinned(false)
     setEditorError('')
@@ -79,37 +82,77 @@ export default function FeedAdminPanel() {
     setEditingPost(post)
     setTitle(post.title || '')
     setBody(post.body || '')
-    setCoverImageUrl(post.cover_image_url || '')
+    setImageUrls(getFeedImageUrls(post))
     setStatus(post.status || 'draft')
     setIsPinned(Boolean(post.is_pinned))
     setEditorError('')
     setIsEditorOpen(true)
   }
 
-  // Handle Cover Image upload
-  const handleCoverUpload = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadingCover(true)
+  // Upload one or many ordered gallery images. The first image is the table thumbnail.
+  const handleGalleryUpload = async (e) => {
+    const selectedFiles = Array.from(e.target.files || [])
+    if (selectedFiles.length === 0) return
+
+    const remainingSlots = MAX_GALLERY_IMAGES - imageUrls.length
+    if (remainingSlots <= 0) {
+      setEditorError(`Mỗi bài viết được đăng tối đa ${MAX_GALLERY_IMAGES} ảnh.`)
+      if (galleryInputRef.current) galleryInputRef.current.value = ''
+      return
+    }
+
+    const files = selectedFiles.slice(0, remainingSlots)
+    setUploadingGallery(true)
     setEditorError('')
     try {
-      const compressed = await compressImage(file, { maxDim: 1600, quality: 0.8 })
-      const formData = new FormData()
-      formData.append('image', compressed, compressed.name || 'cover.webp')
-      if (editingPost?.id) formData.append('post_id', editingPost.id)
-      const res = await apiRequest('/admin/feed/upload-image', {
-        method: 'POST',
-        body: formData,
-      })
-      if (res.url) {
-        setCoverImageUrl(res.url)
+      const uploads = await Promise.allSettled(files.map(async (file) => {
+        const compressed = await compressImage(file, { maxDim: 1600, quality: 0.8 })
+        const formData = new FormData()
+        formData.append('image', compressed, compressed.name || 'gallery.webp')
+        if (editingPost?.id) formData.append('post_id', editingPost.id)
+        const res = await apiRequest('/admin/feed/upload-image', {
+          method: 'POST',
+          body: formData,
+        })
+        if (!res.url) throw new Error('missing_image_url')
+        return res.url
+      }))
+
+      const uploadedUrls = uploads
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value)
+      if (uploadedUrls.length > 0) {
+        setImageUrls((current) => [...current, ...uploadedUrls].slice(0, MAX_GALLERY_IMAGES))
+      }
+
+      const failedCount = uploads.length - uploadedUrls.length
+      if (failedCount > 0) {
+        setEditorError(`${failedCount} ảnh tải lên thất bại. Các ảnh còn lại đã được thêm.`)
+      } else if (selectedFiles.length > files.length) {
+        setEditorError(`Đã thêm đủ ${MAX_GALLERY_IMAGES} ảnh; các ảnh vượt giới hạn chưa được tải lên.`)
       }
     } catch {
-      setEditorError('Tải ảnh bìa thất bại. Vui lòng kiểm tra định dạng hoặc thử lại.')
+      setEditorError('Tải ảnh bài viết thất bại. Vui lòng kiểm tra định dạng hoặc thử lại.')
     } finally {
-      setUploadingCover(false)
-      if (coverInputRef.current) coverInputRef.current.value = ''
+      setUploadingGallery(false)
+      if (galleryInputRef.current) galleryInputRef.current.value = ''
     }
+  }
+
+  const moveGalleryImage = (index, direction) => {
+    const nextIndex = index + direction
+    if (nextIndex < 0 || nextIndex >= imageUrls.length) return
+    setImageUrls((current) => {
+      const reordered = [...current]
+      const currentUrl = reordered[index]
+      reordered[index] = reordered[nextIndex]
+      reordered[nextIndex] = currentUrl
+      return reordered
+    })
+  }
+
+  const removeGalleryImage = (index) => {
+    setImageUrls((current) => current.filter((_, imageIndex) => imageIndex !== index))
   }
 
   // Handle Body Image upload (one or many) & insert into textarea
@@ -167,7 +210,7 @@ export default function FeedAdminPanel() {
       const payload = {
         title: title.trim(),
         body: body || '',
-        cover_image_url: coverImageUrl.trim(),
+        image_urls: imageUrls,
         status,
         is_pinned: isPinned,
       }
@@ -307,17 +350,25 @@ export default function FeedAdminPanel() {
                     0,
                   )
                   const isDraft = post.status === 'draft'
+                  const postImageUrls = getFeedImageUrls(post)
 
                   return (
                     <tr key={post.id} className="transition hover:bg-paper/50">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          {post.cover_image_url ? (
-                            <img
-                              src={post.cover_image_url}
-                              alt=""
-                              className="h-10 w-14 shrink-0 rounded object-cover border border-stone"
-                            />
+                          {postImageUrls.length > 0 ? (
+                            <div className="relative h-10 w-14 shrink-0">
+                              <img
+                                src={postImageUrls[0]}
+                                alt=""
+                                className="h-full w-full rounded border border-stone object-cover"
+                              />
+                              {postImageUrls.length > 1 && (
+                                <span className="absolute -right-1.5 -top-1.5 rounded-full bg-ink px-1.5 py-0.5 font-mono text-[9px] font-bold text-white shadow-sm">
+                                  +{postImageUrls.length - 1}
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded bg-stone/40 text-xs text-ink/30 font-mono">
                               No img
@@ -440,42 +491,86 @@ export default function FeedAdminPanel() {
                   />
                 </div>
 
-                {/* Cover image upload */}
-                <div>
-                  <label className={LABEL_CLASS}>Ảnh bìa (Thumbnail/Cover)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={coverImageUrl}
-                      onChange={(e) => setCoverImageUrl(e.target.value)}
-                      placeholder="URL ảnh bìa hoặc tải lên từ máy..."
-                      className={`${FIELD_CLASS} flex-1`}
-                    />
-                    <input
-                      ref={coverInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={handleCoverUpload}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => coverInputRef.current?.click()}
-                      disabled={uploadingCover}
-                      className={SECONDARY_BTN}
-                    >
-                      {uploadingCover ? 'Đang tải...' : 'Tải ảnh'}
-                    </button>
-                    {coverImageUrl && (
-                      <button
-                        type="button"
-                        onClick={() => setCoverImageUrl('')}
-                        className="text-xs text-clay hover:underline"
-                      >
-                        Xoá
-                      </button>
-                    )}
+                {/* Ordered post gallery */}
+                <div className="space-y-2.5">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <label className={LABEL_CLASS}>Ảnh bài viết</label>
+                      <p className="text-xs text-ink/50">
+                        Tải tối đa {MAX_GALLERY_IMAGES} ảnh. Ảnh đầu tiên là ảnh đại diện.
+                      </p>
+                    </div>
+                    <span className="shrink-0 font-mono text-[11px] text-ink/45">
+                      {imageUrls.length}/{MAX_GALLERY_IMAGES}
+                    </span>
                   </div>
+
+                  <input
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    multiple
+                    onChange={handleGalleryUpload}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    disabled={uploadingGallery || imageUrls.length >= MAX_GALLERY_IMAGES}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-trail/40 bg-trail/[0.04] px-4 py-3 text-sm font-semibold text-trail transition hover:border-trail/70 hover:bg-trail/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <span className="text-lg leading-none">+</span>
+                    {uploadingGallery ? 'Đang tải ảnh lên...' : 'Chọn một hoặc nhiều ảnh'}
+                  </button>
+
+                  {imageUrls.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {imageUrls.map((url, index) => (
+                        <div key={`${url}-${index}`} className="group relative overflow-hidden rounded-lg border border-stone bg-paper">
+                          <img
+                            src={url}
+                            alt={`Ảnh bài viết ${index + 1}`}
+                            className="aspect-[4/3] w-full object-cover"
+                          />
+                          <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent p-1.5 text-white">
+                            <span className="rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] font-bold backdrop-blur-sm">
+                              {index === 0 ? 'Ảnh bìa' : index + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeGalleryImage(index)}
+                              className="flex h-6 w-6 items-center justify-center rounded-full bg-black/35 text-xs transition hover:bg-clay"
+                              aria-label={`Xoá ảnh ${index + 1}`}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {imageUrls.length > 1 && (
+                            <div className="absolute inset-x-0 bottom-0 flex justify-center gap-1 bg-gradient-to-t from-black/65 to-transparent p-1.5 pt-5">
+                              <button
+                                type="button"
+                                onClick={() => moveGalleryImage(index, -1)}
+                                disabled={index === 0}
+                                className="flex h-6 w-7 items-center justify-center rounded bg-white/90 text-sm font-bold text-ink transition hover:bg-white disabled:opacity-30"
+                                aria-label={`Đưa ảnh ${index + 1} sang trước`}
+                              >
+                                ←
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveGalleryImage(index, 1)}
+                                disabled={index === imageUrls.length - 1}
+                                className="flex h-6 w-7 items-center justify-center rounded bg-white/90 text-sm font-bold text-ink transition hover:bg-white disabled:opacity-30"
+                                aria-label={`Đưa ảnh ${index + 1} ra sau`}
+                              >
+                                →
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Body editor */}
@@ -568,10 +663,8 @@ export default function FeedAdminPanel() {
                     {title || '(Chưa có tiêu đề)'}
                   </h2>
 
-                  {coverImageUrl && (
-                    <div className="overflow-hidden rounded-lg border border-stone max-h-56">
-                      <img src={coverImageUrl} alt="" className="w-full object-cover" />
-                    </div>
+                  {imageUrls.length > 0 && (
+                    <FeedImageCarousel images={imageUrls} title={title || 'Bài viết xem trước'} compact />
                   )}
 
                   <div className="border-t border-stone/50 pt-3">
