@@ -32,11 +32,35 @@ logger = logging.getLogger(__name__)
 
 FEED_IMAGE_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 FEED_IMAGE_MAX_BYTES = 15 * 1024 * 1024
+FEED_POST_MAX_IMAGES = 10
 
 # Matches a markdown image tag's URL: ![alt](url)
 _MD_IMAGE_URL = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 
 REACTION_KEYS = [k for k, _ in FeedReaction.REACTION_CHOICES]
+
+
+def _normalize_image_urls(image_urls) -> list[str]:
+    """Validate, trim, and de-duplicate the ordered post gallery."""
+    if image_urls is None:
+        return []
+    if not isinstance(image_urls, list):
+        raise ValueError("invalid_image_urls")
+
+    normalized: list[str] = []
+    for value in image_urls:
+        if not isinstance(value, str):
+            raise ValueError("invalid_image_urls")
+        url = value.strip()
+        if not url or url in normalized:
+            continue
+        if len(url) > 500:
+            raise ValueError("image_url_too_long")
+        normalized.append(url)
+
+    if len(normalized) > FEED_POST_MAX_IMAGES:
+        raise ValueError("too_many_images")
+    return normalized
 
 
 # =====================================================================
@@ -67,6 +91,7 @@ def create_post(
     title: str,
     body: str,
     cover_image_url: str = "",
+    image_urls: list[str] | None = None,
     status: str = FeedPost.STATUS_DRAFT,
     is_pinned: bool = False,
 ) -> FeedPost:
@@ -77,12 +102,19 @@ def create_post(
     if status not in (FeedPost.STATUS_DRAFT, FeedPost.STATUS_PUBLISHED):
         raise ValueError("invalid_status")
 
+    # ``cover_image_url`` remains populated for older clients and table
+    # thumbnails. New clients treat the first gallery image as the cover.
+    gallery = _normalize_image_urls(
+        image_urls if image_urls is not None else ([cover_image_url] if cover_image_url else [])
+    )
+    cover = gallery[0] if gallery else ""
     published_at = timezone.now() if status == FeedPost.STATUS_PUBLISHED else None
     return FeedPost.objects.create(
         author=author,
         title=title,
         body=body or "",
-        cover_image_url=(cover_image_url or "").strip(),
+        cover_image_url=cover,
+        image_urls=gallery,
         status=status,
         is_pinned=bool(is_pinned),
         published_at=published_at,
@@ -107,9 +139,18 @@ def update_post(post_id: int, **fields) -> FeedPost:
         post.body = fields["body"] or ""
         update_fields.append("body")
 
-    if "cover_image_url" in fields:
-        post.cover_image_url = (fields["cover_image_url"] or "").strip()
-        update_fields.append("cover_image_url")
+    if "image_urls" in fields:
+        gallery = _normalize_image_urls(fields["image_urls"])
+        post.image_urls = gallery
+        post.cover_image_url = gallery[0] if gallery else ""
+        update_fields.extend(["image_urls", "cover_image_url"])
+    elif "cover_image_url" in fields:
+        # Backwards-compatible update from clients that only know one cover.
+        cover = (fields["cover_image_url"] or "").strip()
+        gallery = _normalize_image_urls([cover] if cover else [])
+        post.image_urls = gallery
+        post.cover_image_url = gallery[0] if gallery else ""
+        update_fields.extend(["image_urls", "cover_image_url"])
 
     if "is_pinned" in fields:
         post.is_pinned = bool(fields["is_pinned"])
@@ -130,8 +171,11 @@ def update_post(post_id: int, **fields) -> FeedPost:
 
 
 def _urls_referenced_by_post(post: FeedPost) -> set[str]:
-    """Every image URL a post points at: its cover plus any markdown body image."""
+    """Every image URL a post points at: gallery plus markdown body images."""
     urls: set[str] = set()
+    for url in post.image_urls or []:
+        if isinstance(url, str) and url.strip():
+            urls.add(url.strip())
     if post.cover_image_url:
         urls.add(post.cover_image_url.strip())
     for match in _MD_IMAGE_URL.finditer(post.body or ""):

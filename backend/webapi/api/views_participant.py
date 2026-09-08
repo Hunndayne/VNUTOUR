@@ -17,7 +17,7 @@ from api.models import (
     MssvLinkAudit,
 )
 from api.services.registration_service import (
-    get_schema, validate_account_mssv_claim, validate_person_submission,
+    UIT_CODE, get_schema, validate_account_mssv_claim, validate_person_submission,
 )
 from api.services.program_service import get_current_sub_event, get_current_phase
 from api.services.checkin_qr_service import team_qr_visible
@@ -48,7 +48,8 @@ from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
     link_account_profile, ensure_default_phase_roster_for_team, registration_is_open,
-    profile_is_account_owned_by_other, draft_membership_move_error,
+    team_name_is_duplicate,
+    draft_membership_move_error,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
 
@@ -134,15 +135,13 @@ def _prepare_member_submission(data: dict, who: str):
 
 
 def _member_resolution(data: dict, team: Team | None = None):
-    payload = dict(data or {})
-    mssv = str((payload.get("mssv") or "").strip())
-    email = str((payload.get("email") or "").strip())
+    data = data or {}
+    mssv = str((data.get("mssv") or "").strip())
+    email = str((data.get("email") or "").strip())
     if not mssv:
         return None, "missing:member:mssv"
     if not email:
         return None, "missing:member:email"
-    payload["mssv"] = mssv
-    payload["email"] = email
 
     # Block if this MSSV is already in a submitted (pending/approved) team
     submitted_member = TeamMembership.objects.filter(
@@ -168,39 +167,57 @@ def _member_resolution(data: dict, team: Team | None = None):
     if account:
         if account.email.strip().lower() != email.lower():
             return None, "registration_mismatch"
-        for key in ("full_name", "email", "phone", "school", "faculty"):
-            value = getattr(account, key, None)
-            if value:
-                payload[key] = value
     elif participant:
         registered_email = (participant.email or "").strip().lower()
         if registered_email and registered_email != email.lower():
             return None, "registration_mismatch"
 
+    # Which registration fields this MSSV already has on file. We record only
+    # *presence*, never the values: a captain may fill in a member's missing
+    # fields, but must not be able to view — or overwrite — data that already
+    # belongs to another account (see ``add_member``'s missing-only merge).
+    stored: set[str] = set()
+    if account:
+        for key in ("full_name", "email", "phone", "school", "faculty"):
+            if getattr(account, key, None):
+                stored.add(key)
     if participant:
-        for key in ("full_name", "email", "phone", "school", "faculty", "facebook", "date_of_birth"):
-            value = getattr(participant, key, None)
+        for key in (
+            "full_name", "email", "phone", "school",
+            "faculty", "facebook", "cccd", "date_of_birth",
+        ):
+            if getattr(participant, key, None):
+                stored.add(key)
+        for key, value in (participant.extra or {}).items():
             if value:
-                payload[key] = value.isoformat() if key == "date_of_birth" else value
-        if participant.extra:
-            for key, value in participant.extra.items():
-                if value:
-                    payload[key] = value
+                stored.add(key)
 
-    fields = []
-    for field in get_schema().get("person_fields", []):
-        if not field.get("enabled", True):
-            continue
-        if field.get("key") == "cccd" and participant and participant.cccd:
-            continue
-        fields.append(field)
+    # Match submission validation's school precedence. UIT's CCCD is filled
+    # automatically on save, even when the stored value is still blank. The
+    # school itself stays private, so the client cannot apply this rule alone.
+    registered_school = (
+        (account.school if account else "")
+        or (participant.school if participant else "")
+        or ""
+    ).strip()
+    if registered_school == UIT_CODE:
+        stored.add("cccd")
 
-    safe_profile = {
-        "mssv": payload.get("mssv") or "",
-        "full_name": payload.get("full_name") or "",
-        "school": payload.get("school") or "",
-    }
-    return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
+    # Show the identity the captain typed plus only the fields still blank.
+    # A field that already holds a value is hidden entirely (write-only), so no
+    # stored registration data ever leaves this endpoint.
+    fields = [
+        field
+        for field in get_schema().get("person_fields", [])
+        if field.get("enabled", True)
+        and (field.get("key") in ("mssv", "email") or field.get("key") not in stored)
+    ]
+
+    return {
+        "profile": {"mssv": mssv, "email": email},
+        "fields": fields,
+        "has_account": account is not None,
+    }, None
 
 
 def _placeholder_team_name(mssv: str) -> str:
@@ -627,7 +644,11 @@ def my_team_view(request: HttpRequest):
                 "roster_size_final": _min <= _mc <= _max,
                 "can_name": _mc == _max,
             },
-            "members": get_team_members(team, visibility="self", requester=acc),
+            "members": get_team_members(
+                team,
+                visibility="captain" if membership.is_captain else "self",
+                requester=acc,
+            ),
             "editable": team_is_editable(team),
             "naming_allowed": (
                 team.approval_status == Team.APPROVAL_APPROVED
@@ -756,6 +777,8 @@ def my_team_view(request: HttpRequest):
                 {"error": f"team_name_requires_full_team:{max_size}"},
                 status=409,
             )
+        if new_name and team_name_is_duplicate(new_name, exclude_team=team):
+            return JsonResponse({"error": "duplicate_team_name"}, status=409)
         if new_name:
             team.name = new_name
 
@@ -1195,11 +1218,6 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
             team=team,
             participant__mssv=target_mssv,
         ).select_related("participant").first()
-        if profile_is_account_owned_by_other(
-            target_membership.participant if target_membership else None, acc
-        ):
-            return JsonResponse({"error": "member_profile_owned"}, status=403)
-
         # mssv + email are locked reference fields: they can never change on an
         # edit, so we take them from the existing record and ignore whatever the
         # client sent. This also lets a PATCH omit them entirely (the form keeps
@@ -1231,7 +1249,7 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
             (
                 item for item in get_team_members(
                     team,
-                    visibility="self",
+                    visibility="captain" if is_captain else "self",
                     requester=acc,
                 )
                 if item["mssv"] == participant.mssv

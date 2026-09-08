@@ -29,6 +29,7 @@ function explain(code, schema) {
     case 'invalid_date': return `Ngày sinh của ${whoLabel(who)} chưa hợp lệ.`
     case 'mssv_in_other_team': return `MSSV ${who} đã thuộc một đội khác.`
     case 'duplicate_mssv_in_team': return 'Có MSSV bị trùng giữa các thành viên trong đội.'
+    case 'duplicate_team_name': return 'Tên đội này đã được một đội khác sử dụng. Vui lòng chọn tên khác.'
     case 'team_size_mismatch': return `Đội cần đủ ${maxTeamSize} thành viên.`
     case 'team_size_out_of_range': return `Số người tham gia phải từ ${minTeamSize} đến ${maxTeamSize}.`
     case 'team_name_requires_full_team':

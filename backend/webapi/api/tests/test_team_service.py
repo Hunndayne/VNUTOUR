@@ -25,6 +25,15 @@ class TeamServiceTests(TestCase):
         self.assertTrue(Team.objects.filter(code="T9002", name="New team").exists())
         self.assertEqual(next_code.call_count, 2)
 
+    def test_create_team_rejects_duplicate_name_ignoring_case_and_spacing(self):
+        Team.objects.create(code="T9001", name="Đội  Sao Mai")
+
+        team, error = create_team("  ĐỘI SAO MAI  ")
+
+        self.assertIsNone(team)
+        self.assertEqual(error, "duplicate_team_name")
+        self.assertEqual(Team.objects.count(), 1)
+
     def test_one_account_cannot_own_two_teams(self):
         owner = Account.objects.create(
             username="owner", email="owner@example.com", password_hash="x",
@@ -112,6 +121,41 @@ class AdminTeamCreationOwnershipTests(TestCase):
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 201)
         self.assertEqual(Team.objects.filter(owner_account__isnull=True).count(), 2)
+
+    def test_admin_cannot_create_team_with_duplicate_name(self):
+        admin = Account.objects.create(
+            username="duplicate-admin", email="duplicate-admin@example.com", password_hash="x",
+            role=Account.ROLE_ADMIN,
+        )
+        Team.objects.create(code="T9001", name="Đội Hải Âu")
+
+        response = self.client.post(
+            "/api/teams", data={"name": "đội hải âu"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(admin)}",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "duplicate_team_name")
+
+    def test_admin_cannot_rename_team_to_duplicate_name(self):
+        admin = Account.objects.create(
+            username="rename-admin", email="rename-admin@example.com", password_hash="x",
+            role=Account.ROLE_ADMIN,
+        )
+        Team.objects.create(code="T9001", name="Đội Hải Âu")
+        team = Team.objects.create(code="T9002", name="Đội Trường Sơn")
+
+        response = self.client.patch(
+            f"/api/teams/{team.code}", data={"name": " ĐỘI HẢI ÂU "},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(admin)}",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "duplicate_team_name")
+        team.refresh_from_db()
+        self.assertEqual(team.name, "Đội Trường Sơn")
 
     def test_get_team_members_syncs_active_account_profile(self):
         account = Account.objects.create(

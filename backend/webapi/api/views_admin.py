@@ -16,6 +16,7 @@ from api.services.team_service import (
     get_team_members, add_member, link_account_profile,
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
+    team_name_is_duplicate,
 )
 from api.services.audit_service import record_audit
 from api.services import team_merge_service
@@ -37,23 +38,43 @@ def _lock_registration_phase() -> bool:
 # Teams
 # =====================================================================
 
-def _team_leader_display(team, memberships):
-    """The team's leader for display: the actual ``is_captain`` member, never the
-    denormalized ``owner_account``.
+def _team_leader_fields(team, memberships):
+    """Return the actual captain's stable display identity.
 
     ``owner_account`` is stamped at creation and never re-synced, so it goes
     stale when the captain leaves the team or changes their MSSV — leaving a
     ghost leader who is no longer on the roster (shown as captain here while
     being a member elsewhere). The ``is_captain`` membership is the real leader,
-    so prefer its linked account username, then the participant's own name/MSSV.
+    so its participant profile supplies the name and MSSV shown in admin. Keep
+    ``owner_username`` for backwards compatibility with older clients.
+
     Fall back to ``owner_account`` only when the roster has no captain yet.
     """
     captain = next((m for m in memberships if m.is_captain), None)
     if captain:
         participant = captain.participant
         account = participant.account if participant.account_id else None
-        return (account.username if account else None) or participant.full_name or participant.mssv
-    return team.owner_account.username if team.owner_account_id else None
+        owner_username = (
+            (account.username if account else None)
+            or participant.full_name
+            or participant.mssv
+        )
+        return {
+            "owner_username": owner_username,
+            "captain_name": (
+                participant.full_name
+                or (account.full_name if account else None)
+                or owner_username
+            ),
+            "captain_mssv": participant.mssv or (account.mssv if account else None),
+        }
+
+    owner = team.owner_account if team.owner_account_id else None
+    return {
+        "owner_username": owner.username if owner else None,
+        "captain_name": (owner.full_name or owner.username) if owner else None,
+        "captain_mssv": owner.mssv if owner else None,
+    }
 
 
 @csrf_exempt
@@ -73,8 +94,17 @@ def teams_collection_view(request: HttpRequest):
             base_qs = base_qs.filter(
                 Q(name__icontains=q)
                 | Q(code__icontains=q)
-                | Q(owner_account__username__icontains=q),
-            )
+                | Q(owner_account__username__icontains=q)
+                | Q(owner_account__full_name__icontains=q)
+                | Q(owner_account__mssv__icontains=q)
+                | (
+                    Q(memberships__is_captain=True)
+                    & (
+                        Q(memberships__participant__full_name__icontains=q)
+                        | Q(memberships__participant__mssv__icontains=q)
+                    )
+                ),
+            ).distinct()
 
         # Per-status totals for the tab badges — counted across the whole
         # (search-filtered) set, not just the loaded page.
@@ -84,7 +114,7 @@ def teams_collection_view(request: HttpRequest):
             Team.APPROVAL_APPROVED: 0,
             Team.APPROVAL_REJECTED: 0,
         }
-        for row in base_qs.values("approval_status").annotate(n=Count("id")):
+        for row in base_qs.values("approval_status").annotate(n=Count("id", distinct=True)):
             status_counts[row["approval_status"]] = row["n"]
         total_all = sum(status_counts.values())
 
@@ -101,7 +131,9 @@ def teams_collection_view(request: HttpRequest):
             page, limit = 1, 50
         offset = (page - 1) * limit
         total = qs.count()
-        teams = qs.prefetch_related("memberships__participant__account")[offset:offset + limit]
+        teams = qs.select_related("owner_account").prefetch_related(
+            "memberships__participant__account",
+        )[offset:offset + limit]
 
         items = []
         for t in teams:
@@ -135,7 +167,7 @@ def teams_collection_view(request: HttpRequest):
                         "is_captain": membership.is_captain,
                     })
                 item.update({
-                    "owner_username": _team_leader_display(t, memberships),
+                    **_team_leader_fields(t, memberships),
                     "gender_counts": gender_counts,
                     "member_summaries": member_summaries,
                     "provision_state": t.provision_state,
@@ -186,7 +218,8 @@ def teams_collection_view(request: HttpRequest):
 
         team, err = create_team(name, owner_account=owner_account, auto_approve=True)
         if err:
-            return JsonResponse({"error": err}, status=400)
+            status = 409 if err == "duplicate_team_name" else 400
+            return JsonResponse({"error": err}, status=status)
 
         if owner_account and owner_account.mssv:
             _, member_err = add_member(
@@ -243,7 +276,7 @@ def team_item_view(request: HttpRequest, team_key: str):
         if is_admin(acc):
             payload.update({
                 "id": team.id,
-                "owner_username": _team_leader_display(
+                **_team_leader_fields(
                     team,
                     list(team.memberships.select_related("participant__account").all()),
                 ),
@@ -273,7 +306,10 @@ def team_item_view(request: HttpRequest, team_key: str):
 
         new_name = data.get("name") or data.get("team_name")
         if new_name:
-            team.name = str(new_name).strip()
+            cleaned_name = str(new_name).strip()
+            if team_name_is_duplicate(cleaned_name, exclude_team=team):
+                return JsonResponse({"error": "duplicate_team_name"}, status=409)
+            team.name = cleaned_name
             team.save(update_fields=["name", "updated_at"])
 
         new_approval_status = data.get("approval_status")

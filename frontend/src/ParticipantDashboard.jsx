@@ -214,16 +214,15 @@ function explainApiError(error) {
     return `Đội cần đủ ${size} người, hoặc đúng 1 người (đăng ký cá nhân), mới có thể đặt tên, thanh toán hoặc gửi duyệt.`
   }
   if (code === 'registration_mismatch') {
-    const teamCode = error?.data?.detail?.team_code
-    const where = teamCode ? `đội ${teamCode}` : 'một đội'
-    return `MSSV này đã thuộc ${where}, nhưng email đăng ký trong đội chưa khớp với tài khoản Google của bạn — có thể trưởng nhóm nhập nhầm email. Vui lòng nhờ trưởng nhóm cập nhật lại email của bạn trong thông tin đội, hoặc liên hệ Ban tổ chức để được hỗ trợ. Sau khi email được sửa đúng, đăng nhập lại là hệ thống sẽ tự đưa bạn vào đội.`
+    return 'Email bạn vừa nhập không trùng với email đã đăng ký cho MSSV này. Vui lòng kiểm tra MSSV và Email của thành viên đã đăng ký trên trang web. Nếu thông tin đã đăng ký bị sai, vui lòng liên hệ Ban tổ chức để cập nhật.'
   }
   const map = {
     missing_mssv: 'Bạn cần cập nhật MSSV trước khi tiếp tục.',
     mssv_taken: 'MSSV này đã được dùng bởi tài khoản khác.',
-    registration_mismatch: 'MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại.',
+    registration_mismatch: 'Email bạn vừa nhập không trùng với email đã đăng ký cho MSSV này. Vui lòng kiểm tra MSSV và Email của thành viên đã đăng ký trên trang web.',
     profile_incomplete: 'Hồ sơ hiện chưa đủ để tạo đội.',
     team_locked: 'Đội đã khóa chỉnh sửa.',
+    duplicate_team_name: 'Tên đội này đã được một đội khác sử dụng. Vui lòng chọn tên khác.',
     roster_locked: 'Đội đã được xác nhận để thanh toán nên thông tin đã bị khóa. Cần thay đổi thì hãy liên hệ BTC.',
     roster_not_locked: 'Bạn cần xác nhận lại danh sách đội trước khi tải minh chứng hoặc gửi duyệt.',
     payment_already_confirmed: 'Hệ thống đã tìm thấy giao dịch. Thanh toán đã được xác nhận nên không thể hủy.',
@@ -357,6 +356,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
           <select
             id={id}
             disabled={disabled}
+            required={field.required}
             className={baseClass}
             value={values.includes(value) ? value : (isOther ? '__other__' : '')}
             onChange={(e) => onChange(e.target.value === '__other__' ? ' ' : e.target.value)}
@@ -371,6 +371,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
             <input
               className={baseClass}
               disabled={disabled}
+              required={field.required}
               placeholder="Nhập giá trị khác"
               value={String(value).trim()}
               onChange={(e) => onChange(e.target.value)}
@@ -382,6 +383,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
           id={id}
           type="url"
           disabled={disabled}
+          required={field.required}
           className={baseClass}
           placeholder="Dán link ảnh minh chứng"
           value={value || ''}
@@ -392,6 +394,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
           id={id}
           type={field.type === 'date' ? 'date' : field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text'}
           disabled={disabled || field.key === 'mssv' && disabled}
+          required={field.required}
           className={baseClass}
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
@@ -622,7 +625,9 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
   const [resolveError, setResolveError] = useState('')
 
   useEffect(() => {
-    if (!form) return
+    // Editing opens with every field already resolved; only an add needs to
+    // look up which fields the member is still missing.
+    if (!form || editing) return
     const mssv = String(form.mssv || '').trim()
     const email = String(form.email || '').trim()
     const key = `${mssv}|${email}`
@@ -657,7 +662,7 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [form?.mssv, form?.email, resolveKey, fields, form, onChange])
+  }, [form?.mssv, form?.email, resolveKey, fields, form, onChange, editing])
 
   useEffect(() => {
     if (!form) return undefined
@@ -676,6 +681,10 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
   if (!form) return null
   const identityFields = fields.filter((field) => field.key === 'mssv' || field.key === 'email')
   const visibleFields = form.resolved_fields || identityFields
+  const missingFields = form.resolved_fields
+    ? getMissingProfileFields(form, form.resolved_fields)
+    : []
+  const formReady = Boolean(form.resolved_fields) && missingFields.length === 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
@@ -730,18 +739,28 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
               {error}
             </div>
           )}
+          {!form.resolved_fields && (
+            <p className="text-sm text-[#9A6B12]">
+              Nhập đúng MSSV và Email để tải hồ sơ, sau đó điền đủ các trường bắt buộc.
+            </p>
+          )}
+          {form.resolved_fields && missingFields.length > 0 && (
+            <p className="text-sm font-medium text-[#B93A23]">
+              Còn thiếu: {missingFields.map((field) => field.label).join(', ')}.
+            </p>
+          )}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button type="button" onClick={onClose} disabled={saving} className={SECONDARY_BUTTON}>
-            Huỷ
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className={PRIMARY_BUTTON}
-          >
-            <Icon name="checkPlain" className="h-4 w-4" />
-            {saving ? 'Đang lưu...' : 'Lưu thành viên'}
-          </button>
+            <button type="button" onClick={onClose} disabled={saving} className={SECONDARY_BUTTON}>
+              Huỷ
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !formReady}
+              className={PRIMARY_BUTTON}
+            >
+              <Icon name="checkPlain" className="h-4 w-4" />
+              {saving ? 'Đang lưu...' : 'Lưu thành viên'}
+            </button>
           </div>
         </div>
       </form>
@@ -1864,7 +1883,12 @@ function ParticipantDashboard() {
     // Clear any error left over from a prior action so the modal opens clean —
     // its warning box only shows problems from this add/edit attempt.
     setApiError('')
-    const base = index === null ? blankMember() : withFlatExtra(members[index])
+    // Editing a member already on the roster: the captain owns this record, so
+    // show every field pre-filled instead of re-resolving (which would hide the
+    // fields that already have values).
+    const base = index === null
+      ? blankMember()
+      : { ...withFlatExtra(members[index]), resolved_fields: personFields }
     const stored = readDraft(`participant:member:${index === null ? 'new' : base.mssv || 'new'}`)
     setMemberDialog({ index })
     // The stored draft wins field by field, but anything the server has since
@@ -2106,6 +2130,15 @@ function ParticipantDashboard() {
   const saveMember = async (event) => {
     event?.preventDefault?.()
     if (!memberForm?.mssv || !memberForm?.email) return
+    if (!memberForm.resolved_fields) {
+      setApiError('Vui lòng nhập đúng MSSV và Email, đợi hệ thống tải hồ sơ rồi điền đủ thông tin.')
+      return
+    }
+    const missingFields = getMissingProfileFields(memberForm, memberForm.resolved_fields)
+    if (missingFields.length > 0) {
+      setApiError(`Vui lòng nhập đầy đủ: ${missingFields.map((field) => field.label).join(', ')}.`)
+      return
+    }
     const normalizedMemberForm = {
       ...memberForm,
       mssv: String(memberForm.mssv).trim().toUpperCase(),
@@ -2907,7 +2940,7 @@ function ParticipantDashboard() {
                             </button>
                           ) : (
                             <>
-                              {member.email && (amCaptain || member.mssv === myMssv) && (
+                              {(amCaptain || member.mssv === myMssv) && (
                                 <button
                                   type="button"
                                   onClick={() => openMemberDialog(index)}

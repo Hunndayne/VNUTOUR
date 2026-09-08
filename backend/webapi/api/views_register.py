@@ -28,6 +28,7 @@ _CONFLICT_CODES = frozenset({
     "mssv_in_other_team",
     "mssv_email_mismatch",
     "duplicate_mssv_in_team",
+    "duplicate_team_name",
 })
 
 

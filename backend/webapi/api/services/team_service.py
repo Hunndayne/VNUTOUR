@@ -105,17 +105,36 @@ def profile_is_account_owned_by_other(
     participant: Optional[Participant],
     actor: Optional[Account],
 ) -> bool:
-    """True when `participant` is a self-managed profile belonging to another account.
+    """True when an add must preserve another account's existing profile values.
 
-    A participant row with no linked account is captain-authored data the captain
-    may freely edit. Once the member claims it with their own account, the account
-    becomes the source of truth (see `_sync_participant_from_account`), so nobody
-    else may overwrite its registration fields. `actor=None` means an unattributed
-    write, which is treated as "not the owner".
+    The add flow may fill blanks so an incomplete account can join a team, but it
+    must not silently overwrite non-empty values. Deliberate edits after joining
+    are authorized separately by the member-detail endpoint.
     """
     if participant is None or not participant.account_id:
         return False
     return actor is None or participant.account_id != actor.id
+
+
+def _missing_profile_defaults(participant: Participant, submitted: dict) -> dict:
+    """Return submitted values that fill blanks on an account-owned profile."""
+    defaults = {}
+    for key, value in submitted.items():
+        if value is None:
+            continue
+        if key == "extra":
+            merged = dict(participant.extra or {})
+            changed = False
+            for extra_key, extra_value in (value or {}).items():
+                if merged.get(extra_key) in (None, "") and extra_value not in (None, ""):
+                    merged[extra_key] = extra_value
+                    changed = True
+            if changed:
+                defaults["extra"] = merged
+            continue
+        if getattr(participant, key, None) in (None, "") and value not in (None, ""):
+            defaults[key] = value
+    return defaults
 
 
 def _sync_participant_from_account(participant: Participant, account: Account) -> list[str]:
@@ -159,6 +178,26 @@ def ensure_default_phase_roster_for_team(team: Team) -> None:
     _ensure_default_qualifying_roster(team)
 
 
+def normalize_team_name(name: str) -> str:
+    """Return the comparison form used to detect duplicate team names."""
+    return " ".join(str(name or "").split()).casefold()
+
+
+def team_name_is_duplicate(name: str, *, exclude_team: Team | None = None) -> bool:
+    """Check a name against every other team, ignoring case and extra spacing."""
+    normalized = normalize_team_name(name)
+    if not normalized:
+        return False
+
+    queryset = Team.objects.all()
+    if exclude_team is not None and exclude_team.pk is not None:
+        queryset = queryset.exclude(pk=exclude_team.pk)
+    return any(
+        normalize_team_name(existing) == normalized
+        for existing in queryset.values_list("name", flat=True).iterator()
+    )
+
+
 def create_team(
     name: str,
     owner_account: Account | None = None,
@@ -169,6 +208,8 @@ def create_team(
     name = (name or "").strip()
     if not name:
         return None, "missing_team_name"
+    if team_name_is_duplicate(name):
+        return None, "duplicate_team_name"
 
     # Concurrent requests can calculate the same sequential code. The database
     # unique constraint remains the source of truth; a loser retries with the
@@ -267,9 +308,9 @@ def add_member(
 ) -> Tuple[Optional[Participant], Optional[str]]:
     """Add a participant to a team. Returns (participant, None) or (None, error_code).
 
-    `actor` is the account performing the write. Registration fields of a profile
-    already claimed by a different account are left untouched — the membership is
-    still created, but the owner's own data wins.
+    `actor` is the account performing the write. For a profile already claimed by
+    another account, supplied values fill missing registration fields while
+    existing non-empty values remain unchanged.
     """
     mssv = (mssv or "").strip().upper()
     normalized_email = (email or "").strip().lower()
@@ -380,23 +421,26 @@ def add_member(
             if clash:
                 return None, "email_in_team"
 
-    # A profile claimed by another account is self-managed: create the membership
-    # but never overwrite its registration fields with caller-supplied values.
-    defaults = {}
-    if not profile_is_account_owned_by_other(existing_participant, actor):
-        for key, value in {
-            "full_name": full_name,
-            "email": email,
-            "phone": phone,
-            "faculty": faculty,
-            "school": school,
-            "facebook": facebook,
-            "cccd": cccd,
-            "date_of_birth": date_of_birth,
-            "extra": extra,
-        }.items():
-            if value is not None:
-                defaults[key] = value
+    submitted_profile = {
+        "full_name": full_name,
+        "email": email,
+        "phone": phone,
+        "faculty": faculty,
+        "school": school,
+        "facebook": facebook,
+        "cccd": cccd,
+        "date_of_birth": date_of_birth,
+        "extra": extra,
+    }
+    # Adding/re-adding an account-owned profile may complete blank required
+    # fields, but is not an implicit overwrite of values already on that profile.
+    if profile_is_account_owned_by_other(existing_participant, actor):
+        defaults = _missing_profile_defaults(existing_participant, submitted_profile)
+    else:
+        defaults = {
+            key: value for key, value in submitted_profile.items()
+            if value is not None
+        }
         if "full_name" not in defaults:
             defaults["full_name"] = ""
 
@@ -451,6 +495,7 @@ def add_member(
     return participant, None
 
 
+@transaction.atomic
 def update_member(
     team: Team,
     mssv: str,
@@ -467,8 +512,9 @@ def update_member(
     """Update a participant who belongs to `team`. Returns (participant, error).
 
     `mssv` and `email` are identity/reconciliation references and are never
-    overwritten here, even if the caller passes new values — remove the
-    member and add a new one instead if they must change.
+    overwritten here. Shared Account fields are updated together with the
+    registration profile so the next account-to-participant sync cannot undo a
+    deliberate edit made from the team roster.
     """
     mssv = (mssv or "").strip().upper()
     membership = TeamMembership.objects.filter(
@@ -490,6 +536,15 @@ def update_member(
             changed.append(field)
     if changed:
         p.save(update_fields=changed + ["updated_at"])
+    if p.account_id:
+        account_changed = []
+        for field in ("full_name", "phone", "faculty", "school"):
+            value = fields.get(field)
+            if value is not None and getattr(p.account, field) != value:
+                setattr(p.account, field, value)
+                account_changed.append(field)
+        if account_changed:
+            p.account.save(update_fields=account_changed)
     return p, None
 
 
@@ -570,6 +625,7 @@ def get_team_members(
     """Return team members with an explicit privacy policy.
 
     ``full`` is reserved for admin/internal validation.
+    ``captain`` exposes editable registration fields for the whole roster.
     ``basic`` exposes only name, school and student id.
     ``self`` exposes the requester's full profile and basic data for teammates.
     """
@@ -597,7 +653,7 @@ def get_team_members(
             "full_name": p.full_name,
             "school": p.school,
         }
-        can_view_full = visibility == "full" or (
+        can_view_registration = visibility in {"full", "captain"} or (
             visibility == "self"
             and requester is not None
             and (
@@ -605,11 +661,11 @@ def get_team_members(
                 or bool(requester.mssv and p.mssv == requester.mssv)
             )
         )
-        if not can_view_full:
+        if not can_view_registration:
             result.append(basic)
             continue
 
-        result.append({
+        registration = {
             **basic,
             "email": p.email,
             "phone": p.phone,
@@ -618,14 +674,18 @@ def get_team_members(
             "cccd": p.cccd,
             "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,
             "extra": p.extra or {},
-            "discord_id": p.discord_id,
             "is_captain": m.is_captain,
-            "team_number": m.team_number,
             "has_account": account is not None,
-            "account_email": account.email if account else None,
-            "email_mismatch": last_override is not None,
-            "form_email": last_override.old_email if last_override else None,
-        })
+        }
+        if visibility == "full":
+            registration.update({
+                "discord_id": p.discord_id,
+                "team_number": m.team_number,
+                "account_email": account.email if account else None,
+                "email_mismatch": last_override is not None,
+                "form_email": last_override.old_email if last_override else None,
+            })
+        result.append(registration)
     return result
 
 

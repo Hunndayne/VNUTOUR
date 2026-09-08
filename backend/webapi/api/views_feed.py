@@ -50,11 +50,15 @@ def _format_post(post: FeedPost, reactions: dict, comment_count: int) -> dict:
     author_name = "BTC VNUTour"
     if post.author:
         author_name = post.author.full_name or post.author.username or "BTC VNUTour"
+    image_urls = [url for url in (post.image_urls or []) if isinstance(url, str) and url]
+    if not image_urls and post.cover_image_url:
+        image_urls = [post.cover_image_url]
     return {
         "id": post.id,
         "title": post.title,
         "body": post.body,
         "cover_image_url": post.cover_image_url,
+        "image_urls": image_urls,
         "status": post.status,
         "is_pinned": post.is_pinned,
         "author_name": author_name,
@@ -292,6 +296,7 @@ def admin_feed_list_create_view(request: HttpRequest):
                 title=data.get("title", ""),
                 body=data.get("body", ""),
                 cover_image_url=data.get("cover_image_url", ""),
+                image_urls=data.get("image_urls"),
                 status=data.get("status", FeedPost.STATUS_DRAFT),
                 is_pinned=data.get("is_pinned", False),
             )

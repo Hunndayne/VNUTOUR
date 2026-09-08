@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { apiRequest } from './api.js'
 import MarkdownPreview from './MarkdownPreview.jsx'
+import FeedImageCarousel from './FeedImageCarousel.jsx'
+import { getFeedImageUrls } from './feedImages.js'
 import { stripMarkdown } from './markdownUtils.jsx'
 import { navigate } from './router.js'
 
@@ -54,6 +56,7 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
   )
 
   const commentCount = postState?.comment_count || 0
+  const imageUrls = getFeedImageUrls(postState)
 
   // Load initial comments in full view
   useEffect(() => {
@@ -194,14 +197,9 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
           {postState.title}
         </h3>
 
-        {postState.cover_image_url && (
-          <div className="mt-3 overflow-hidden rounded-lg border border-[#DCD8CC] max-h-48">
-            <img
-              src={postState.cover_image_url}
-              alt=""
-              className="h-full w-full object-cover"
-              loading="lazy"
-            />
+        {imageUrls.length > 0 && (
+          <div className="mt-3">
+            <FeedImageCarousel images={imageUrls} title={postState.title} compact />
           </div>
         )}
 
@@ -242,15 +240,10 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
         {postState.title}
       </h2>
 
-      {/* Cover Image */}
-      {postState.cover_image_url && (
-        <div className="my-4 overflow-hidden rounded-xl border border-[#DCD8CC]">
-          <img
-            src={postState.cover_image_url}
-            alt={postState.title}
-            className="w-full max-h-96 object-cover"
-            loading="lazy"
-          />
+      {/* Swipeable post gallery */}
+      {imageUrls.length > 0 && (
+        <div className="my-4">
+          <FeedImageCarousel images={imageUrls} title={postState.title} />
         </div>
       )}
 
