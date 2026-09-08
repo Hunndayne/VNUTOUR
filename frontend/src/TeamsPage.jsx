@@ -53,7 +53,14 @@ function explainApiError(error) {
     const teamCode = code.split(':')[1]
     return `Đội ${teamCode || 'này'} chưa được duyệt nên chưa thể ghép.`
   }
+  if (code?.startsWith('mssv_conflict_roster')) {
+    const teamCode = code.split(':')[1]
+    return `MSSV đúng này đã thuộc một thí sinh khác đang ở đội ${teamCode || 'khác'}. Cần xử lý thủ công, không thể tự sửa.`
+  }
   const map = {
+    participant_not_found: 'Không tìm thấy thí sinh với MSSV hiện tại.',
+    account_link_conflict: 'Thí sinh này đã gắn với một tài khoản khác. Gỡ liên kết cũ trước khi sửa.',
+    missing_fields: 'Thiếu MSSV hiện tại hoặc MSSV đúng.',
     owner_not_found: 'Không tìm thấy tài khoản đội trưởng.',
     invalid_owner_role: 'Tài khoản này không phải participant.',
     owner_profile_incomplete: 'Đội trưởng cần có MSSV trước khi tạo đội từ admin.',
@@ -99,6 +106,24 @@ function normalizeTeamSummary(team) {
   }
 }
 
+function mapTeamDetail(detail) {
+  return {
+    id: detail.code,
+    code: detail.code,
+    teamId: detail.id ?? null,
+    name: detail.name,
+    ...normalizeCaptain(detail),
+    status: detail.approval_status,
+    provision: detail.provision_state || 'none',
+    submittedAt: detail.submitted_at,
+    note: detail.approval_note || '',
+    paymentProof: detail.payment_proof || '',
+    hasPaymentProof: Boolean(detail.has_payment_proof_file),
+    isLateRegistration: Boolean(detail.is_late_registration),
+    members: detail.members || [],
+  }
+}
+
 function memberStripCls(member) {
   if (member.has_account && member.discord_id) return 'bg-trail'
   if (member.has_account) return 'bg-[#3E7CA8]'
@@ -106,8 +131,40 @@ function memberStripCls(member) {
   return 'bg-stone'
 }
 
-function MemberCard({ member }) {
+function MemberCard({ member, isAdmin = false, onFixIdentity }) {
   const strip = memberStripCls(member)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(member.mssv || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const startEdit = () => {
+    setValue(member.mssv || '')
+    setError('')
+    setEditing(true)
+  }
+  const cancel = () => {
+    setEditing(false)
+    setSaving(false)
+    setError('')
+  }
+  const submit = async () => {
+    const next = value.trim().toUpperCase()
+    if (!next || next === (member.mssv || '').toUpperCase()) {
+      setError('Nhập MSSV đúng, khác MSSV hiện tại.')
+      return
+    }
+    try {
+      setSaving(true)
+      setError('')
+      // On success the drawer reloads and this card re-renders with new data.
+      await onFixIdentity(member.mssv, next)
+    } catch (err) {
+      setError(explainApiError(err) || 'Không sửa được định danh.')
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="flex">
       <div className={`w-[3px] shrink-0 ${strip}`} />
@@ -167,6 +224,56 @@ function MemberCard({ member }) {
             </span>
           </div>
         </div>
+
+        {isAdmin && onFixIdentity && (
+          <div className="mt-2 border-t border-stone/40 pt-2">
+            {!editing ? (
+              <button
+                type="button"
+                onClick={startEdit}
+                className="text-[11px] font-medium text-trail/80 underline underline-offset-2 transition hover:text-trail"
+              >
+                Sửa MSSV / nối tài khoản
+              </button>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-[11px] leading-relaxed text-ink/45">
+                  Sửa MSSV thí sinh về đúng số để nối với tài khoản web. Đội, điểm và điểm danh giữ nguyên.
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    value={value}
+                    onChange={e => setValue(e.target.value)}
+                    disabled={saving}
+                    placeholder="MSSV đúng"
+                    className="w-36 rounded-md border border-stone bg-white px-2 py-1 font-mono text-xs text-ink outline-none focus:border-trail disabled:opacity-60"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') submit()
+                      if (e.key === 'Escape') cancel()
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={saving}
+                    className="rounded-md bg-trail px-3 py-1 text-xs font-semibold text-white transition hover:bg-trail/90 disabled:opacity-60"
+                  >
+                    {saving ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancel}
+                    disabled={saving}
+                    className="rounded-md border border-stone bg-white px-3 py-1 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60"
+                  >
+                    Huỷ
+                  </button>
+                </div>
+                {error && <p className="text-[11px] leading-relaxed text-clay">{error}</p>}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -315,7 +422,7 @@ function DeleteTeamModal({ team, deleting, error, onClose, onConfirm }) {
   )
 }
 
-function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, isAdmin: isAdminProp }) {
+function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, onFixIdentity, isAdmin: isAdminProp }) {
   const [mode, setMode] = useState('idle')
   const [note, setNote] = useState('')
   const [teamToDelete, setTeamToDelete] = useState(null)
@@ -440,7 +547,14 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReloa
                 </p>
                 <div className={`${CARD} overflow-hidden divide-y divide-stone/50`}>
                   {team.members.length > 0
-                    ? team.members.map(member => <MemberCard key={member.mssv} member={member} />)
+                    ? team.members.map(member => (
+                        <MemberCard
+                          key={member.mssv}
+                          member={member}
+                          isAdmin={isAdmin}
+                          onFixIdentity={onFixIdentity}
+                        />
+                      ))
                     : <p className="px-4 py-5 text-sm italic text-ink/30">Đội chưa có thành viên.</p>}
                 </div>
 
@@ -1091,6 +1205,30 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
     }
   })
 
+  // Correct a roster participant's mis-typed MSSV and relink the real account.
+  // Not routed through withBusy so the member card can show its own inline
+  // error/spinner; a 401 still bounces to login.
+  const handleFixIdentity = async (currentMssv, correctMssv) => {
+    try {
+      const res = await apiRequest('/admin/participants/fix-identity', {
+        method: 'POST',
+        body: { current_mssv: currentMssv, correct_mssv: correctMssv },
+      })
+      await loadTeams()
+      if (selectedId) {
+        const detail = await apiRequest(`/teams/${selectedId}`)
+        setSelectedTeam(mapTeamDetail(detail))
+      }
+      return res
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      throw error
+    }
+  }
+
   const loadMergeCandidates = useCallback(async () => {
     setMergeLoading(true)
     try {
@@ -1343,6 +1481,7 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
         onApprove={handleApprove}
         onReject={handleReject}
         onReload={loadTeams}
+        onFixIdentity={handleFixIdentity}
         isAdmin={isAdmin}
       />
 

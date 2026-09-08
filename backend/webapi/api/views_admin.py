@@ -10,10 +10,11 @@ from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
 from django.db.models import Q, Count
 
-from api.models import Account, ProgramPhase, Team, TeamMembership
+from api.models import Account, Participant, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team, delete_team,
     get_team_members, add_member, link_account_profile,
+    fix_participant_identity,
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
     team_name_is_duplicate,
@@ -781,14 +782,35 @@ def admin_account_detail_view(request: HttpRequest, username: str):
             target.save()
         except IntegrityError:
             return JsonResponse({"error": "conflict"}, status=409)
-        return JsonResponse({
+
+        # Editing an account's MSSV only re-keys which Participant it resolves to
+        # (team visibility joins Account.mssv → Participant.mssv). Flag the two
+        # outcomes so the UI can steer the admin to the identity-fix tool: a
+        # matching roster row we could link to, or no roster row at all.
+        warning = None
+        if "mssv" in data:
+            matched = (
+                Participant.objects.filter(mssv=target.mssv).first()
+                if target.mssv else None
+            )
+            if matched:
+                _p, _status = link_account_profile(target)
+                if _status == "mssv_claimed_by_other":
+                    warning = "account_mssv_claimed_by_other"
+            elif target.mssv:
+                warning = "account_mssv_no_participant"
+
+        resp = {
             "username": target.username,
             "email": target.email,
             "mssv": target.mssv,
             "full_name": target.full_name,
             "role": target.role,
             "is_active": target.is_active,
-        })
+        }
+        if warning:
+            resp["warning"] = warning
+        return JsonResponse(resp)
 
     if request.method == "DELETE":
         target.is_active = False
@@ -796,6 +818,55 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         return JsonResponse({"status": "deactivated"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def admin_fix_participant_identity_view(request: HttpRequest):
+    """POST: correct a roster participant's mis-typed MSSV and link its account.
+
+    Body: ``{"current_mssv": "<wrong>", "correct_mssv": "<right>"}``.
+
+    Fixes the Participant row that carries the team membership — so the account
+    holding ``correct_mssv`` can finally see its team — instead of the account's
+    own MSSV, which team resolution does not read for the roster side.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    current_mssv = str((data.get("current_mssv") or "").strip())
+    correct_mssv = str((data.get("correct_mssv") or "").strip())
+    if not current_mssv or not correct_mssv:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    participant, error = fix_participant_identity(
+        current_mssv, correct_mssv, actor=acc,
+    )
+    if error == "participant_not_found":
+        return JsonResponse({"error": error}, status=404)
+    if error == "missing_correct_mssv":
+        return JsonResponse({"error": "missing_fields"}, status=400)
+    if error:
+        # mssv_conflict_roster:<code> and account_link_conflict
+        return JsonResponse({"error": error}, status=409)
+
+    membership = (
+        TeamMembership.objects.filter(participant=participant)
+        .select_related("team").first()
+    )
+    return JsonResponse({
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "account_linked": bool(participant.account_id),
+        "team_code": membership.team.code if membership else None,
+        "team_name": membership.team.name if membership else None,
+    })
 
 
 # =====================================================================
