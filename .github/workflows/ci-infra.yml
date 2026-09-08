@@ -1,0 +1,164 @@
+name: CI for Infra (K8s / ArgoCD)
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "k8s/**"
+  pull_request:
+    paths:
+      - "k8s/**"
+
+concurrency:
+  group: ci-infra-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default; each job below declares only what it needs.
+permissions: read-all
+
+jobs:
+  # Hard blocker: catches secrets accidentally committed into a Secret/
+  # ConfigMap manifest or an ArgoCD Application spec.
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, not just the latest commit
+
+      - name: Install Gitleaks
+        # CLI directly (not gitleaks/gitleaks-action)
+        run: |
+          GITLEAKS_VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Scan for secrets
+        run: gitleaks detect --source . --redact --exit-code 1
+
+  # Hard blocker: a Kustomize overlay that doesn't build, or renders a manifest with an invalid schema, is guaranteed to fail an ArgoCD sync - this catches that before merge instead of after.
+  kustomize-validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          KUSTOMIZE_VERSION=v5.4.3
+          curl -sLo kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz -C /usr/local/bin/
+          chmod +x /usr/local/bin/kustomize
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION=0.8.0
+          curl -sLo kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf kubeconform.tar.gz kubeconform
+          chmod +x kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      # Validate the files in `kustomize/` by running `kustomize build` to generate the complete manifest, then checking it with `kubeconform`.
+      - name: Build and validate every Kustomize overlay
+        run: |
+          set -e
+          found=0
+          for dir in $(find k8s -name kustomization.yaml -exec dirname {} \; | sort -u); do
+            # Skip Kustomize Components (kind: Component) - they cannot be
+            # built standalone; they are validated when the overlays that
+            # include them are built below.
+            if grep -q "kind: Component" "$dir/kustomization.yaml" 2>/dev/null; then
+              echo "== $dir (skipped - Kustomize Component, not a standalone overlay) =="
+              continue
+            fi
+            echo "== $dir =="
+            found=1
+            # -ignore-missing-schemas: ArgoCD CRDs (Application, AppProject)
+            # aren't in kubeconform's default schema set, so unknown-kind
+            # resources are skipped rather than failing the job.
+            kustomize build "$dir" | kubeconform -strict -summary -ignore-missing-schemas
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No buildable kustomization.yaml found under k8s/ - nothing to validate"
+          fi
+
+      # Covers any manifest under k8s/ that ISN'T wired into a Kustomize build above. Skips files that live in the same directory as a kustomization.yaml, since those are already checked via `kustomize build` above.
+
+      - name: Validate standalone manifests outside Kustomize builds
+        run: |
+          set -e
+          mapfile -t kustomize_dirs < <(find k8s -name kustomization.yaml -exec dirname {} \; | sort -u)
+          is_kustomize_dir() {
+            for kd in "${kustomize_dirs[@]}"; do
+              [ "$1" = "$kd" ] && return 0
+            done
+            return 1
+          }
+          standalone_found=0
+          while IFS= read -r -d '' f; do
+            dir=$(dirname "$f")
+            is_kustomize_dir "$dir" && continue
+            echo "== $f =="
+            standalone_found=1
+            kubeconform -strict -summary -ignore-missing-schemas "$f"
+          done < <(find k8s \( -name '*.yaml' -o -name '*.yml' \) ! -name 'kustomization.yaml' -print0)
+          if [ "$standalone_found" -eq 0 ]; then
+            echo "No standalone manifests outside Kustomize overlays"
+          fi
+
+  # Report-only for now: misconfig findings (missing resource limits, no non-root user, missing NetworkPolicy, etc.) don't break an ArgoCD sync the way a bad kustomize build does, so this doesn't block yet - same "detect first, tighten later" policy as the SCA/SAST steps in ci-backend.yml.
+  # scan-ref: k8s covers the whole tree directly (argocd/, kustomize/, staging/ - whatever the actual layout is), no need to know it up front.
+  iac-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # needed to upload the Trivy SARIF report
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: meta
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Scan k8s manifests with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: k8s
+          format: sarif
+          output: trivy-results-k8s-config-${{ steps.meta.outputs.sha }}.sarif
+          severity: HIGH,CRITICAL
+          # No exit-code set -> report-only, does not fail the job.
+          # Add `exit-code: '1'` once current findings are triaged.
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results-k8s-config-${{ steps.meta.outputs.sha }}.sarif
+
+  # Notify: Discord notification + PR comment (always runs, even on failure)
+  notify:
+    if: always()
+    needs: [secret-scan, kustomize-validate, iac-scan]
+    uses: ./.github/workflows/notify.yml
+    secrets: inherit
+    with:
+      workflow_name: "CI Infra (K8s / ArgoCD)"
+      overall_status: >-
+        ${{
+            contains(needs.*.result, 'failure')   && 'failure'   ||
+            contains(needs.*.result, 'cancelled') && 'cancelled' ||
+            'success'
+        }}
+      job_results: >-
+        secret-scan=${{ needs.secret-scan.result }}
+        kustomize-validate=${{ needs.kustomize-validate.result }}
+        iac-scan=${{ needs.iac-scan.result }}
