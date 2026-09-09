@@ -1,26 +1,26 @@
 # gitleaks configuration for VNUTour.
 #
-# The infra manifests and local dev compose files allowlisted below hold ONLY
-# placeholder / development-only credentials. Real production secrets are
-# injected at runtime from the cluster Secret (see k8s/kustomize) and the
-# process environment — they never live in git. Because gitleaks scans the full
-# history, these paths are allowlisted so the secret-scan gate stays meaningful:
-# it still fails on anything committed OUTSIDE these known placeholder files.
+# We keep the full default ruleset (useDefault = true) so real secrets — Discord
+# bot tokens, client secrets, DB URLs with credentials, private keys, etc. — are
+# still caught. The two adjustments below only silence confirmed false positives:
 #
-# If a real secret ever needs to live in one of these files, rotate it and
-# narrow this allowlist instead of widening it.
+# 1. discord-client-id: a Discord *client ID* (and channel/user snowflake IDs)
+#    are PUBLIC identifiers, not secrets — the client ID is shipped in the
+#    frontend OAuth URL by design. The default rule flags them as if secret,
+#    which is pure noise (frontend/src/DiscordPage.jsx, the OAuth tests). The
+#    Discord bot token / client *secret* have their own rules and stay enabled.
+# 2. generic-api-key inside Django's auto-generated migrations: those files
+#    reference the previous migration's name/hash, which trips the entropy rule.
+#    Migrations never hold real secrets.
+
+title = "VNUTour gitleaks config"
 
 [extend]
 useDefault = true
+disabledRules = ["discord-client-id"]
 
 [allowlist]
-description = "Placeholder/dev-only credentials in infra manifests and local dev compose files"
+description = "Non-secret high-entropy strings flagged by generic rules"
 paths = [
-    '''k8s/.*secret.*\.ya?ml''',
-    '''backend/docker-compose\.yml''',
-    '''backend/docker-compose\.dev\.yml''',
-]
-regexes = [
-    # Django dev fallback SECRET_KEY (settings.py, used only when DEBUG).
-    '''dev-secret-key-change-me''',
+    '''backend/webapi/api/migrations/.*\.py''',
 ]
