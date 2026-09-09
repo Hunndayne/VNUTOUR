@@ -4,7 +4,6 @@ import { apiRequest } from './api.js'
 import { navigate, useSearchParam } from './router.js'
 
 const ERROR_MESSAGES = {
-  invalid_or_expired_token: 'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu liên kết mới.',
   password_too_short: 'Mật khẩu phải có ít nhất 8 ký tự.',
   missing_fields: 'Vui lòng điền đầy đủ thông tin.',
   too_many_attempts: 'Bạn thao tác quá nhiều lần. Vui lòng chờ rồi thử lại.',
@@ -18,6 +17,7 @@ function ResetPasswordPage() {
   const [apiError, setApiError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [linkExpired, setLinkExpired] = useState(false)
 
   const inputClass = (hasErr) =>
     [
@@ -51,13 +51,20 @@ function ResetPasswordPage() {
       setDone(true)
     } catch (err) {
       const code = err.data?.error
-      setApiError(ERROR_MESSAGES[code] || (err.message?.includes('fetch') ? 'Không thể kết nối tới server.' : `Lỗi: ${err.message}`))
+      if (code === 'invalid_or_expired_token') {
+        // The link itself is dead — retrying the form is pointless, so switch
+        // to the "request a new link" notice instead of an inline error.
+        setLinkExpired(true)
+      } else {
+        setApiError(ERROR_MESSAGES[code] || (err.message?.includes('fetch') ? 'Không thể kết nối tới server.' : `Lỗi: ${err.message}`))
+      }
     } finally {
       setIsLoading(false)
     }
   }
 
   const missingToken = !token.trim()
+  const needsNewLink = missingToken || linkExpired
 
   return (
     <main className="min-h-screen bg-[#0e1218] font-['Lato',Arial,sans-serif] flex items-center justify-center px-4 py-12">
@@ -77,10 +84,12 @@ function ResetPasswordPage() {
             Nhập mật khẩu mới cho tài khoản VNUTour của bạn.
           </p>
 
-          {missingToken ? (
+          {needsNewLink ? (
             <div className="mt-6 space-y-4">
               <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-4 text-sm text-rose-300">
-                Liên kết đặt lại mật khẩu không hợp lệ. Vui lòng yêu cầu một liên kết mới.
+                {linkExpired
+                  ? 'Liên kết đặt lại mật khẩu đã hết hạn hoặc đã được sử dụng. Vui lòng yêu cầu một liên kết mới.'
+                  : 'Liên kết đặt lại mật khẩu không hợp lệ. Vui lòng yêu cầu một liên kết mới.'}
               </div>
               <button type="button"
                 onClick={() => navigate('/forgot-password')}

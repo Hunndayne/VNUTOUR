@@ -5,6 +5,7 @@ from api.views_admin import (
     teams_collection_view, team_item_view,
     team_approve_view, team_reject_view,
     admin_accounts_view, admin_account_detail_view, team_merge_view,
+    admin_fix_participant_identity_view,
     admin_team_payment_proof_view, admin_payment_config_view,
     admin_site_config_view, admin_registration_schema_view,
     admin_timo_pot_config_view,
@@ -30,4 +31,6 @@ urlpatterns = [
     path("admin/registration-schema/", admin_registration_schema_view),
     path("admin/accounts", admin_accounts_view),
     path("admin/accounts/<str:username>", admin_account_detail_view),
+    path("admin/participants/fix-identity", admin_fix_participant_identity_view),
+    path("admin/participants/fix-identity/", admin_fix_participant_identity_view),
 ]

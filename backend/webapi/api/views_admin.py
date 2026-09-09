@@ -10,15 +10,17 @@ from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
 from django.db.models import Q, Count
 
-from api.models import Account, ProgramPhase, Team, TeamMembership
+from api.models import Account, Participant, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team, delete_team,
     get_team_members, add_member, link_account_profile,
+    fix_participant_identity,
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
     team_name_is_duplicate,
 )
 from api.services.audit_service import record_audit
+from api.services.account_identity_service import AccountUpdateError, update_admin_account
 from api.services import team_merge_service
 from api.services.registration_service import normalize_gender, get_schema, save_schema
 from api.services.submission_storage_service import proof_file_response
@@ -761,34 +763,22 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
-        if "email" in data and data["email"]:
-            target.email = str(data["email"]).strip()
-        if "mssv" in data:
-            target.mssv = str(data["mssv"]).strip() or None
-        if "full_name" in data or "fullName" in data:
-            target.full_name = str(data.get("full_name") or data.get("fullName") or "").strip() or None
-        if "role" in data and data["role"] in dict(Account.ROLE_CHOICES):
-            if data["role"] == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
-                return _master_admin_forbidden()
-            target.role = data["role"]
-        if "is_active" in data:
-            target.is_active = bool(data["is_active"])
-        if "password" in data and data["password"]:
-            if len(str(data["password"])) < settings.AUTH_MIN_PASSWORD_LENGTH:
-                return JsonResponse({"error": "password_too_short"}, status=400)
-            target.password_hash = make_password(data["password"])
         try:
-            target.save()
+            target = update_admin_account(target.pk, data, actor=acc)
+        except AccountUpdateError as exc:
+            return JsonResponse({"error": exc.code}, status=exc.status)
         except IntegrityError:
             return JsonResponse({"error": "conflict"}, status=409)
-        return JsonResponse({
+
+        resp = {
             "username": target.username,
             "email": target.email,
             "mssv": target.mssv,
             "full_name": target.full_name,
             "role": target.role,
             "is_active": target.is_active,
-        })
+        }
+        return JsonResponse(resp)
 
     if request.method == "DELETE":
         target.is_active = False
@@ -796,6 +786,55 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         return JsonResponse({"status": "deactivated"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def admin_fix_participant_identity_view(request: HttpRequest):
+    """POST: correct a roster participant's mis-typed MSSV and link its account.
+
+    Body: ``{"current_mssv": "<wrong>", "correct_mssv": "<right>"}``.
+
+    Fixes the Participant row that carries the team membership — so the account
+    holding ``correct_mssv`` can finally see its team — instead of the account's
+    own MSSV, which team resolution does not read for the roster side.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    current_mssv = str((data.get("current_mssv") or "").strip())
+    correct_mssv = str((data.get("correct_mssv") or "").strip())
+    if not current_mssv or not correct_mssv:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    participant, error = fix_participant_identity(
+        current_mssv, correct_mssv, actor=acc,
+    )
+    if error == "participant_not_found":
+        return JsonResponse({"error": error}, status=404)
+    if error == "missing_correct_mssv":
+        return JsonResponse({"error": "missing_fields"}, status=400)
+    if error:
+        # mssv_conflict_roster:<code> and account_link_conflict
+        return JsonResponse({"error": error}, status=409)
+
+    membership = (
+        TeamMembership.objects.filter(participant=participant)
+        .select_related("team").first()
+    )
+    return JsonResponse({
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "account_linked": bool(participant.account_id),
+        "team_code": membership.team.code if membership else None,
+        "team_name": membership.team.name if membership else None,
+    })
 
 
 # =====================================================================

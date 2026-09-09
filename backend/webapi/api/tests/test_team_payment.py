@@ -25,6 +25,7 @@ from django.utils import timezone
 
 from api.models import Account, Participant, SystemSetting, Team, TeamMembership
 from api.services.auth_service import generate_session
+from api.services.team_service import approve_team, reject_team
 from api.services.timo_service import TimoConfirmResult
 from api.services.payment_service import (
     DEFAULT_PAYMENT_CONFIG,
@@ -507,6 +508,106 @@ class SubmitPaymentGateTests(PaymentApiTestBase):
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
         )
+
+    def _upload_and_submit(self):
+        self.team.roster_locked_at = timezone.now()
+        self.team.save(update_fields=["roster_locked_at", "updated_at"])
+        with override_settings(MEDIA_ROOT=self.media_root):
+            response = self.client.post(
+                "/api/my-team/payment-proof",
+                data={"file": SimpleUploadedFile("proof.png", PNG_BYTES, content_type="image/png")},
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._submit().status_code, 200)
+        self.team.refresh_from_db()
+
+    @patch(
+        "api.views_participant.confirm_team_payment_via_timo",
+        return_value=TimoConfirmResult("not_found", "Chưa thấy giao dịch."),
+    )
+    def test_submitted_team_cannot_cancel_payment_or_lose_its_receipt(self, check_payment):
+        self._upload_and_submit()
+        proof = self.team.payment_proof_file
+        locked_at = self.team.roster_locked_at
+        submitted_at = self.team.submitted_at
+        with override_settings(MEDIA_ROOT=self.media_root):
+            response = self.client.post(
+                "/api/my-team/payment/cancel",
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_locked")
+        check_payment.assert_not_called()
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.approval_status, Team.APPROVAL_PENDING)
+        self.assertEqual(self.team.submitted_at, submitted_at)
+        self.assertEqual(self.team.roster_locked_at, locked_at)
+        self.assertEqual(self.team.payment_proof_file, proof)
+        self.assertTrue((Path(self.media_root) / proof["key"]).exists())
+
+    def test_submitted_team_cannot_edit_registration_or_replace_receipt(self):
+        self._upload_and_submit()
+        proof = self.team.payment_proof_file
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {self.token}"}
+        overview = self.client.get("/api/my-team", **auth)
+        self.assertFalse(overview.json()["editable"])
+        for path, method, data in [
+            ("/api/my-team", "patch", {"team_name": "Changed"}),
+            ("/api/my-team/members/SV001", "patch", {"full_name": "Changed"}),
+            ("/api/my-team/members/SV001", "delete", {}),
+            ("/api/my-team/members", "post", {"mssv": "SV002"}),
+        ]:
+            with self.subTest(path=path, method=method):
+                response = getattr(self.client, method)(path, data=data, content_type="application/json", **auth)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["error"], "team_locked")
+        with override_settings(MEDIA_ROOT=self.media_root):
+            response = self.client.post(
+                "/api/my-team/payment-proof",
+                data={"file": SimpleUploadedFile("replacement.png", PNG_BYTES, content_type="image/png")},
+                **auth,
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_locked")
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.payment_proof_file, proof)
+
+    @patch("api.views_participant.confirm_team_payment_via_timo")
+    def test_approved_team_cannot_cancel_unconfirmed_payment(self, check_payment):
+        self._upload_and_submit()
+        approve_team(self.team, self.account)
+        response = self.client.post(
+            "/api/my-team/payment/cancel",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "team_locked")
+        check_payment.assert_not_called()
+        self.team.refresh_from_db()
+        self.assertIsNotNone(self.team.roster_locked_at)
+        self.assertTrue(self.team.payment_proof_file)
+
+    def test_rejection_reopens_registration_and_allows_resubmission(self):
+        self._upload_and_submit()
+        reject_team(self.team, self.account, "Cần sửa thông tin")
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {self.token}"}
+        overview = self.client.get("/api/my-team", **auth)
+        self.assertTrue(overview.json()["editable"])
+        response = self.client.patch(
+            "/api/my-team/members/SV001",
+            data={"full_name": "Tên Đã Sửa"},
+            content_type="application/json",
+            **auth,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["full_name"], "Tên Đã Sửa")
+        response = self.client.patch(
+            "/api/my-team", data={"roster_locked": True},
+            content_type="application/json", **auth,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._submit().status_code, 200)
 
     def test_submit_without_proof_is_rejected_for_missing_payment_proof(self):
         response = self._submit()

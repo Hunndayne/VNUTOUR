@@ -631,17 +631,21 @@ def get_team_members(
     """
     memberships = (
         TeamMembership.objects.filter(team=team)
-        .select_related("participant")
+        .select_related("participant", "participant__account")
         .order_by("created_at", "id")
     )
     result = []
     for m in memberships:
         p = m.participant
-        account = Account.objects.filter(
+        account = p.account if p.account_id else Account.objects.filter(
             mssv=p.mssv, is_active=True,
-        ).only("email", "full_name", "phone", "school", "faculty", "mssv").first()
+        ).only("email", "full_name", "phone", "school", "faculty", "mssv", "is_active").first()
+        if account and not account.is_active:
+            account = None
         if account:
-            link_account_profile(account)
+            linked, _status = link_account_profile(account)
+            if not p.account_id and (not linked or linked.pk != p.pk):
+                account = None
             p.refresh_from_db()
         # The override replaces participant.email with the account email, so the
         # original (captain-entered) email survives only in the audit trail.
@@ -703,11 +707,19 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
       "linked"     — first-time link, no info conflict
       "overwritten"— linked and participant info overwritten (email differed)
       "mssv_claimed_by_other" — blocked: mssv already held by another account
+      "identity_review_required" — existing FK and MSSV disagree; no writes
     """
-    if not account or not account.mssv:
+    if not account:
         return None, None
 
-    participant = Participant.objects.filter(mssv=account.mssv).first()
+    # A linked profile remains the same person after an administrative edit.
+    # Never create/claim a second profile to hide an old inconsistent link.
+    participant = Participant.objects.filter(account_id=account.pk).first()
+    if participant and participant.mssv != account.mssv:
+        return participant, "identity_review_required"
+    if not account.mssv:
+        return None, None
+    participant = participant or Participant.objects.filter(mssv=account.mssv).first()
     if not participant:
         # No Participant row exists yet — create one from the Account data so
         # that school, faculty, etc. collected during signup are immediately
@@ -771,6 +783,107 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
     return participant, ("overwritten" if email_differs else "linked")
 
 
+def fix_participant_identity(
+    current_mssv: str,
+    correct_mssv: str,
+    *,
+    actor: Account | None = None,
+) -> Tuple[Optional[Participant], Optional[str]]:
+    """Correct a roster participant's mis-typed MSSV and (re)link its account.
+
+    The web answers "which team am I on" by matching ``Account.mssv`` to
+    ``Participant.mssv`` (not through the ``Participant.account`` FK), so a typo
+    in the MSSV a captain entered leaves the real account permanently unable to
+    see its team. Editing the *account's* MSSV cannot fix that — it only re-keys
+    the account onto a different Participant. This corrects the Participant row
+    that actually carries the ``TeamMembership`` and points the matching account
+    at it inside one transaction, so the string and the FK agree afterwards. The
+    membership, scores and check-ins are keyed by team FK and ride along
+    untouched.
+
+    A stub Participant auto-created for the account (same ``correct_mssv``, no
+    team) is absorbed. A *real* roster member already holding ``correct_mssv`` is
+    a genuine clash and is refused rather than silently merged.
+
+    Returns ``(participant, error_code)``. Error codes:
+      ``participant_not_found``  — no participant has ``current_mssv``
+      ``missing_correct_mssv``   — ``correct_mssv`` was empty
+      ``mssv_conflict_roster:<team_code>`` — ``correct_mssv`` already belongs to
+                                   another participant that is on a team
+      ``account_link_conflict``  — the roster participant is already linked to a
+                                   different account than the one holding
+                                   ``correct_mssv``
+    """
+    from api.services.audit_service import record_audit
+
+    current = (current_mssv or "").strip().upper()
+    correct = (correct_mssv or "").strip().upper()
+    if not correct:
+        return None, "missing_correct_mssv"
+
+    with transaction.atomic():
+        roster_p = (
+            Participant.objects.select_for_update().filter(mssv=current).first()
+        )
+        if not roster_p:
+            return None, "participant_not_found"
+
+        account = Account.objects.filter(mssv=correct, is_active=True).first()
+
+        # A different account already owns this participant — never steal it.
+        if roster_p.account_id and account and roster_p.account_id != account.id:
+            return None, "account_link_conflict"
+
+        before = {"mssv": roster_p.mssv, "account_id": roster_p.account_id}
+
+        if correct != roster_p.mssv:
+            collider = (
+                Participant.objects.select_for_update()
+                .filter(mssv=correct).exclude(pk=roster_p.pk).first()
+            )
+            if collider:
+                clash = (
+                    TeamMembership.objects.filter(participant=collider)
+                    .select_related("team").first()
+                )
+                if clash:
+                    return None, f"mssv_conflict_roster:{clash.team.code}"
+                # Stub (no team) auto-created for the account — absorb it so the
+                # unique MSSV is freed before the rename.
+                account = account or collider.account
+                collider.delete()
+
+            roster_p.mssv = correct
+            if account:
+                roster_p.account = account
+            roster_p.save(update_fields=["mssv", "account", "updated_at"])
+        elif account and roster_p.account_id != account.id:
+            # MSSV already correct — just (re)link the account.
+            roster_p.account = account
+            roster_p.save(update_fields=["account", "updated_at"])
+
+        # Keep account-owned fields in step (team views read from Participant).
+        if account:
+            synced = _sync_participant_from_account(roster_p, account)
+            if synced:
+                roster_p.save(update_fields=synced + ["updated_at"])
+
+        record_audit(
+            actor=actor,
+            action="participant.fix_identity",
+            summary=(
+                f"Sửa MSSV {before['mssv']} → {correct}"
+                + (f", nối tài khoản {account.username}" if account else "")
+            ),
+            target_type="participant",
+            target_id=roster_p.id,
+            before_data=before,
+            after_data={"mssv": roster_p.mssv, "account_id": roster_p.account_id},
+        )
+
+    return roster_p, None
+
+
 def auto_link_participant_by_verified_email(account: Account) -> Optional[Participant]:
     """Adopt a captain-created Participant whose email matches a Google-verified
     account email, so a pre-registered member lands in their team without ever
@@ -827,10 +940,9 @@ def rotate_qr_token(team: Team) -> str:
 
 
 def team_is_editable(team: Team) -> bool:
-    """Check if team can be edited by owner (draft, pending, rejected)."""
+    """Submitted registrations stay locked until BTC requests changes."""
     return team.approval_status in (
         Team.APPROVAL_DRAFT,
-        Team.APPROVAL_PENDING,
         Team.APPROVAL_REJECTED,
     )
 
