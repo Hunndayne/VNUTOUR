@@ -68,7 +68,10 @@ jobs:
       # Validate the files in `kustomize/` by running `kustomize build` to generate the complete manifest, then checking it with `kubeconform`.
       - name: Build and validate every Kustomize overlay
         run: |
-          set -e
+          # pipefail: without it the pipe's exit status is kubeconform's, so a
+          # failing `kustomize build` (empty stdin -> kubeconform reports 0
+          # resources, exits 0) would pass this "hard blocker" silently.
+          set -eo pipefail
           found=0
           for dir in $(find k8s -name kustomization.yaml -exec dirname {} \; | sort -u); do
             # Skip Kustomize Components (kind: Component) - they cannot be
@@ -93,7 +96,7 @@ jobs:
 
       - name: Validate standalone manifests outside Kustomize builds
         run: |
-          set -e
+          set -eo pipefail
           mapfile -t kustomize_dirs < <(find k8s -name kustomization.yaml -exec dirname {} \; | sort -u)
           is_kustomize_dir() {
             for kd in "${kustomize_dirs[@]}"; do
@@ -147,6 +150,12 @@ jobs:
   # Notify: Discord notification + PR comment (always runs, even on failure)
   notify:
     if: always()
+    # Grant explicitly: the top-level `read-all` above would otherwise cap the
+    # called notify.yml to read-only, and its PR-comment step (pull-requests:
+    # write) would 403. A caller job's permissions bound the reusable workflow.
+    permissions:
+      contents: read
+      pull-requests: write
     needs: [secret-scan, kustomize-validate, iac-scan]
     uses: ./.github/workflows/notify.yml
     secrets: inherit

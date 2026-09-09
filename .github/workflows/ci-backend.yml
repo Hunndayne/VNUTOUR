@@ -226,6 +226,11 @@ jobs:
   # Notify: Discord notification + PR comment (always runs, even on failure)
   notify:
     if: always()
+    # Grant explicitly so the reusable notify.yml can post its PR comment
+    # regardless of the repo's default GITHUB_TOKEN permission setting.
+    permissions:
+      contents: read
+      pull-requests: write
     needs:
       [
         secret-scan,

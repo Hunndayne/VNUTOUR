@@ -70,12 +70,23 @@ jobs:
             - name: Send Discord notification
               env:
                   WEBHOOK: ${{ secrets.DISCORD_GITHUB_WEBHOOK }}
+                  # Pass untrusted, attacker-influenceable values (branch names
+                  # from a PR, the actor login) via env — NEVER inline ${{ }}
+                  # into the shell, or a branch named `$(...)` runs as code.
+                  HEAD_REF: ${{ github.head_ref }}
+                  BASE_REF: ${{ github.base_ref }}
+                  ACTOR: ${{ github.actor }}
               run: |
+                  if [ -z "$WEBHOOK" ]; then
+                      echo "DISCORD_GITHUB_WEBHOOK not set (e.g. fork PR) — skipping Discord notification"
+                      exit 0
+                  fi
+
                   SHORT_SHA="${GITHUB_SHA::7}"
                   RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
                   if [ "${{ github.event_name }}" = "pull_request" ]; then
-                      REF_DISPLAY="PR #${{ github.event.pull_request.number }} (\`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`)"
+                      REF_DISPLAY="PR #${{ github.event.pull_request.number }} (\`$HEAD_REF\` → \`$BASE_REF\`)"
                   else
                       REF_DISPLAY="\`${{ github.ref_name }}\`"
                   fi
@@ -87,7 +98,7 @@ jobs:
                       --argjson color  "${{ steps.display.outputs.color }}" \
                       --arg  sha       "$SHORT_SHA" \
                       --arg  ref       "$REF_DISPLAY" \
-                      --arg  actor     "${{ github.actor }}" \
+                      --arg  actor     "$ACTOR" \
                       --arg  run_url   "$RUN_URL" \
                       '{
                           embeds: [{
@@ -136,10 +147,14 @@ jobs:
                       const marker = `<!-- vnutour-notify:${workflow} -->`;
                       const fullBody = `${marker}\n${body}`;
 
-                      const { data: comments } = await github.rest.issues.listComments({
+                      // Paginate: on a PR with >30 comments the bot's own
+                      // comment can sit on a later page, so a single-page fetch
+                      // would miss it and post a duplicate every run.
+                      const comments = await github.paginate(github.rest.issues.listComments, {
                           owner:        context.repo.owner,
                           repo:         context.repo.repo,
                           issue_number: context.payload.pull_request.number,
+                          per_page:     100,
                       });
 
                       const existing = comments.find(c =>
