@@ -93,7 +93,54 @@ class AdminAccountIdentityTests(TestCase):
 
     def test_existing_account_mssv_is_rejected(self):
         Account.objects.create(username="other-id", email="other@identity.test", mssv="NEW001")
-        self.assertEqual(self.edit(mssv="new001", full_name="Changed").status_code, 409)
+        response = self.edit(mssv="new001", full_name="Changed")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "account_mssv_conflict")
+        self.assert_unchanged()
+
+    def test_email_used_by_another_account_reports_email_conflict(self):
+        other = Account.objects.create(username="other-id", email="other@identity.test")
+        for active in (True, False):
+            with self.subTest(other_account_active=active):
+                other.is_active = active
+                other.save(update_fields=["is_active"])
+                response = self.edit(
+                    email=" OTHER@identity.test ", mssv="OLD001",
+                    full_name="Person", role="participant", is_active=True,
+                )
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["error"], "account_email_conflict")
+                self.assert_unchanged()
+                self.assertFalse(AuditLog.objects.filter(action="account.identity_updated").exists())
+
+    def test_email_correction_with_full_form_and_unicode_username(self):
+        from urllib.parse import quote
+
+        self.account.username = "Nguyễn Bảo Ân"
+        self.account.save(update_fields=["username"])
+        response = self.client.patch(
+            "/api/admin/accounts/" + quote(self.account.username),
+            data=json.dumps({
+                "email": " corrected@identity.test ", "mssv": "OLD001",
+                "full_name": "Person", "role": "participant", "is_active": True,
+            }), content_type="application/json", **self.admin_auth,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.account.refresh_from_db()
+        self.profile.refresh_from_db()
+        self.membership.refresh_from_db()
+        self.assertEqual(self.account.email, "corrected@identity.test")
+        self.assertEqual(self.profile.email, self.account.email)
+        self.assertEqual(self.profile.account_id, self.account.pk)
+        self.assertEqual(self.membership.participant_id, self.profile.pk)
+        self.assertEqual(self.membership.team_id, self.team.pk)
+
+    def test_unchanged_full_form_does_not_conflict_with_own_account(self):
+        response = self.edit(
+            email=" PERSON@identity.test ", mssv="old001", full_name="Person",
+            role="participant", is_active=True,
+        )
+        self.assertEqual(response.status_code, 200)
         self.assert_unchanged()
 
     def test_profile_email_conflict_rolls_back_all_account_fields(self):

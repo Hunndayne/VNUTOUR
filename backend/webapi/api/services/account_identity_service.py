@@ -42,6 +42,13 @@ def update_admin_account(account_id, data, *, actor):
     profile = Participant.objects.select_for_update().filter(account_id=account.pk).first()
     new_mssv = updates.get("mssv", account.mssv)
     new_email = updates.get("email", account.email)
+    # Report the conflicting field before a database constraint reduces it to
+    # a generic IntegrityError. Keep the constraints for concurrent writes.
+    other_accounts = Account.objects.exclude(pk=account.pk)
+    if "email" in updates and other_accounts.filter(email__iexact=new_email).exists():
+        raise AccountUpdateError("account_email_conflict")
+    if "mssv" in updates and new_mssv and other_accounts.filter(mssv__iexact=new_mssv).exists():
+        raise AccountUpdateError("account_mssv_conflict")
     identity_supplied = bool({"mssv", "email", "full_name"} & updates.keys())
     if identity_supplied:
         if profile:

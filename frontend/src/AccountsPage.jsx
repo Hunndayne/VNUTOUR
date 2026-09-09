@@ -3,6 +3,7 @@ import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, ROLE_MASTER_ADMIN } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+import AccountDetailsDrawer from './AccountDetailsDrawer.jsx'
 
 const ROLE_DEF = {
   master_admin: { label: 'Master admin', cls: 'bg-ink text-white' },
@@ -38,6 +39,8 @@ function explainApiError(error) {
   const code = error?.data?.error || error?.message
   const map = {
     conflict: 'Username, email hoặc MSSV đã tồn tại.',
+    account_email_conflict: 'Email này đang được tài khoản khác sử dụng (kể cả tài khoản đã khóa). Hãy tìm email trong danh sách tài khoản để đối chiếu. Chưa lưu thay đổi.',
+    account_mssv_conflict: 'MSSV này đang được tài khoản khác sử dụng (kể cả tài khoản đã khóa). Hãy tìm MSSV trong danh sách tài khoản để đối chiếu. Chưa lưu thay đổi.',
     participant_identity_conflict: 'MSSV hoặc email này thuộc hồ sơ thí sinh khác, kể cả người chưa có tài khoản web. Chưa lưu thay đổi.',
     identity_review_required: 'Liên kết tài khoản và hồ sơ cần được BTC đối chiếu trước khi sửa. Chưa lưu thay đổi hoặc nối hồ sơ.',
     linked_profile_mssv_required: 'Tài khoản đã liên kết hồ sơ thí sinh nên không thể xóa MSSV.',
@@ -78,6 +81,7 @@ export default function AccountsPage() {
     setNewParam((typeof next === 'function' ? next(showCreate) : next) ? '1' : '')
   }
   const [accountParam, setAccountParam] = useSearchParam('account', '')
+  const [detailUsername, setDetailUsername] = useSearchParam('detail', '')
   const editing = accountParam || null
   const setEditing = (next) => setAccountParam(next || '')
   const [loading, setLoading] = useState(true)
@@ -214,6 +218,7 @@ export default function AccountsPage() {
   })
 
   const openEdit = (acct) => {
+    setDetailUsername('')
     setEditing(acct.username)
   }
 
@@ -388,6 +393,9 @@ export default function AccountsPage() {
                       </td>
                       <td className="px-5 py-3.5">
                         <div className="flex items-center justify-end gap-1">
+                          <button type="button" onClick={() => { setEditing(null); setDetailUsername(acct.username) }} className="rounded-md px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-paper focus-visible:outline-trail">
+                            Xem chi tiết
+                          </button>
                           <button type="button" onClick={() => openEdit(acct)} className="rounded-md px-3 py-1.5 text-xs font-semibold text-trail transition hover:bg-trail/8 active:scale-95">
                             Chỉnh sửa
                           </button>
@@ -411,7 +419,9 @@ export default function AccountsPage() {
         </div>
       </div>
 
-      {editing && (() => {
+      {detailUsername && <AccountDetailsDrawer key={detailUsername} username={detailUsername} onClose={() => setDetailUsername('')} />}
+
+      {!detailUsername && editing && (() => {
         const acct = accounts.find(a => a.username === editing)
         if (!acct) return null
         // Keyed by username so switching to a different account remounts the
