@@ -31,9 +31,15 @@ RUN apt-get update \
 COPY requirements.txt ./
 # pip/setuptools/wheel are the build toolchain — we deliberately take the latest;
 # application dependencies are pinned in requirements.txt.
+#
+# The final upgrade re-pins setuptools/msgpack to patched versions AFTER the
+# requirements install: a transitive dependency drags setuptools back down to
+# 70.3.0 (CVE-2025-47273) and pulls msgpack 1.1.2 (GHSA-6v7p-g79w-8964), both
+# of which Trivy blocks. Forcing them last clears the image scan.
 # hadolint ignore=DL3013
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
 
 COPY --chown=app:app . .
 
