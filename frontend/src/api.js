@@ -107,6 +107,8 @@ export async function apiRequest(path, options = {}) {
     token,
     auth = true,
     headers = {},
+    signal,
+    cache,
   } = options
 
   const requestHeaders = { ...headers }
@@ -122,6 +124,8 @@ export async function apiRequest(path, options = {}) {
 
   const response = await fetch(joinUrl(API_BASE_URL, path), {
     method,
+    signal,
+    cache,
     headers: requestHeaders,
     body: body === undefined
       ? undefined

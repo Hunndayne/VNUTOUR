@@ -22,7 +22,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': { target: backend, changeOrigin: true },
         '/media': { target: backend, changeOrigin: true },
-        '/s': { target: backend, changeOrigin: true },
+        // Match short links only; '/s' also proxies Vite's /src modules.
+        '^/s/': { target: backend, changeOrigin: true },
       },
       watch: {
         usePolling: true,

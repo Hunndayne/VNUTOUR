@@ -1,6 +1,7 @@
 """Admin teams & accounts routes — §9.3"""
 
 from django.urls import path
+from api.views_account_details import admin_account_details_view
 from api.views_admin import (
     teams_collection_view, team_item_view,
     team_approve_view, team_reject_view,
@@ -31,6 +32,7 @@ urlpatterns = [
     path("admin/registration-schema/", admin_registration_schema_view),
     path("admin/accounts", admin_accounts_view),
     path("admin/accounts/<str:username>", admin_account_detail_view),
+    path("admin/accounts/<str:username>/details", admin_account_details_view),
     path("admin/participants/fix-identity", admin_fix_participant_identity_view),
     path("admin/participants/fix-identity/", admin_fix_participant_identity_view),
 ]
