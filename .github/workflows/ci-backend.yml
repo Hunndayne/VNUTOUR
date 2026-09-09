@@ -5,9 +5,11 @@ on:
     branches: [main, staging]
     paths:
       - "backend/**"
+      - ".github/workflows/ci-backend.yml"
   pull_request:
     paths:
       - "backend/**"
+      - ".github/workflows/ci-backend.yml"
 
 concurrency:
   group: ci-backend-${{ github.ref }}
@@ -143,10 +145,10 @@ jobs:
           format: sarif
           output: trivy-results-vnutour-backend-${{ steps.meta.outputs.sha }}.sarif
           severity: HIGH,CRITICAL
+          # SARIF otherwise resets severity to all levels, including MEDIUM.
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: "1"
-          # Triaged false-positives (patched at runtime); see backend/.trivyignore.
-          trivyignores: backend/.trivyignore
 
       - name: Upload Trivy results to GitHub Security tab
         if: always() # upload the report even if the scan above failed the job
