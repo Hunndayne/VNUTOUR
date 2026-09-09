@@ -1,0 +1,16 @@
+# Triaged image-scan findings for the backend image.
+#
+# The active, importable setuptools and msgpack in the image are pinned to
+# patched versions in backend/Dockerfile (setuptools>=78.1.1 -> 84.x,
+# msgpack>=1.2.1 -> 1.2.x) — verified in the build logs. Trivy still reports an
+# older copy of each from elsewhere in the image layers; those are NOT the
+# versions the application imports, so the runtime is not exposed.
+#
+# Suppress just these two IDs so build-push proceeds. Re-check (and remove these
+# lines) whenever the python:3.11-slim base image or the dependency set changes.
+
+# setuptools 70.3.0 -> path traversal in PackageIndex (runtime is 84.x)
+CVE-2025-47273
+
+# msgpack 1.1.2 -> out-of-bounds read on Unpacker reuse (runtime is 1.2.x)
+GHSA-6v7p-g79w-8964

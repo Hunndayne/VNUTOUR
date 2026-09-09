@@ -145,6 +145,8 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          # Triaged false-positives (patched at runtime); see backend/.trivyignore.
+          trivyignores: backend/.trivyignore
 
       - name: Upload Trivy results to GitHub Security tab
         if: always() # upload the report even if the scan above failed the job
