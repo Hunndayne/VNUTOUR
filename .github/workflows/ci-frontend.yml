@@ -5,9 +5,11 @@ on:
     branches: [main, staging]
     paths:
       - "frontend/**"
+      - ".github/workflows/ci-frontend.yml"
   pull_request:
     paths:
       - "frontend/**"
+      - ".github/workflows/ci-frontend.yml"
 
 concurrency:
   group: ci-frontend-${{ github.ref }}
@@ -153,6 +155,8 @@ jobs:
           format: sarif
           output: trivy-results-vnutour-frontend-${{ steps.meta.outputs.sha }}.sarif
           severity: HIGH,CRITICAL
+          # SARIF otherwise resets severity to all levels, including MEDIUM.
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: "1"
 
