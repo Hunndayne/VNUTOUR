@@ -493,11 +493,11 @@ def me_profile_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if acc.mssv:
-        link_account_profile(acc)
+    participant, link_status = link_account_profile(acc)
+    if link_status in {"identity_review_required", "mssv_claimed_by_other"}:
+        return JsonResponse({"error": "identity_review_required"}, status=409)
 
     if request.method == "GET":
-        participant = Participant.objects.filter(mssv=acc.mssv).first() if acc.mssv else None
         return JsonResponse({
             "profile": {
                 "mssv": participant.mssv,
@@ -605,12 +605,13 @@ def my_team_view(request: HttpRequest):
         return err
     if acc.role != Account.ROLE_PARTICIPANT:
         return JsonResponse({"error": "forbidden"}, status=403)
-    if acc.mssv:
-        link_account_profile(acc)
+    participant, link_status = link_account_profile(acc)
+    if link_status in {"identity_review_required", "mssv_claimed_by_other"}:
+        return JsonResponse({"error": "identity_review_required"}, status=409)
 
     if request.method == "GET":
         membership = TeamMembership.objects.filter(
-            participant__mssv=acc.mssv,
+            participant=participant,
         ).select_related("team").first()
 
         if not membership:
@@ -885,6 +886,8 @@ def my_team_payment_cancel_view(request: HttpRequest):
     proof_entry = {}
     with transaction.atomic():
         team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if not team_is_editable(team):
+            return JsonResponse({"error": "team_locked"}, status=409)
         if team.payment_confirmed_at:
             return JsonResponse({"error": "payment_already_confirmed"}, status=409)
         if not team.roster_locked_at and not team.payment_proof_file:
@@ -952,8 +955,7 @@ def my_team_payment_proof_view(request: HttpRequest):
         resp = proof_file_response(team.payment_proof_file)
         return resp if resp else JsonResponse({"error": "not_found"}, status=404)
 
-    # POST — re-upload is allowed right up until the team is approved, same as
-    # every other team-editing endpoint in this file.
+    # POST — submitted receipts are frozen until BTC requests changes.
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
     if not team.roster_locked_at:
@@ -981,6 +983,7 @@ def my_team_payment_proof_view(request: HttpRequest):
 
 
 @csrf_exempt
+@transaction.atomic
 def my_team_submit_view(request: HttpRequest):
     """POST: submit team for approval."""
     if request.method != "POST":
@@ -997,7 +1000,11 @@ def my_team_submit_view(request: HttpRequest):
     if not _team_edits_allowed(membership.team):
         return _registration_closed_response()
 
-    team = membership.team
+    # Use the same row lock as cancellation: validate the current receipt and
+    # roster, then submit before another request can unlock either of them.
+    team = Team.objects.select_for_update().get(pk=membership.team_id)
+    if not team_is_editable(team):
+        return JsonResponse({"error": "team_locked"}, status=409)
     schema = get_schema()
     members = get_team_members(team)
     max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)

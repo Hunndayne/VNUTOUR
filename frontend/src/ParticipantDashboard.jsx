@@ -219,9 +219,10 @@ function explainApiError(error) {
   const map = {
     missing_mssv: 'Bạn cần cập nhật MSSV trước khi tiếp tục.',
     mssv_taken: 'MSSV này đã được dùng bởi tài khoản khác.',
+    identity_review_required: 'Liên kết tài khoản và hồ sơ cần được BTC kiểm tra. Vui lòng liên hệ BTC để đối chiếu MSSV.',
     registration_mismatch: 'Email bạn vừa nhập không trùng với email đã đăng ký cho MSSV này. Vui lòng kiểm tra MSSV và Email của thành viên đã đăng ký trên trang web.',
     profile_incomplete: 'Hồ sơ hiện chưa đủ để tạo đội.',
-    team_locked: 'Đội đã khóa chỉnh sửa.',
+    team_locked: 'Đội đã gửi duyệt nên không thể hủy thanh toán hoặc chỉnh sửa. Nếu cần thay đổi, hãy liên hệ BTC.',
     duplicate_team_name: 'Tên đội này đã được một đội khác sử dụng. Vui lòng chọn tên khác.',
     roster_locked: 'Đội đã được xác nhận để thanh toán nên thông tin đã bị khóa. Cần thay đổi thì hãy liên hệ BTC.',
     roster_not_locked: 'Bạn cần xác nhận lại danh sách đội trước khi tải minh chứng hoặc gửi duyệt.',
@@ -578,7 +579,7 @@ function ProgressTrail({ profile, team, members, fields, activeStep, blockedStep
               type="button"
               disabled={!unlocked}
               aria-current={selected ? 'step' : undefined}
-              title={blocked ? 'Bước này đã khóa sau khi xác nhận thanh toán' : undefined}
+              title={blocked ? 'Bước này đã khóa theo trạng thái đăng ký của đội' : undefined}
               onClick={() => unlocked && onSelect?.(step.key)}
               className={`relative px-2 py-4 text-center transition ${unlocked ? 'cursor-pointer hover:bg-[#F3F4F1]' : 'cursor-not-allowed'}`}
               style={{ backgroundColor: selected ? COLORS.paper : 'white' }}
@@ -1179,6 +1180,8 @@ function BankDropdown({ options, onSelect }) {
 }
 
 function PaymentSection({ team, editable, isCaptain, onProofChange }) {
+  const registrationSubmitted = ['pending_approval', 'approved'].includes(team?.approval_status)
+  const canEditPayment = editable && !registrationSubmitted
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -1307,7 +1310,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const handleFileChange = async (event) => {
     const file = event.target.files?.[0]
     event.target.value = ''
-    if (!file) return
+    if (!file || !canEditPayment) return
     setUploading(true)
     setError('')
     try {
@@ -1344,6 +1347,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   }
 
   const handleCancelPayment = async () => {
+    if (!isCaptain || !canEditPayment) return
     setCancelling(true)
     setError('')
     setPaidNotice('')
@@ -1410,7 +1414,13 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
         </p>
       )}
 
-      {isCaptain && info?.roster_locked && (
+      {registrationSubmitted && (
+        <p className="mt-4 text-sm leading-6 text-ink/55">
+          Đội đã gửi duyệt. Thanh toán và minh chứng đã khóa; nếu cần thay đổi, hãy liên hệ BTC.
+        </p>
+      )}
+
+      {isCaptain && canEditPayment && info?.roster_locked && (
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/60 px-4 py-3">
           {info?.timo_configured && !info?.payment_confirmed && (
             <button type="button" onClick={handleMarkPaid} disabled={checkingPaid || cancelling} className={SECONDARY_BUTTON}>
@@ -1498,7 +1508,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
               Chưa có ảnh
             </div>
           )}
-          {editable && info?.roster_locked ? (
+          {canEditPayment && info?.roster_locked ? (
             <label className={`cursor-pointer ${SECONDARY_BUTTON}`}>
               <Icon name="paperclip" className="h-4 w-4" />
               {uploading ? 'Đang tải lên...' : hasProof ? 'Đổi ảnh' : 'Tải ảnh lên'}
@@ -1570,6 +1580,7 @@ function ParticipantDashboard() {
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false)
   const [editable, setEditable] = useState(true)
   const [loading, setLoading] = useState(true)
+  const [dashboardReady, setDashboardReady] = useState(false)
   const [busyAction, setBusyAction] = useState('')
   const [apiError, setApiError] = useState('')
   // Reopen Settings when we return from a Discord OAuth round-trip that was
@@ -1603,41 +1614,47 @@ function ParticipantDashboard() {
   const [inviteNotice, setInviteNotice] = useState('')
 
   const loadDashboard = async () => {
-    const me = await apiRequest('/auth/me')
-    const profilePayload = await apiRequest('/me/profile')
-    const teamPayload = await apiRequest('/my-team')
-    const schemaPayload = await apiRequest('/register/schema', { auth: false })
-    const experiencePayload = await apiRequest('/me/experience')
+    try {
+      const me = await apiRequest('/auth/me')
+      const profilePayload = await apiRequest('/me/profile')
+      const teamPayload = await apiRequest('/my-team')
+      const schemaPayload = await apiRequest('/register/schema', { auth: false })
+      const experiencePayload = await apiRequest('/me/experience')
 
-    // `/teams/{code}` is admin/collab only, so for a participant it could only
-    // ever 403 — and the throw skipped every setter below it, leaving the whole
-    // dashboard blank. `/my-team` already carries the same fields, and its
-    // members come back at "self" visibility rather than the thinner "basic".
-    setUser((current) => ({ ...current, ...me }))
-    setProfile(normalizeProfile(me, profilePayload))
-    const normalizedTeam = normalizeTeam(teamPayload)
-    setTeam(normalizedTeam)
-    // A placeholder name ("Pending team <mssv>") is server bookkeeping, not a
-    // name the captain chose — start the draft empty so the team step offers a
-    // clean field instead of pre-filling the stand-in.
-    setTeamNameDraft(
-      normalizedTeam && !normalizedTeam.name_is_placeholder ? normalizedTeam.team_name : '',
-    )
-    setMembers(dedupeMembersByMssv(teamPayload?.members))
-    setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
-    setRegistrationSchema(schemaPayload)
-    setExperience(experiencePayload)
-    setCaptainVote(normalizedTeam ? await fetchCaptainVote() : null)
+      // `/teams/{code}` is admin/collab only, so for a participant it could only
+      // ever 403 — and the throw skipped every setter below it, leaving the whole
+      // dashboard blank. `/my-team` already carries the same fields, and its
+      // members come back at "self" visibility rather than the thinner "basic".
+      setUser((current) => ({ ...current, ...me }))
+      setProfile(normalizeProfile(me, profilePayload))
+      const normalizedTeam = normalizeTeam(teamPayload)
+      setTeam(normalizedTeam)
+      // A placeholder name ("Pending team <mssv>") is server bookkeeping, not a
+      // name the captain chose — start the draft empty so the team step offers a
+      // clean field instead of pre-filling the stand-in.
+      setTeamNameDraft(
+        normalizedTeam && !normalizedTeam.name_is_placeholder ? normalizedTeam.team_name : '',
+      )
+      setMembers(dedupeMembersByMssv(teamPayload?.members))
+      setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? ['draft', 'rejected'].includes(normalizedTeam.approval_status) : true)))
+      setRegistrationSchema(schemaPayload)
+      setExperience(experiencePayload)
+      setCaptainVote(normalizedTeam ? await fetchCaptainVote() : null)
 
-    if (normalizedTeam?.approval_status === 'approved') {
-      try {
-        const feedRes = await apiRequest('/feed/latest')
-        setLatestPost(feedRes?.post || null)
-      } catch {
+      if (normalizedTeam?.approval_status === 'approved') {
+        try {
+          const feedRes = await apiRequest('/feed/latest')
+          setLatestPost(feedRes?.post || null)
+        } catch {
+          setLatestPost(null)
+        }
+      } else {
         setLatestPost(null)
       }
-    } else {
-      setLatestPost(null)
+      setDashboardReady(true)
+    } catch (error) {
+      setDashboardReady(false)
+      throw error
     }
   }
 
@@ -1680,6 +1697,7 @@ function ParticipantDashboard() {
       loadDashboard()
         .catch((error) => {
           if (error?.status === 401) logoutAndRedirect('/')
+          else setApiError(explainApiError(error))
         })
         .finally(() => {
           reloadingRef.current = false
@@ -1776,13 +1794,19 @@ function ParticipantDashboard() {
   // just to "fix" something — is exactly the mismatch the confirm dialog
   // exists to prevent. BTC rejecting the team is what reopens them.
   const rosterLocked = Boolean(team?.roster_locked)
-  const rosterLockedSteps = rosterLocked ? ['members', 'team'] : []
+  const registrationSubmitted = ['pending_approval', 'approved'].includes(team?.approval_status)
+  const rosterLockedSteps = [
+    ...(rosterLocked || team?.approval_status === 'pending_approval' ? ['members', 'team'] : []),
+    ...(registrationSubmitted ? ['payment'] : []),
+  ]
   const stepUnlocked = (key) => {
     if (rosterLockedSteps.includes(key)) return false
     return stepStates[key] === 'done' || stepStates[key] === 'active'
   }
-  const currentStepKey = STEPS.find((s) => stepStates[s.key] === 'active')?.key
-    || (stepStates.approved === 'done' ? 'approved' : 'submit')
+  const currentStepKey = team?.approval_status === 'pending_approval'
+    ? 'submit'
+    : STEPS.find((s) => !rosterLockedSteps.includes(s.key) && stepStates[s.key] === 'active')?.key
+      || (stepStates.approved === 'done' ? 'approved' : 'submit')
   const [stepParam] = useEnumSearchParam('step', STEP_KEYS, currentStepKey)
   const activeStep = stepUnlocked(stepParam) ? stepParam : currentStepKey
   const pendingStepScroll = useRef(null)
@@ -2253,6 +2277,19 @@ function ParticipantDashboard() {
     )
   }
 
+  if (!dashboardReady) {
+    return (
+      <div className="min-h-screen p-6 font-sans" style={{ backgroundColor: COLORS.paper, color: COLORS.ink }}>
+        <div className={`${PARTICIPANT_CARD} mx-auto max-w-lg space-y-4 p-6`} role="alert">
+          <h1 className="text-xl font-semibold">Không tải được hồ sơ</h1>
+          <p className="text-sm">{apiError || 'Chưa tải đủ dữ liệu. Vui lòng thử lại.'}</p>
+          <button type="button" className={PRIMARY_BUTTON} onClick={() => window.location.reload()}>Thử lại</button>
+          <button type="button" className={`${SECONDARY_BUTTON} ml-3`} onClick={logout}>Đăng xuất</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen font-sans" style={{ backgroundColor: COLORS.paper, color: COLORS.ink }}>
       <Contours />
@@ -2647,9 +2684,15 @@ function ParticipantDashboard() {
                         {apiError}
                       </div>
                     )}
-                    <div className="mt-5">
-                      <StepNav onBack={() => gotoStep('payment')} />
-                    </div>
+                    {registrationSubmitted ? (
+                      <p className="mt-5 text-sm leading-6 text-ink/55">
+                        Đội đã gửi duyệt nên không thể hủy thanh toán hoặc chỉnh sửa. Nếu cần thay đổi, hãy liên hệ BTC.
+                      </p>
+                    ) : (
+                      <div className="mt-5">
+                        <StepNav onBack={() => gotoStep('payment')} />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2661,9 +2704,6 @@ function ParticipantDashboard() {
                     <p className="mt-3 text-sm leading-6 text-ink/55">
                       Đội của bạn đã được BTC duyệt. Theo dõi Discord và thông báo từ BTC để nhận lịch.
                     </p>
-                    <div className="mt-5">
-                      <StepNav onBack={() => gotoStep('payment')} />
-                    </div>
                   </div>
                 )}
               </>

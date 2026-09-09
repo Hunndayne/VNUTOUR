@@ -20,6 +20,7 @@ from api.services.team_service import (
     team_name_is_duplicate,
 )
 from api.services.audit_service import record_audit
+from api.services.account_identity_service import AccountUpdateError, update_admin_account
 from api.services import team_merge_service
 from api.services.registration_service import normalize_gender, get_schema, save_schema
 from api.services.submission_storage_service import proof_file_response
@@ -762,43 +763,12 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
-        if "email" in data and data["email"]:
-            target.email = str(data["email"]).strip()
-        if "mssv" in data:
-            target.mssv = str(data["mssv"]).strip() or None
-        if "full_name" in data or "fullName" in data:
-            target.full_name = str(data.get("full_name") or data.get("fullName") or "").strip() or None
-        if "role" in data and data["role"] in dict(Account.ROLE_CHOICES):
-            if data["role"] == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
-                return _master_admin_forbidden()
-            target.role = data["role"]
-        if "is_active" in data:
-            target.is_active = bool(data["is_active"])
-        if "password" in data and data["password"]:
-            if len(str(data["password"])) < settings.AUTH_MIN_PASSWORD_LENGTH:
-                return JsonResponse({"error": "password_too_short"}, status=400)
-            target.password_hash = make_password(data["password"])
         try:
-            target.save()
+            target = update_admin_account(target.pk, data, actor=acc)
+        except AccountUpdateError as exc:
+            return JsonResponse({"error": exc.code}, status=exc.status)
         except IntegrityError:
             return JsonResponse({"error": "conflict"}, status=409)
-
-        # Editing an account's MSSV only re-keys which Participant it resolves to
-        # (team visibility joins Account.mssv → Participant.mssv). Flag the two
-        # outcomes so the UI can steer the admin to the identity-fix tool: a
-        # matching roster row we could link to, or no roster row at all.
-        warning = None
-        if "mssv" in data:
-            matched = (
-                Participant.objects.filter(mssv=target.mssv).first()
-                if target.mssv else None
-            )
-            if matched:
-                _p, _status = link_account_profile(target)
-                if _status == "mssv_claimed_by_other":
-                    warning = "account_mssv_claimed_by_other"
-            elif target.mssv:
-                warning = "account_mssv_no_participant"
 
         resp = {
             "username": target.username,
@@ -808,8 +778,6 @@ def admin_account_detail_view(request: HttpRequest, username: str):
             "role": target.role,
             "is_active": target.is_active,
         }
-        if warning:
-            resp["warning"] = warning
         return JsonResponse(resp)
 
     if request.method == "DELETE":

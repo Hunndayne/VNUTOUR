@@ -631,17 +631,21 @@ def get_team_members(
     """
     memberships = (
         TeamMembership.objects.filter(team=team)
-        .select_related("participant")
+        .select_related("participant", "participant__account")
         .order_by("created_at", "id")
     )
     result = []
     for m in memberships:
         p = m.participant
-        account = Account.objects.filter(
+        account = p.account if p.account_id else Account.objects.filter(
             mssv=p.mssv, is_active=True,
-        ).only("email", "full_name", "phone", "school", "faculty", "mssv").first()
+        ).only("email", "full_name", "phone", "school", "faculty", "mssv", "is_active").first()
+        if account and not account.is_active:
+            account = None
         if account:
-            link_account_profile(account)
+            linked, _status = link_account_profile(account)
+            if not p.account_id and (not linked or linked.pk != p.pk):
+                account = None
             p.refresh_from_db()
         # The override replaces participant.email with the account email, so the
         # original (captain-entered) email survives only in the audit trail.
@@ -703,11 +707,19 @@ def link_account_profile(account: Account) -> Tuple[Optional[Participant], Optio
       "linked"     — first-time link, no info conflict
       "overwritten"— linked and participant info overwritten (email differed)
       "mssv_claimed_by_other" — blocked: mssv already held by another account
+      "identity_review_required" — existing FK and MSSV disagree; no writes
     """
-    if not account or not account.mssv:
+    if not account:
         return None, None
 
-    participant = Participant.objects.filter(mssv=account.mssv).first()
+    # A linked profile remains the same person after an administrative edit.
+    # Never create/claim a second profile to hide an old inconsistent link.
+    participant = Participant.objects.filter(account_id=account.pk).first()
+    if participant and participant.mssv != account.mssv:
+        return participant, "identity_review_required"
+    if not account.mssv:
+        return None, None
+    participant = participant or Participant.objects.filter(mssv=account.mssv).first()
     if not participant:
         # No Participant row exists yet — create one from the Account data so
         # that school, faculty, etc. collected during signup are immediately
@@ -928,10 +940,9 @@ def rotate_qr_token(team: Team) -> str:
 
 
 def team_is_editable(team: Team) -> bool:
-    """Check if team can be edited by owner (draft, pending, rejected)."""
+    """Submitted registrations stay locked until BTC requests changes."""
     return team.approval_status in (
         Team.APPROVAL_DRAFT,
-        Team.APPROVAL_PENDING,
         Team.APPROVAL_REJECTED,
     )
 

@@ -208,7 +208,7 @@ class FixParticipantIdentityViewTests(TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
-class AccountMssvEditWarningTests(TestCase):
+class AccountMssvEditWithoutLinkTests(TestCase):
     def setUp(self):
         cache.clear()
         self.admin = _account("admin@x.com", role=Account.ROLE_ADMIN)
@@ -222,20 +222,22 @@ class AccountMssvEditWarningTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
         )
 
-    def test_warns_when_new_account_mssv_has_no_participant(self):
+    def test_edit_without_any_participant_does_not_create_profile(self):
         target = _account("stu@x.com", mssv="26521985")
         resp = self._patch(target.username, {"mssv": "26599999"})
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json().get("warning"), "account_mssv_no_participant")
+        self.assertFalse(Participant.objects.exists())
 
-    def test_links_existing_participant_when_account_mssv_matches(self):
+    def test_admin_edit_does_not_claim_unlinked_roster_even_when_email_matches(self):
         target = _account("stu@x.com", mssv="26521985")
         roster = _participant("26599999", email="stu@x.com")
         _team_with_captain(roster)
 
         resp = self._patch(target.username, {"mssv": "26599999"})
 
-        self.assertEqual(resp.status_code, 200)
-        self.assertNotIn("warning", resp.json())
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"], "identity_review_required")
         roster.refresh_from_db()
-        self.assertEqual(roster.account_id, target.id)
+        target.refresh_from_db()
+        self.assertIsNone(roster.account_id)
+        self.assertEqual(target.mssv, "26521985")

@@ -38,6 +38,10 @@ function explainApiError(error) {
   const code = error?.data?.error || error?.message
   const map = {
     conflict: 'Username, email hoặc MSSV đã tồn tại.',
+    participant_identity_conflict: 'MSSV hoặc email này thuộc hồ sơ thí sinh khác, kể cả người chưa có tài khoản web. Chưa lưu thay đổi.',
+    identity_review_required: 'Liên kết tài khoản và hồ sơ cần được BTC đối chiếu trước khi sửa. Chưa lưu thay đổi hoặc nối hồ sơ.',
+    linked_profile_mssv_required: 'Tài khoản đã liên kết hồ sơ thí sinh nên không thể xóa MSSV.',
+    password_too_short: 'Mật khẩu mới quá ngắn.',
     missing_fields: 'Vui lòng điền đủ các trường bắt buộc.',
     forbidden: 'Bạn không có quyền thao tác tài khoản.',
     not_found: 'Không tìm thấy tài khoản.',
