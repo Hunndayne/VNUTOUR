@@ -38,7 +38,15 @@ jobs:
           sudo mv gitleaks /usr/local/bin/
 
       - name: Scan for secrets
-        run: gitleaks detect --source . --redact --exit-code 1
+        run: gitleaks detect --source . --log-opts="-- k8s/" --redact --exit-code 1 -v --report-format json --report-path gitleaks-infra-${{ github.sha }}.json
+
+      - name: Upload gitleaks report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-infra-${{ github.sha }}
+          path: gitleaks-infra-${{ github.sha }}.json
+          retention-days: 3
 
   # Hard blocker: a Kustomize overlay that doesn't build, or renders a manifest with an invalid schema, is guaranteed to fail an ArgoCD sync - this catches that before merge instead of after.
   kustomize-validate:
@@ -131,7 +139,7 @@ jobs:
         run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Scan k8s manifests with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: k8s
@@ -161,6 +169,7 @@ jobs:
     secrets: inherit
     with:
       workflow_name: "CI Infra (K8s / ArgoCD)"
+      event_name: ${{ github.event_name }}
       overall_status: >-
         ${{
             contains(needs.*.result, 'failure')   && 'failure'   ||
