@@ -1,0 +1,178 @@
+name: Notification
+
+# This workflow is called by ci-backend.yml, ci-frontend.yml, and ci-infra.yml after all jobs finish. It sends a Discord embed to the #github channel and, for pull requests, posts a summary comment on the PR itself.
+
+on:
+    workflow_call:
+        inputs:
+            workflow_name:
+                required: true
+                type: string
+            # Build this in the caller with needs.<job>.result expressions.
+            job_results:
+                required: true
+                type: string
+            # Overall pipeline status: "success" | "failure" | "cancelled"
+            overall_status:
+                required: true
+                type: string
+        secrets:
+            DISCORD_GITHUB_WEBHOOK:
+                required: true
+
+jobs:
+    notify:
+        name: Send Notifications
+        runs-on: ubuntu-latest
+        permissions:
+            pull-requests: write # needed to post / update PR comments
+
+        steps:
+            # 1. Compute display values used in both Discord and PR comment
+            - name: Compute display values
+              id: display
+              run: |
+                  STATUS="${{ inputs.overall_status }}"
+
+                  if [ "$STATUS" = "success" ]; then
+                      echo "emoji=✅"        >> "$GITHUB_OUTPUT"
+                      echo "color=3066993"   >> "$GITHUB_OUTPUT"   # green
+                      echo "label=SUCCESS"   >> "$GITHUB_OUTPUT"
+                  elif [ "$STATUS" = "failure" ]; then
+                      echo "emoji=❌"        >> "$GITHUB_OUTPUT"
+                      echo "color=15158332"  >> "$GITHUB_OUTPUT"   # red
+                      echo "label=FAILURE"   >> "$GITHUB_OUTPUT"
+                  else
+                      echo "emoji=⚠️"        >> "$GITHUB_OUTPUT"
+                      echo "color=16776960"  >> "$GITHUB_OUTPUT"   # yellow
+                      echo "label=CANCELLED" >> "$GITHUB_OUTPUT"
+                  fi
+
+                  # Build a markdown table from the space-separated "name=result" pairs.
+                  JOB_TABLE=""
+                  for pair in ${{ inputs.job_results }}; do
+                      name="${pair%%=*}"
+                      result="${pair##*=}"
+                      case "$result" in
+                          success)   icon="✅" ;;
+                          failure)   icon="❌" ;;
+                          cancelled) icon="⚠️" ;;
+                          skipped)   icon="⏭️" ;;
+                          *)         icon="❓" ;;
+                      esac
+                      JOB_TABLE="${JOB_TABLE}| \`${name}\` | ${icon} ${result} |\n"
+                  done
+                  echo "job_table<<EOF" >> "$GITHUB_OUTPUT"
+                  printf "%b" "$JOB_TABLE" >> "$GITHUB_OUTPUT"
+                  echo "EOF" >> "$GITHUB_OUTPUT"
+
+            # 2. Discord notification → #github channel (VNU Tour 2026)
+            - name: Send Discord notification
+              env:
+                  WEBHOOK: ${{ secrets.DISCORD_GITHUB_WEBHOOK }}
+                  # Pass untrusted, attacker-influenceable values (branch names
+                  # from a PR, the actor login) via env — NEVER inline ${{ }}
+                  # into the shell, or a branch named `$(...)` runs as code.
+                  HEAD_REF: ${{ github.head_ref }}
+                  BASE_REF: ${{ github.base_ref }}
+                  ACTOR: ${{ github.actor }}
+              run: |
+                  if [ -z "$WEBHOOK" ]; then
+                      echo "DISCORD_GITHUB_WEBHOOK not set (e.g. fork PR) — skipping Discord notification"
+                      exit 0
+                  fi
+
+                  SHORT_SHA="${GITHUB_SHA::7}"
+                  RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  if [ "${{ github.event_name }}" = "pull_request" ]; then
+                      REF_DISPLAY="PR #${{ github.event.pull_request.number }} (\`$HEAD_REF\` → \`$BASE_REF\`)"
+                  else
+                      REF_DISPLAY="\`${{ github.ref_name }}\`"
+                  fi
+
+                  PAYLOAD=$(jq -n \
+                      --arg  workflow  "${{ inputs.workflow_name }}" \
+                      --arg  emoji     "${{ steps.display.outputs.emoji }}" \
+                      --arg  label     "${{ steps.display.outputs.label }}" \
+                      --argjson color  "${{ steps.display.outputs.color }}" \
+                      --arg  sha       "$SHORT_SHA" \
+                      --arg  ref       "$REF_DISPLAY" \
+                      --arg  actor     "$ACTOR" \
+                      --arg  run_url   "$RUN_URL" \
+                      '{
+                          embeds: [{
+                              title:  ("\($emoji) \($workflow) — \($label)"),
+                              color:  $color,
+                              url:    $run_url,
+                              fields: [
+                                  { name: "Branch / PR",   value: $ref,     inline: true },
+                                  { name: "Commit",        value: $sha,     inline: true },
+                                  { name: "Triggered by",  value: $actor,   inline: true }
+                              ],
+                              footer: { text: "VNU Tour 2026 · CI/CD" }
+                          }]
+                      }')
+
+                  curl -sSf -X POST "$WEBHOOK" \
+                      -H "Content-Type: application/json" \
+                      -d "$PAYLOAD"
+
+            # 3. PR summary comment (pull_request events only) - Updates an existing bot comment on re-runs to avoid spam.
+            - name: Post PR summary comment
+              if: github.event_name == 'pull_request'
+              uses: actions/github-script@v7
+              env:
+                  JOB_TABLE: ${{ steps.display.outputs.job_table }}
+              with:
+                  script: |
+                      const emoji    = "${{ steps.display.outputs.emoji }}";
+                      const label    = "${{ steps.display.outputs.label }}";
+                      const workflow = "${{ inputs.workflow_name }}";
+                      const sha      = process.env.GITHUB_SHA.substring(0, 7);
+                      const runUrl   = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+                      const jobTable = process.env.JOB_TABLE || "";
+
+                      const body = [
+                          `## ${emoji} ${workflow} — ${label}`,
+                          "",
+                          "| Job | Status |",
+                          "|-----|--------|",
+                          jobTable.trim(),
+                          "",
+                          `**Commit:** \`${sha}\` &nbsp;·&nbsp; [View full run ↗](${runUrl})`,
+                      ].join("\n");
+
+                      // Marker keeps one comment per workflow per PR — updates on re-runs.
+                      const marker = `<!-- vnutour-notify:${workflow} -->`;
+                      const fullBody = `${marker}\n${body}`;
+
+                      // Paginate: on a PR with >30 comments the bot's own
+                      // comment can sit on a later page, so a single-page fetch
+                      // would miss it and post a duplicate every run.
+                      const comments = await github.paginate(github.rest.issues.listComments, {
+                          owner:        context.repo.owner,
+                          repo:         context.repo.repo,
+                          issue_number: context.payload.pull_request.number,
+                          per_page:     100,
+                      });
+
+                      const existing = comments.find(c =>
+                          c.user.type === "Bot" && c.body.includes(marker)
+                      );
+
+                      if (existing) {
+                          await github.rest.issues.updateComment({
+                              owner:      context.repo.owner,
+                              repo:       context.repo.repo,
+                              comment_id: existing.id,
+                              body:       fullBody,
+                          });
+                      } else {
+                          await github.rest.issues.createComment({
+                              owner:        context.repo.owner,
+                              repo:         context.repo.repo,
+                              issue_number: context.payload.pull_request.number,
+                              body:         fullBody,
+                          });
+                      }

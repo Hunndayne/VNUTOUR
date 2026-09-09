@@ -1,0 +1,266 @@
+name: CI for Frontend
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "frontend/**"
+  pull_request:
+    paths:
+      - "frontend/**"
+
+concurrency:
+  group: ci-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Hard blocker: a leaked secret is never acceptable, so this fails the job
+  # outright (exit-code 1) rather than just warning.
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, not just the latest commit
+
+      - name: Install Gitleaks
+        # Installing the CLI directly (not gitleaks/gitleaks-action) avoids
+        # the GITLEAKS_LICENSE requirement that action's v2+ imposes on
+        # organization accounts. The CLI itself is MIT-licensed and free.
+        run: |
+          GITLEAKS_VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Scan for secrets
+        run: gitleaks detect --source . --redact --exit-code 1
+
+  # Lints the Dockerfile for the classic mistakes
+  dockerfile-frontend-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+
+  frontend-lint-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      # Catches compile errors that lint alone lets through.
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      # SCA: known CVEs in npm dependencies.
+      # Report-only for now (continue-on-error)
+      - name: SCA - npm audit
+        working-directory: frontend
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      # SAST: JS/TS-specific insecure-code patterns.
+      # Semgrep's free OSS ruleset covers common web vuln.
+      # Same report-only policy as above.
+      - name: SAST - semgrep
+        working-directory: frontend
+        continue-on-error: true
+        run: |
+          pip install semgrep
+          semgrep scan --config auto .
+
+  # Perform the build-push process in two stages: first, build with `load: true` (without pushing) so Trivy can scan the image; then, perform the actual push. Thanks to the `type=gha` cache, the second stage is nearly instantaneous, avoiding a full rebuild from scratch.
+  build-push:
+    needs: [secret-scan, dockerfile-frontend-lint, frontend-lint-build]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write # needed to upload the Trivy SARIF report
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Short SHA and rolling tag
+        id: meta
+        run: |
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            echo "rolling=staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "rolling=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Build locally first (load: true, no push yet) so Trivy can scan the actual image content before anything reaches the registry.
+      - name: Build image (local)
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: false
+          load: true
+          tags: ghcr.io/hunndayne/vnutour-frontend:${{ steps.meta.outputs.sha }}
+          build-args: |
+            VITE_GOOGLE_CLIENT_ID=${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Hard blocker: fails the job on HIGH/CRITICAL vulnerabilities that already have a fix available.
+      # --ignore-unfixed skips CVEs with no patch yet, since blocking on those just stalls the pipeline forever.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/hunndayne/vnutour-frontend:${{ steps.meta.outputs.sha }}
+          format: sarif
+          output: trivy-results-vnutour-frontend-${{ steps.meta.outputs.sha }}.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: always() #upload the report even if the scan above failed the job
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results-vnutour-frontend-${{ steps.meta.outputs.sha }}.sarif
+
+      # Only runs if the scan step above passed - a failed scan stops the job here and this step (and everything after it) is skipped.
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: |
+            ghcr.io/hunndayne/vnutour-frontend:${{ steps.meta.outputs.sha }}
+            ghcr.io/hunndayne/vnutour-frontend:${{ steps.meta.outputs.rolling }}
+          build-args: |
+            VITE_GOOGLE_CLIENT_ID=${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Update the Kustomize image tag with the new SHA so ArgoCD picks it up.
+  # staging -> overlays/staging/kustomization.yaml (staging cluster only).
+  # main    -> components/images/kustomization.yaml, the SINGLE source shared by
+  #            overlays/prod (Zone 1 homelab) and overlays/prod-standby (Zone 2
+  #            Linode) - one bump keeps both prod zones on the same version.
+  # Commits back to the SAME branch with [skip ci] so it does not re-trigger.
+  update-manifest:
+    needs: [build-push]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to push the manifest commit back to the repo
+    concurrency:
+      group: manifest-update-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref_name }}
+
+      - name: Compute short SHA
+        id: meta
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Install kustomize
+        # Pin an exact version for reproducible CI (no "latest" surprises).
+        run: |
+          KUSTOMIZE_VERSION=v5.4.3
+          curl -sLo kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz -C /usr/local/bin/
+          chmod +x /usr/local/bin/kustomize
+          kustomize version
+
+      - name: Pick target directory
+        id: target
+        run: |
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            echo "dir=k8s/kustomize/overlays/staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=k8s/kustomize/components/images" >> "$GITHUB_OUTPUT"
+          fi
+
+      # If ci-backend.yml's update-manifest job ran first and pushed while this job was queued behind the shared concurrency group, this pulls that commit in before we edit the same file - keeps the working tree clean so the push below is a plain fast-forward.
+      - name: Pull latest before editing
+        run: git pull --ff-only origin "${{ github.ref_name }}"
+
+      - name: Update Kustomize frontend image tag
+        run: |
+          SHA="${{ steps.meta.outputs.sha }}"
+          cd "${{ steps.target.outputs.dir }}"
+          kustomize edit set image ghcr.io/hunndayne/vnutour-frontend:${SHA}
+
+      - name: Commit and push manifest update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ steps.target.outputs.dir }}/kustomization.yaml"
+          # Skip commit if nothing changed (e.g. re-run on same SHA)
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "ci: update frontend image tag on ${{ github.ref_name }} to ${{ steps.meta.outputs.sha }} [skip ci]"
+          git push origin "${{ github.ref_name }}"
+
+  # Notify: Discord notification + PR comment (always runs, even on failure)
+  notify:
+    if: always()
+    # Grant explicitly so the reusable notify.yml can post its PR comment
+    # regardless of the repo's default GITHUB_TOKEN permission setting.
+    permissions:
+      contents: read
+      pull-requests: write
+    needs:
+      [
+        secret-scan,
+        dockerfile-frontend-lint,
+        frontend-lint-build,
+        build-push,
+        update-manifest,
+      ]
+    uses: ./.github/workflows/notify.yml
+    secrets: inherit
+    with:
+      workflow_name: "CI Frontend"
+      overall_status: >-
+        ${{
+            contains(needs.*.result, 'failure')   && 'failure'   ||
+            contains(needs.*.result, 'cancelled') && 'cancelled' ||
+            'success'
+        }}
+      job_results: >-
+        secret-scan=${{ needs.secret-scan.result }}
+        dockerfile-frontend-lint=${{ needs.dockerfile-frontend-lint.result }}
+        frontend-lint-build=${{ needs.frontend-lint-build.result }}
+        build-push=${{ needs.build-push.result }}
+        update-manifest=${{ needs.update-manifest.result }}
