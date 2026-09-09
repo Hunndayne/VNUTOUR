@@ -37,7 +37,15 @@ jobs:
           sudo mv gitleaks /usr/local/bin/
 
       - name: Scan for secrets
-        run: gitleaks detect --source . --redact --exit-code 1
+        run: gitleaks detect --source . --log-opts="-- frontend/" --redact --exit-code 1 -v --report-format json --report-path gitleaks-frontend-${{ github.sha }}.json
+
+      - name: Upload gitleaks report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-frontend-${{ github.sha }}
+          path: gitleaks-frontend-${{ github.sha }}.json
+          retention-days: 3
 
   # Lints the Dockerfile for the classic mistakes
   dockerfile-frontend-lint:
@@ -139,7 +147,7 @@ jobs:
       # Hard blocker: fails the job on HIGH/CRITICAL vulnerabilities that already have a fix available.
       # --ignore-unfixed skips CVEs with no patch yet, since blocking on those just stalls the pipeline forever.
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/hunndayne/vnutour-frontend:${{ steps.meta.outputs.sha }}
           format: sarif
@@ -252,6 +260,7 @@ jobs:
     secrets: inherit
     with:
       workflow_name: "CI Frontend"
+      event_name: ${{ github.event_name }}
       overall_status: >-
         ${{
             contains(needs.*.result, 'failure')   && 'failure'   ||
