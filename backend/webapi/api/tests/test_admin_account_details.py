@@ -124,7 +124,10 @@ class AdminAccountDetailsTests(TestCase):
     def test_new_ciphertext_each_request_and_tampering_fails_authentication(self):
         first, second = self.request(), self.request()
         self.assertNotEqual(first.json()['jwe'], second.json()['jwe'])
-        self.assertEqual(self.decrypt(first), self.decrypt(second))
+        first_payload, second_payload = self.decrypt(first), self.decrypt(second)
+        first_payload.pop('_edit')
+        second_payload.pop('_edit')
+        self.assertEqual(first_payload, second_payload)
         protected, wrapped, nonce, ciphertext, tag = first.json()['jwe'].split('.')
         key = self.private_key.decrypt(decode(wrapped), padding.OAEP(
             mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None,

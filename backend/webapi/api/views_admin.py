@@ -760,13 +760,16 @@ def admin_account_detail_view(request: HttpRequest, username: str):
 
     if request.method == "PATCH":
         data = _json_body(request)
-        if data is None:
+        if not isinstance(data, dict):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
         try:
             target = update_admin_account(target.pk, data, actor=acc)
         except AccountUpdateError as exc:
-            return JsonResponse({"error": exc.code}, status=exc.status)
+            payload = {"error": exc.code}
+            if exc.field:
+                payload["field"] = exc.field
+            return JsonResponse(payload, status=exc.status)
         except IntegrityError:
             return JsonResponse({"error": "conflict"}, status=409)
 

@@ -56,3 +56,55 @@ export async function fetchEncryptedAccountDetails(username, request, { signal }
     throw new Error('invalid_encrypted_response')
   }
 }
+
+function encodeBase64Url(value) {
+  // Chunking avoids overflowing the argument stack for longer registration forms.
+  let binary = ''
+  for (let offset = 0; offset < value.length; offset += 8192) {
+    binary += String.fromCharCode(...value.subarray(offset, offset + 8192))
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+export async function saveEncryptedAccountDetails(username, details, changes, request, { signal } = {}) {
+  if (!globalThis.crypto?.subtle) throw new Error('secure_browser_required')
+  checkAborted(signal)
+  const accountId = details?.account?.id
+  const edit = details?._edit
+  if (!((Number.isSafeInteger(accountId) && accountId > 0)
+      || (typeof accountId === 'string' && /^[1-9]\d*$/.test(accountId)))
+      || typeof edit?.key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(edit.key)
+      || typeof edit?.grant !== 'string' || !/^[A-Za-z0-9_-]+={0,2}$/.test(edit.grant)
+      || edit.grant.length > 8192) {
+    throw new Error('edit_session_invalid')
+  }
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+    throw new Error('invalid_encrypted_request')
+  }
+  const rawKey = decodeBase64Url(edit.key)
+  let plaintext
+  let body
+  try {
+    if (rawKey.length !== 32) throw new Error('edit_session_invalid')
+    plaintext = new TextEncoder().encode(JSON.stringify(changes))
+    if (plaintext.length > 128 * 1024) throw new Error('invalid_encrypted_request')
+    const aesKey = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['encrypt'])
+    rawKey.fill(0)
+    checkAborted(signal)
+    const nonce = crypto.getRandomValues(new Uint8Array(12))
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({
+      name: 'AES-GCM', iv: nonce, tagLength: 128,
+      additionalData: new TextEncoder().encode(`vnutour-account-edit-v1:${accountId}`),
+    }, aesKey, plaintext))
+    body = { grant: edit.grant, iv: encodeBase64Url(nonce), ciphertext: encodeBase64Url(ciphertext) }
+  } finally {
+    rawKey.fill(0)
+    plaintext?.fill(0)
+  }
+  checkAborted(signal)
+  const result = await request(`/admin/accounts/${encodeURIComponent(username)}/details/edit`, {
+    method: 'POST', cache: 'no-store', signal, body,
+  })
+  checkAborted(signal)
+  return result
+}

@@ -1,6 +1,11 @@
 # Admin account details
 
-The Accounts page opens a read-only drawer through `?detail=<username>`.
+The Accounts page opens a details drawer through `?detail=<username>`.
+The drawer's Edit button and the existing `?account=<username>` edit link open
+the same form. Admins can edit contact fields, role, active status, a new password,
+linked registration fields (CCCD, birthday, Facebook), and primitive extra fields.
+Only a master admin can change a master admin account or grant that role.
+Team membership and provider identities remain managed by their existing flows.
 It shows account contact information, Google link status, the linked participant's
 registration fields and Discord identity, team membership, and timestamps.
 Password hashes, session tokens and Google subject identifiers are never included.
@@ -37,20 +42,51 @@ actor and target IDs, without the dossier or cryptographic material.
 HTTPS remains required: this additional layer does not authenticate the server
 without TLS and does not hide data from an authorized browser after decryption,
 browser extensions, XSS, or the backend before encryption. It applies specifically
-to this new details endpoint; existing list/edit/team/export APIs retain their
+to the details and encrypted edit endpoints; existing list/PATCH/team/export APIs retain their
 existing transport and authorization behavior. It is not database encryption or
 two-factor authentication. Production already configures HTTPS redirection and
 HSTS in Django, with ingress TLS; retain that deployment configuration.
+
+## Encrypted updates
+
+The encrypted details payload includes `_edit`: a random AES-256 key and an
+opaque Fernet grant. The grant binds that key to the admin, current login session,
+target account and viewed account/profile revision. It expires after five minutes.
+Its encryption key is derived with a purpose-specific HMAC from the existing
+Django `SECRET_KEY`; replicas must share that secret as usual.
+
+`POST /api/admin/accounts/<username>/details/edit` accepts only
+`{grant, iv, ciphertext}`. Web Crypto encrypts changed fields using AES-GCM,
+a fresh 12-byte IV, a 128-bit appended tag and UTF-8 additional authenticated
+data `vnutour-account-edit-v1:<numeric account id>`. IV and ciphertext use
+unpadded base64url. Neither plaintext fields nor the AES key are sent in this
+request. Success returns only `{status: "updated"}`, followed by a fresh encrypted
+details read. Auth and CSRF checks apply independently of encryption.
+
+Updates lock the account and linked profile in one transaction. Stale revisions
+and successful write replays return `409 account_changed`; expired grants return
+`410 edit_session_expired`. Errors keep the draft visible until the admin chooses
+to discard it and reload. Closing or cancelling removes the in-memory form.
+Only deliberately changed fields are submitted; extra fields merge at the top
+level and preserve unsubmitted values. Account/profile identity conflict guards
+remain in force. No profile is linked by guessing an email or MSSV.
+The new `account.details_updated` audit event contains changed field names,
+never field values or cryptographic material. The existing identity audit still
+records before/after email and MSSV when those identifiers change. Passwords may
+be reset but existing passwords/hashes are never shown.
 
 ## Deployment and validation
 
 Install updated `backend/requirements.txt` (adds an explicit `cryptography`
 dependency) and deploy both backend and frontend. No schema/data migration or
-persistent encryption key is needed. No existing participant data is rewritten.
+new persistent encryption key is needed; grants use the existing Django secret.
+No existing participant data is rewritten during deployment.
 
 Backend: `python -m pytest backend/webapi/api/tests/test_admin_account_details.py`.
+Also run `test_admin_account_profile_edit.py` and
+`test_admin_account_encrypted_edit.py` in the same directory.
 Frontend interoperability: from `frontend`, run
-`node --test tests/accountDetailsCrypto.test.mjs`. Set `TEST_PYTHON` to the backend
+`node --test tests/accountDetailsCrypto.test.mjs tests/accountDetailsForm.test.mjs`. Set `TEST_PYTHON` to the backend
 Python executable outside Windows; the default uses the repository's Windows venv.
 These tests call the actual Python encryptor and Web Crypto decryptor, including
 Unicode, tampering, replay across keys, and cancellation scenarios.
