@@ -14,4 +14,4 @@ images:
 - name: ghcr.io/hunndayne/vnutour-backend
   newTag: 5cb0d94
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: 4ae4633
+  newTag: b742749
