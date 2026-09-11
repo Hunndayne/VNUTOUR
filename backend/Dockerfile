@@ -15,6 +15,10 @@ WORKDIR /app
 # argument string. Two suits a 2 vCPU node; each worker costs roughly 200 MB.
 
 # ffmpeg/libopus are also needed when this image is reused for the Discord bot.
+# We intentionally track the distro's current ffmpeg/libopus0; pinning apt
+# versions breaks the build on every base-image refresh (Debian drops old
+# versions from the mirror) for no security gain here.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ffmpeg \
@@ -25,8 +29,16 @@ RUN apt-get update \
 
 # Keep dependency installation in its own layer for faster rebuilds.
 COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r requirements.txt
+# pip 26.2.1 vendors setuptools 70.3.0 and msgpack 1.1.2; upgrading the
+# top-level packages does not patch pip/_vendor or its embedded SBOM.
+# Keep setuptools patched, check dependencies, then remove build-only tools
+# and ensurepip's bootstrap wheels so vulnerable copies do not ship at runtime.
+# hadolint ignore=DL3013
+RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=83.0.0" wheel \
+    && python -m pip install --no-cache-dir -r requirements.txt \
+    && python -m pip check \
+    && python -m pip uninstall --yes pip wheel \
+    && python -c "import pathlib, shutil, sysconfig; shutil.rmtree(pathlib.Path(sysconfig.get_path('stdlib')) / 'ensurepip')"
 
 COPY --chown=app:app . .
 

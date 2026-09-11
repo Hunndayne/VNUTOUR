@@ -394,6 +394,9 @@ function LandingPage() {
                   </div>
                 ))}
               </div>
+              <p className="mt-1.5 text-[10px] font-medium leading-4 text-[#0c1d33]/60">
+                Đơn đăng ký có thể đóng sớm do đủ số lượng
+              </p>
             </>
           ) : (
             <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#1478D4]">Đã hết hạn đăng ký</p>

@@ -950,7 +950,6 @@ export default function DiscordPage() {
             <OverviewTab
               status={status}
               teams={teams}
-              discordChannels={discordChannels}
               queue={queue}
               broadcasts={broadcasts}
               busyKey={busyKey}
@@ -968,6 +967,7 @@ export default function DiscordPage() {
           {activeTab === 'channels' && (
             <ChannelsTab
               teams={teams}
+              discordChannels={discordChannels}
               broadcasts={broadcasts}
               busyKey={busyKey}
               onRetry={handleRetryProvision}

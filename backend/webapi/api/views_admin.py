@@ -10,7 +10,7 @@ from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
 from django.db.models import Q, Count
 
-from api.models import Account, Participant, ProgramPhase, Team, TeamMembership
+from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team, delete_team,
     get_team_members, add_member, link_account_profile,
