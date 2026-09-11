@@ -18,6 +18,7 @@ from api.services.team_service import (
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
     team_name_is_duplicate,
+    COUNTED_TEAM_STATUSES, lock_registration_capacity, registration_capacity_error,
 )
 from api.services.audit_service import record_audit
 from api.services.account_identity_service import AccountUpdateError, update_admin_account
@@ -319,6 +320,7 @@ def team_item_view(request: HttpRequest, team_key: str):
             if new_approval_status not in dict(Team.APPROVAL_CHOICES):
                 return JsonResponse({"error": "invalid_approval_status"}, status=400)
             with transaction.atomic():
+                lock_registration_capacity()
                 if not _lock_registration_phase():
                     return JsonResponse({"error": "registration_phase_closed"}, status=409)
                 team = Team.objects.select_for_update().get(pk=team.pk)
@@ -336,6 +338,14 @@ def team_item_view(request: HttpRequest, team_key: str):
                 elif new_approval_status == Team.APPROVAL_REJECTED:
                     reject_team(team, acc, data.get("approval_note") or data.get("note"))
                 else:
+                    additional_members = (
+                        TeamMembership.objects.filter(team=team).count()
+                        if new_approval_status in COUNTED_TEAM_STATUSES
+                        and team.approval_status not in COUNTED_TEAM_STATUSES else 0
+                    )
+                    capacity_error = registration_capacity_error(additional_members)
+                    if capacity_error:
+                        return JsonResponse({"error": capacity_error}, status=409)
                     team.approval_status = new_approval_status
                     team.save(update_fields=["approval_status", "updated_at"])
 

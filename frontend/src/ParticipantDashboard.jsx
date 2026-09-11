@@ -248,6 +248,7 @@ function explainApiError(error) {
     team_not_approved: 'Đội cần được duyệt trước khi lấy QR.',
     invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
     registration_closed: 'Đợt đăng ký hiện đang đóng.',
+    registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này. Vui lòng liên hệ BTC.',
     not_found: 'Không tìm thấy dữ liệu cần thiết.',
   }
   return map[code] || 'Có lỗi xảy ra khi đồng bộ dữ liệu.'
@@ -881,7 +882,7 @@ function PaymentConfirmModal({
           <button type="button" onClick={onClose} disabled={busy} className={SECONDARY_BUTTON}>
             Quay lại chỉnh sửa
           </button>
-          <button type="submit" disabled={busy} className={PRIMARY_BUTTON}>
+          <button type="submit" disabled={busy || (!skipPayment && (paymentLoading || !paymentInfo))} className={PRIMARY_BUTTON}>
             <Icon name="checkPlain" className="h-4 w-4" />
             {busy ? 'Đang xác nhận...' : skipPayment ? 'Xác nhận thông tin đội' : 'Xác nhận & thanh toán'}
           </button>
@@ -1185,6 +1186,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [paymentError, setPaymentError] = useState('')
   const [notice, setNotice] = useState('')
   const [uploading, setUploading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1198,25 +1200,60 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError('')
-    apiRequest('/my-team/payment')
-      .then((payload) => {
-        if (cancelled) return
+    let version = 0
+    let controller
+    let timeout
+    const refresh = async (invalidate = false) => {
+      const requestVersion = ++version
+      controller?.abort()
+      window.clearTimeout(timeout)
+      controller = new AbortController()
+      timeout = window.setTimeout(() => controller.abort(), 8000)
+      if (invalidate) {
+        setInfo(null)
+        setLoading(true)
+      }
+      try {
+        const payload = await apiRequest('/my-team/payment', { signal: controller.signal, cache: 'no-store' })
+        if (cancelled || requestVersion !== version) return
         setInfo(payload)
         setHasProof(Boolean(payload?.has_proof))
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setError(explainApiError(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+        setPaymentError('')
+      } catch (err) {
+        if (cancelled || requestVersion !== version) return
+        // A previously displayed QR must disappear on any failed recheck.
+        // Capacity errors keep only receipt/cancellation state from the API.
+        const blocked = err?.data?.error === 'registration_capacity_reached'
+        setInfo(blocked ? err.data : null)
+        if (blocked) setHasProof(Boolean(err.data.has_proof))
+        setPaymentError(blocked
+          ? 'Không còn đủ suất cho toàn bộ đội. QR và thông tin chuyển khoản đã tạm ẩn. Vui lòng chưa chuyển tiền và liên hệ BTC nếu bạn đã thanh toán.'
+          : 'Chưa kiểm tra được số suất còn lại. Thông tin chuyển khoản tạm ẩn; hệ thống sẽ thử lại.')
+      } finally {
+        if (!cancelled && requestVersion === version) {
+          window.clearTimeout(timeout)
+          setLoading(false)
+        }
+      }
+    }
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') void refresh(true)
+    }
+    void refresh(true)
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+    }, 15000)
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
     return () => {
       cancelled = true
+      controller?.abort()
+      window.clearTimeout(timeout)
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
     }
-  }, [team?.team_id])
+  }, [team?.team_id, team?.member_count, team?.roster_locked, team?.has_payment_proof, team?.approval_status])
 
   useEffect(() => {
     if (!hasProof) {
@@ -1407,7 +1444,13 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
         </div>
       )}
 
-      {info && (
+      {paymentError && (
+        <div role="alert" className="mt-4 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+          {paymentError}
+        </div>
+      )}
+
+      {info?.amount != null && (
         <p className="mt-3 text-sm leading-6 text-ink/55">
           {info.member_count} người × {formatVnd(info.fee_per_person)} ={' '}
           <span className="font-semibold text-ink">{formatVnd(info.amount)}</span>
@@ -1442,7 +1485,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
         </div>
       )}
 
-      {!bankReady ? (
+      {!paymentError && (!bankReady ? (
         <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1] px-4 py-3 text-sm text-ink/55">
           BTC chưa cấu hình tài khoản nhận. Vui lòng quay lại sau.
         </div>
@@ -1488,7 +1531,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
 
           {notice && <p className="mt-2 text-xs leading-5 text-[#9A6B12]">{notice}</p>}
         </>
-      )}
+      ))}
 
       <div className="mt-5 border-t border-[#DCD8CC] pt-4">
         <span className="text-xs font-medium text-ink/50">Minh chứng thanh toán</span>
@@ -1609,6 +1652,7 @@ function ParticipantDashboard() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [confirmPaymentLoading, setConfirmPaymentLoading] = useState(false)
+  const [confirmPaymentError, setConfirmPaymentError] = useState('')
   const [latestPost, setLatestPost] = useState(null)
   const [teamInvite, setTeamInvite] = useState(null)
   const [inviteNotice, setInviteNotice] = useState('')
@@ -1943,12 +1987,17 @@ function ParticipantDashboard() {
     if (!confirmOpen || team?.approval_status === 'approved') return undefined
     let cancelled = false
     setConfirmPaymentLoading(true)
+    setConfirmPayment(null)
+    setConfirmPaymentError('')
     apiRequest('/my-team/payment')
       .then((payload) => {
         if (!cancelled) setConfirmPayment(payload)
       })
-      .catch(() => {
-        if (!cancelled) setConfirmPayment(null)
+      .catch((error) => {
+        if (!cancelled) {
+          setConfirmPayment(null)
+          setConfirmPaymentError(explainApiError(error))
+        }
       })
       .finally(() => {
         if (!cancelled) setConfirmPaymentLoading(false)
@@ -1956,7 +2005,7 @@ function ParticipantDashboard() {
     return () => {
       cancelled = true
     }
-  }, [confirmOpen, team?.approval_status])
+  }, [confirmOpen, team?.approval_status, team?.member_count])
 
   // A closed form should not keep showing a stale save error next time it opens.
   useEffect(() => {
@@ -2004,12 +2053,18 @@ function ParticipantDashboard() {
   // by the time the URL points at it.
   const openPaymentConfirm = () => {
     setApiError('')
+    setConfirmPaymentError('')
+    setConfirmPayment(null)
     setConfirmOpen(true)
   }
 
   const confirmTeamForPayment = async (event) => {
     event?.preventDefault?.()
     await withBusy('confirm-team', async () => {
+      if (team?.approval_status !== 'approved') {
+        // The preview may be stale by the time the captain confirms.
+        await apiRequest('/my-team/payment', { cache: 'no-store' })
+      }
       const body = {}
       const nextName = teamNameDraft.trim()
       if (nextName && nextName !== team.team_name) body.team_name = nextName
@@ -3097,7 +3152,7 @@ function ParticipantDashboard() {
         paymentInfo={confirmPayment}
         paymentLoading={confirmPaymentLoading}
         busy={busyAction === 'confirm-team'}
-        error={apiError}
+        error={apiError || confirmPaymentError}
         onConfirm={confirmTeamForPayment}
         onClose={() => setConfirmOpen(false)}
         skipPayment={team?.approval_status === 'approved'}

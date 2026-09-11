@@ -46,6 +46,7 @@ from api.services.team_invite_service import (
 )
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
+    lock_registration_capacity, team_registration_capacity_error,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
     link_account_profile, ensure_default_phase_roster_for_team, registration_is_open,
     team_name_is_duplicate,
@@ -680,6 +681,7 @@ def my_team_view(request: HttpRequest):
             )
         try:
             with transaction.atomic():
+                lock_registration_capacity()
                 # Serialise duplicate create requests for the same account and
                 # repeat every precondition under that lock. Team creation and
                 # captain attachment either both commit or both roll back.
@@ -784,6 +786,9 @@ def my_team_view(request: HttpRequest):
             team.name = new_name
 
         if lock_roster and not team.roster_locked_at:
+            capacity_error = team_registration_capacity_error(team)
+            if capacity_error:
+                return JsonResponse({"error": capacity_error}, status=409)
             # A locked roster must be submittable as-is, or the captain is
             # stuck with a team they can neither edit nor send — so the lock
             # only lands after the same checks the submit gate runs.
@@ -815,6 +820,7 @@ def my_team_view(request: HttpRequest):
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
 
+@transaction.atomic
 def my_team_payment_view(request: HttpRequest):
     """GET: VietQR payment info (bank details + QR) for the caller's team."""
     if request.method != "GET":
@@ -823,17 +829,26 @@ def my_team_payment_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    lock_registration_capacity()
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    payload = build_payment_info(team)
-    payload["roster_locked"] = bool(team.roster_locked_at)
-    payload["payment_confirmed"] = bool(team.payment_confirmed_at)
-    payload["timo_configured"] = is_timo_configured()
+    team = Team.objects.select_for_update().get(pk=membership.team_id)
+    payment_state = {
+        "has_proof": bool(team.payment_proof_file),
+        "roster_locked": bool(team.roster_locked_at),
+        "payment_confirmed": bool(team.payment_confirmed_at),
+        "timo_configured": is_timo_configured(),
+    }
+    capacity_error = team_registration_capacity_error(team)
+    if capacity_error:
+        # Keep receipts/cancellation accessible, but do not generate or return
+        # QR, bank details, transfer memo or a payment code for an ineligible team.
+        return JsonResponse({"error": capacity_error, **payment_state}, status=409)
+    payload = {**build_payment_info(team), **payment_state}
     return JsonResponse(payload)
 
 
@@ -992,6 +1007,7 @@ def my_team_submit_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    lock_registration_capacity()
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()

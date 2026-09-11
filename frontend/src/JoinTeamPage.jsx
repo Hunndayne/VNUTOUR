@@ -9,6 +9,7 @@ const STATUS_TEXT = {
   invite_revoked: 'Đội trưởng đã thu hồi link mời này.',
   invite_expired: 'Link mời đã hết hạn. Hãy xin đội trưởng tạo link mới.',
   registration_closed: 'Đợt đăng ký hiện đã đóng.',
+  registration_capacity_reached: 'Không còn đủ suất đăng ký để thêm thành viên. Vui lòng liên hệ BTC.',
   team_locked: 'Đội đã khóa danh sách thành viên.',
   team_full: 'Đội đã đủ thành viên.',
   participant_required: 'Chỉ tài khoản thí sinh mới có thể tham gia đội.',

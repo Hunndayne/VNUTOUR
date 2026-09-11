@@ -370,14 +370,15 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     if len(set(all_mssv)) != len(all_mssv):
         return None, "duplicate_mssv_in_team"
 
-    remaining = team_service.registration_capacity_remaining()
-    if remaining is not None:
-        new_count = sum(1 for m in all_mssv if not Participant.objects.filter(mssv=m).exists())
-        if new_count > remaining:
-            return None, "registration_capacity_reached"
-
     try:
         with transaction.atomic():
+            team_service.lock_registration_capacity()
+            # This endpoint creates a new submitted team. Existing teamless
+            # profiles consume a slot too; identities already on a team are
+            # rejected by _upsert_participant below.
+            capacity_error = team_service.registration_capacity_error(total_members)
+            if capacity_error:
+                return None, capacity_error
             team, err = team_service.create_team(
                 team_name,
                 is_late_registration=is_late_registration,

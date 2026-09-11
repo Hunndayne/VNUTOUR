@@ -147,7 +147,7 @@ function RegistrationToggleSection() {
                 Số lượng đăng ký tối đa (người)
               </label>
               <p className="mt-1 text-xs leading-5 text-ink/45">
-                Đặt 0 hoặc để trống = không giới hạn. Khi tổng số người đăng ký đạt con số này, trang đăng ký sẽ tự động khoá.
+                Đặt 0 hoặc để trống = không giới hạn. Số người trong đội chờ duyệt, đã duyệt và bị từ chối đều được tính. Khi hết suất, hệ thống chặn đăng ký làm tăng số người này.
               </p>
             </div>
             <div className="shrink-0">
