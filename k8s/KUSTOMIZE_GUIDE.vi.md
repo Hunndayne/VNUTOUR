@@ -129,6 +129,7 @@ k8s/
 | POD_IP của Patroni      | Không áp dụng               | `192.168.1.111`                                                              | `10.88.0.2`               |
 | Số object trong output  | 12                          | 24                                                                           | 23                        |
 
+- Sơ đồ miêu tả hạ tầng on-premises ở file [k3s-onprem-infra.md](/docs/infrastructure/k3s-onprem-infra.md)
 - Số object trên **không tính Pod/ReplicaSet** hoặc PVC được controller tạo sau này. Đặc biệt `volumeClaimTemplates` của `postgres-ha` sẽ tạo PVC khi StatefulSet chạy; đó không phải một tài liệu PVC độc lập trong output build.
 - Hai namespace tên `vnutour` thuộc **hai cluster khác nhau**. Namespace không đủ để phân biệt môi trường; mọi thao tác vận hành phải **xác định cả context và namespace**.
 
