@@ -3,6 +3,7 @@ import LandingPage from './LandingPage.jsx'
 import LoginPage from './LoginPage.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import ParticipantDashboard from './ParticipantDashboard.jsx'
+import TeamDetailsPage from './TeamDetailsPage.jsx'
 import FormResponses from './FormResponses.jsx'
 import CoopDashboard from './CoopDashboard.jsx'
 import FramePage from './FramePage.jsx'
@@ -22,7 +23,10 @@ import { navigate, useLocation } from './router.js'
 const ROUTES = {
   '/admin': { render: () => <AdminDashboard />, allows: isAdminRole },
   '/coop': { render: () => <CoopDashboard />, allows: (role) => role === 'collab' || isAdminRole(role) },
-  '/participant': { render: () => <ParticipantDashboard />, allows: (role) => role === 'participant' },
+  '/participant': {
+    render: (location) => location.path === '/participant/team' ? <TeamDetailsPage /> : <ParticipantDashboard />,
+    allows: (role) => role === 'participant',
+  },
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
   '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
   '/feed': { render: () => <FeedPage />, allows: (role) => role === 'participant' },
@@ -172,7 +176,7 @@ function App() {
       page = <PublicRoute />
     } else {
       const route = ROUTES[routeRoot(location.path)]
-      page = route ? route.render() : <LandingPage />
+      page = route ? route.render(location) : <LandingPage />
     }
   }
 

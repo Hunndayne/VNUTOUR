@@ -139,7 +139,9 @@ class TeamPrivacyTests(TestCase):
         response = self.client.get("/api/my-team", **self._auth(teammate_account))
 
         self.assertEqual(response.status_code, 200)
-        members = {item["mssv"]: item for item in response.json()["members"]}
+        payload = response.json()
+        self.assertEqual(payload["team"]["captain_mssv"], "SV001")
+        members = {item["mssv"]: item for item in payload["members"]}
         self.assertEqual(members["SV002"]["email"], "teammate@example.com")
         self.assertEqual(set(members["SV001"]), {"mssv", "full_name", "school"})
 

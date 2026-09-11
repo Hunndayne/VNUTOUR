@@ -624,10 +624,14 @@ def my_team_view(request: HttpRequest):
         _schema = get_schema()
         _max = int(_schema.get("team_size_max") or _schema.get("team_size") or 5)
         _min = int(_schema.get("team_size_min") or 1)
+        _captain_mssv = TeamMembership.objects.filter(
+            team=team, is_captain=True,
+        ).values_list("participant__mssv", flat=True).first()
         return JsonResponse({
             "team": {
                 "code": team.code,
                 "name": team.name,
+                "captain_mssv": _captain_mssv,
                 # The dashboard's team step needs to distinguish a captain's
                 # name from the creation/merge stand-ins.
                 "name_is_placeholder": _team_name_is_placeholder(team),
