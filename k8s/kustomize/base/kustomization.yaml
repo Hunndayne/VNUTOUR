@@ -13,6 +13,7 @@ resources:
   # (see the DB HA runbook, Phase 0.5).
   - 05.migrate-job.yaml
   - 06.backend.yaml
+  - 07.backend-ops.yaml
   - 09.frontend.yaml
   - 10.ingress.yaml
   # 02.secret.yaml NOT here - the backend-secret (and the vnutour-tls cert
