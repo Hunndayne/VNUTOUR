@@ -1200,60 +1200,42 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
 
   useEffect(() => {
     let cancelled = false
-    let version = 0
-    let controller
-    let timeout
-    const refresh = async (invalidate = false) => {
-      const requestVersion = ++version
-      controller?.abort()
-      window.clearTimeout(timeout)
-      controller = new AbortController()
-      timeout = window.setTimeout(() => controller.abort(), 8000)
-      if (invalidate) {
-        setInfo(null)
-        setLoading(true)
-      }
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 8000)
+    setInfo(null)
+    setLoading(true)
+    setPaymentError('')
+    // Load on entry only. Refreshing on window focus can unmount the file
+    // input while the OS picker is returning its selected receipt image.
+    const loadPayment = async () => {
       try {
         const payload = await apiRequest('/my-team/payment', { signal: controller.signal, cache: 'no-store' })
-        if (cancelled || requestVersion !== version) return
+        if (cancelled) return
         setInfo(payload)
         setHasProof(Boolean(payload?.has_proof))
-        setPaymentError('')
       } catch (err) {
-        if (cancelled || requestVersion !== version) return
-        // A previously displayed QR must disappear on any failed recheck.
+        if (cancelled) return
         // Capacity errors keep only receipt/cancellation state from the API.
         const blocked = err?.data?.error === 'registration_capacity_reached'
         setInfo(blocked ? err.data : null)
         if (blocked) setHasProof(Boolean(err.data.has_proof))
         setPaymentError(blocked
           ? 'Không còn đủ suất cho toàn bộ đội. QR và thông tin chuyển khoản đã tạm ẩn. Vui lòng chưa chuyển tiền và liên hệ BTC nếu bạn đã thanh toán.'
-          : 'Chưa kiểm tra được số suất còn lại. Thông tin chuyển khoản tạm ẩn; hệ thống sẽ thử lại.')
+          : 'Chưa kiểm tra được số suất còn lại. Thông tin chuyển khoản tạm ẩn; vui lòng tải lại trang để thử lại.')
       } finally {
-        if (!cancelled && requestVersion === version) {
+        if (!cancelled) {
           window.clearTimeout(timeout)
           setLoading(false)
         }
       }
     }
-    const onFocus = () => {
-      if (document.visibilityState === 'visible') void refresh(true)
-    }
-    void refresh(true)
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh()
-    }, 300000)
-    window.addEventListener('focus', onFocus)
-    document.addEventListener('visibilitychange', onFocus)
+    void loadPayment()
     return () => {
       cancelled = true
-      controller?.abort()
+      controller.abort()
       window.clearTimeout(timeout)
-      window.clearInterval(timer)
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onFocus)
     }
-  }, [team?.team_id, team?.member_count, team?.roster_locked, team?.has_payment_proof, team?.approval_status])
+  }, [team?.team_id])
 
   useEffect(() => {
     if (!hasProof) {
