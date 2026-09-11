@@ -113,6 +113,20 @@ def registration_capacity_error(additional_members: int) -> Optional[str]:
     return None
 
 
+def team_registration_capacity_error(team: Team, *, additional_members: int = 0) -> Optional[str]:
+    """Check whether the entire proposed roster fits without reserving slots.
+
+    Drafts still need slots for their current members. Submitted/rejected teams
+    already occupy those slots and only need capacity for members being added.
+    For writes, hold lock_registration_capacity() through the mutation; UI
+    previews are snapshots and must be checked again when submitting.
+    """
+    needed = additional_members
+    if team.approval_status not in COUNTED_TEAM_STATUSES:
+        needed += TeamMembership.objects.filter(team=team).count()
+    return registration_capacity_error(needed)
+
+
 def registration_capacity_remaining() -> Optional[int]:
     """Return the number of remaining spots, or None if unlimited."""
     max_reg = get_max_registrations()
@@ -452,11 +466,8 @@ def add_member(
             if clash:
                 return None, "email_in_team"
 
-    additional_members = int(team.approval_status in COUNTED_TEAM_STATUSES) - int(
-        existing_member is not None
-        and existing_member.team.approval_status in COUNTED_TEAM_STATUSES
-    )
-    capacity_error = registration_capacity_error(additional_members)
+    additional_members = int(existing_member is None or existing_member.team_id != team.id)
+    capacity_error = team_registration_capacity_error(team, additional_members=additional_members)
     if capacity_error:
         return None, capacity_error
 
@@ -614,11 +625,7 @@ def submit_team(team: Team) -> Tuple[bool, Optional[str]]:
     if team.approval_status == Team.APPROVAL_APPROVED:
         return False, "already_approved"
 
-    additional_members = (
-        TeamMembership.objects.filter(team=team).count()
-        if team.approval_status not in COUNTED_TEAM_STATUSES else 0
-    )
-    capacity_error = registration_capacity_error(additional_members)
+    capacity_error = team_registration_capacity_error(team)
     if capacity_error:
         return False, capacity_error
 

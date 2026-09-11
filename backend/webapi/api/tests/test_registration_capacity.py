@@ -59,6 +59,110 @@ class CapacityFixtures:
 
 
 class RegistrationCapacityTests(CapacityFixtures, TestCase):
+    def test_draft_member_add_checks_the_entire_proposed_roster(self):
+        set_max_registrations(3)
+        self.team("T0001", Team.APPROVAL_APPROVED)
+        draft, account = self.team("T0002")
+        draft.roster_locked_at = None
+        draft.save(update_fields=["roster_locked_at"])
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {generate_session(account)}"}
+        fits = self.client.post(
+            "/api/my-team/members", data=person("EXTRA1"), content_type="application/json", **auth,
+        )
+        self.assertEqual(fits.status_code, 201)
+        exceeds = self.client.post(
+            "/api/my-team/members", data=person("EXTRA2"), content_type="application/json", **auth,
+        )
+        self.assert_capacity_error(exceeds)
+        self.assertFalse(Participant.objects.filter(mssv="EXTRA2").exists())
+        self.assertEqual(draft.memberships.count(), 2)
+        self.assertEqual(get_current_registrations(), 1)  # Drafts do not reserve slots.
+
+    def test_draft_invite_cannot_join_when_whole_roster_would_not_fit(self):
+        self.team("T0001", Team.APPROVAL_PENDING)
+        draft, captain = self.team("T0002")
+        draft.roster_locked_at = None
+        draft.save(update_fields=["roster_locked_at"])
+        _, raw_token = issue_team_invite(draft, captain)
+        invitee = Account.objects.create(
+            username="INVITEE", mssv="INVITEE", email=person("INVITEE")["email"],
+            role=Account.ROLE_PARTICIPANT, password_hash="x",
+        )
+        self.participant("INVITEE", invitee)
+        response = self.client.post(
+            f"/api/team-invites/{raw_token}", data={}, content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(invitee)}",
+        )
+        self.assert_capacity_error(response)
+        self.assertFalse(TeamMembership.objects.filter(participant__mssv="INVITEE").exists())
+
+    def test_initial_captain_attachment_is_blocked_when_full(self):
+        self.team("T0001", Team.APPROVAL_PENDING, size=2)
+        account = Account.objects.create(
+            username="NEWCAP", mssv="NEWCAP", email=person("NEWCAP")["email"],
+            role=Account.ROLE_PARTICIPANT, password_hash="x",
+        )
+        response = self.client.post(
+            "/api/my-team", data={}, content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(account)}",
+        )
+        self.assert_capacity_error(response)
+        self.assertEqual(Team.objects.count(), 1)
+        self.assertFalse(TeamMembership.objects.filter(participant__mssv="NEWCAP").exists())
+
+    def test_payment_withholds_qr_for_locked_draft_when_insufficient_slots(self):
+        self.team("T0001", Team.APPROVAL_PENDING)
+        draft, account = self.team("T0002", size=2)
+        response = self.client.get(
+            "/api/my-team/payment", HTTP_AUTHORIZATION=f"Bearer {generate_session(account)}",
+        )
+        self.assert_capacity_error(response)
+        for field in ("qr_image_url", "bank", "content", "payment_code"):
+            self.assertNotIn(field, response.json())
+        self.assertTrue(response.json()["has_proof"])
+        self.assertTrue(response.json()["roster_locked"])
+        draft.refresh_from_db()
+        self.assertIsNone(draft.payment_code)
+
+    def test_payment_rechecks_capacity_after_qr_was_already_shown(self):
+        _, account = self.team("T0001", size=2)
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {generate_session(account)}"}
+        available = self.client.get("/api/my-team/payment", **auth)
+        self.assertEqual(available.status_code, 200)
+        self.assertTrue(available.json()["qr_image_url"])
+        other, _ = self.team("T0002", Team.APPROVAL_PENDING)
+        blocked = self.client.get("/api/my-team/payment", **auth)
+        self.assert_capacity_error(blocked)
+        self.assertNotIn("qr_image_url", blocked.json())
+        other.delete()
+        reopened = self.client.get("/api/my-team/payment", **auth)
+        self.assertEqual(reopened.status_code, 200)
+        self.assertEqual(reopened.json()["payment_code"], available.json()["payment_code"])
+
+    def test_counted_teams_keep_payment_access_when_cap_is_exceeded(self):
+        set_max_registrations(1)
+        for index, status in enumerate((Team.APPROVAL_PENDING, Team.APPROVAL_APPROVED, Team.APPROVAL_REJECTED)):
+            with self.subTest(status=status):
+                _, account = self.team(f"T000{index}", status, size=2)
+                response = self.client.get(
+                    "/api/my-team/payment", HTTP_AUTHORIZATION=f"Bearer {generate_session(account)}",
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.json()["qr_image_url"])
+
+    def test_cannot_confirm_roster_for_payment_when_insufficient_slots(self):
+        self.team("T0001", Team.APPROVAL_PENDING, size=2)
+        draft, account = self.team("T0002")
+        draft.roster_locked_at = None
+        draft.save(update_fields=["roster_locked_at"])
+        response = self.client.patch(
+            "/api/my-team", data={"roster_locked": True}, content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {generate_session(account)}",
+        )
+        self.assert_capacity_error(response)
+        draft.refresh_from_db()
+        self.assertIsNone(draft.roster_locked_at)
+
     def test_dashboard_cannot_submit_when_full(self):
         self.team("T0001", Team.APPROVAL_PENDING, size=2)
         draft, account = self.team("T0002")
