@@ -248,6 +248,7 @@ function explainApiError(error) {
     team_not_approved: 'Đội cần được duyệt trước khi lấy QR.',
     invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
     registration_closed: 'Đợt đăng ký hiện đang đóng.',
+    registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này. Vui lòng liên hệ BTC.',
     not_found: 'Không tìm thấy dữ liệu cần thiết.',
   }
   return map[code] || 'Có lỗi xảy ra khi đồng bộ dữ liệu.'

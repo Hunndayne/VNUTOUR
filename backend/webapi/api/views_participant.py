@@ -46,6 +46,7 @@ from api.services.team_invite_service import (
 )
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
+    lock_registration_capacity,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
     link_account_profile, ensure_default_phase_roster_for_team, registration_is_open,
     team_name_is_duplicate,
@@ -680,6 +681,7 @@ def my_team_view(request: HttpRequest):
             )
         try:
             with transaction.atomic():
+                lock_registration_capacity()
                 # Serialise duplicate create requests for the same account and
                 # repeat every precondition under that lock. Team creation and
                 # captain attachment either both commit or both roll back.
@@ -992,6 +994,7 @@ def my_team_submit_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    lock_registration_capacity()
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()

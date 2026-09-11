@@ -116,8 +116,8 @@ def register_team_view(request: HttpRequest):
         return JsonResponse({"error": "method_not_allowed"}, status=405)
     if not registration_is_open():
         return _registration_closed_response()
-    # Capacity is enforced in the service so an existing team can still edit
-    # its roster when full; only net-new registrants are turned away.
+    # The service atomically checks slots for the entire new submitted roster,
+    # including people whose individual profiles already exist.
     limited, _ = _consume_rate_limit(
         request,
         scope="register-team",

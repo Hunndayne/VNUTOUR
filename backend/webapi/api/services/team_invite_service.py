@@ -16,6 +16,7 @@ from api.services.team_service import (
     add_member,
     link_account_profile,
     registration_capacity_remaining,
+    lock_registration_capacity,
     registration_is_open,
     team_is_editable,
 )
@@ -130,6 +131,7 @@ def accept_team_invite(raw_token: str, account: Account) -> tuple[dict, str | No
     if not account.mssv:
         return {}, "profile_incomplete"
 
+    lock_registration_capacity()
     record = _record_for_token(raw_token, lock=True)
     status, team, count, maximum = _availability(record)
     if status != "active" or team is None or record is None:

@@ -74,6 +74,7 @@ function explainApiError(error) {
     merge_duplicate_team_codes: 'Danh sách ghép đang chứa đội bị chọn trùng.',
     registration_phase_closed: 'Chỉ có thể ghép đội trong phase đăng ký.',
     team_not_submitted: 'Chỉ có thể duyệt hoặc từ chối đội đã gửi đăng ký.',
+    registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này.',
     forbidden: 'Bạn không có quyền thực hiện thao tác này.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu đội.'

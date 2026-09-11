@@ -17,6 +17,13 @@ from api.models import (
 from api.services import registration_emails
 
 
+COUNTED_TEAM_STATUSES = (
+    Team.APPROVAL_PENDING,
+    Team.APPROVAL_APPROVED,
+    Team.APPROVAL_REJECTED,
+)
+
+
 def _get_setting(key: str, default=None):
     try:
         s = SystemSetting.objects.filter(key=key).first()
@@ -76,12 +83,34 @@ def get_current_registrations() -> int:
     submitted teams counts each registered person exactly once.
     """
     return TeamMembership.objects.filter(
-        team__approval_status__in=[
-            Team.APPROVAL_PENDING,
-            Team.APPROVAL_APPROVED,
-            Team.APPROVAL_REJECTED,
-        ],
+        team__approval_status__in=COUNTED_TEAM_STATUSES,
     ).count()
+
+
+def lock_registration_capacity() -> None:
+    """Serialize capacity-consuming writes until the caller's transaction ends.
+
+    Call inside transaction.atomic(), BEFORE locking any account, participant,
+    invite or team. Every entry point uses this order, including draft writes
+    that can race submission. Lock even when unlimited: an admin may enable or
+    lower the cap concurrently. The setter locks this same setting row.
+    """
+    SystemSetting.objects.get_or_create(key="max_registrations", defaults={"value": 0})
+    SystemSetting.objects.select_for_update().get(key="max_registrations")
+
+
+def registration_capacity_error(additional_members: int) -> Optional[str]:
+    """Check newly counted people while holding lock_registration_capacity().
+
+    A resubmission or edit that adds no counted people remains possible even
+    when an admin has lowered the limit below the existing registration count.
+    """
+    if additional_members <= 0:
+        return None
+    remaining = registration_capacity_remaining()
+    if remaining is not None and additional_members > remaining:
+        return "registration_capacity_reached"
+    return None
 
 
 def registration_capacity_remaining() -> Optional[int]:
@@ -317,6 +346,8 @@ def add_member(
     if not mssv:
         return None, "missing_mssv"
 
+    lock_registration_capacity()
+
     # Serialize every operation involving an existing participant first. Then
     # lock the source and destination teams in primary-key order so roster
     # checks cannot race a join, move, or delete and cross-team moves cannot
@@ -420,6 +451,14 @@ def add_member(
             )
             if clash:
                 return None, "email_in_team"
+
+    additional_members = int(team.approval_status in COUNTED_TEAM_STATUSES) - int(
+        existing_member is not None
+        and existing_member.team.approval_status in COUNTED_TEAM_STATUSES
+    )
+    capacity_error = registration_capacity_error(additional_members)
+    if capacity_error:
+        return None, capacity_error
 
     submitted_profile = {
         "full_name": full_name,
@@ -562,14 +601,26 @@ def remove_member(team: Team, mssv: str) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
+@transaction.atomic
 def submit_team(team: Team) -> Tuple[bool, Optional[str]]:
     """Submit a team for admin approval. Returns (success, error_code)."""
+    lock_registration_capacity()
+    Team.objects.select_for_update().get(pk=team.pk)
+    team.refresh_from_db()
     # Must have at least one member
     if not TeamMembership.objects.filter(team=team).exists():
         return False, "no_members"
 
     if team.approval_status == Team.APPROVAL_APPROVED:
         return False, "already_approved"
+
+    additional_members = (
+        TeamMembership.objects.filter(team=team).count()
+        if team.approval_status not in COUNTED_TEAM_STATUSES else 0
+    )
+    capacity_error = registration_capacity_error(additional_members)
+    if capacity_error:
+        return False, capacity_error
 
     team.approval_status = Team.APPROVAL_PENDING
     team.submitted_at = datetime.now(timezone.utc)
