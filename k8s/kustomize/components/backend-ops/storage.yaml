@@ -1,0 +1,23 @@
+# backup-data PVC for the ops pod (prod/prod-standby only — staging keeps
+# backups on the single backend pod's ephemeral space, which is fine for a
+# disposable env). media-data already exists in the base; only backups is new.
+#
+# local-path cannot shrink a bound PVC: if a backup-data PVC already exists on
+# the live cluster (it does on homelab, from the pre-GitOps raw manifests), Git
+# MUST request a storage size >= its live status.capacity or every ArgoCD sync
+# fails with "can not be less than status.capacity". Check the live size before
+# merge:  kubectl -n vnutour get pvc backup-data -o jsonpath='{.status.capacity.storage}'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-data
+  namespace: vnutour-staging
+  annotations:
+    # ArgoCD prune must never delete the backups volume if it falls out of Git.
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

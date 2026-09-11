@@ -1,0 +1,24 @@
+# backend-ops Service.
+#
+# Design 2 (split-tier scaling): admin backup/restore and local media serving
+# need the two ReadWriteOnce local-path volumes (backup-data, media-data), which
+# pin whatever mounts them to the storage node. Rather than pin the whole API
+# tier, those few endpoints are routed (by frontend/nginx.conf) to this Service.
+#
+# In the BASE (staging) this Service selects `app: backend` — i.e. it is an alias
+# for the single, still-pinned staging backend, so staging behaviour is
+# unchanged and no extra pod runs. The prod/prod-standby overlays add a dedicated
+# `backend-ops` Deployment (components/backend-ops) and repoint this selector to
+# `app: backend-ops`, freeing the serving `backend` to scale across workers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-ops
+  namespace: vnutour-staging
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

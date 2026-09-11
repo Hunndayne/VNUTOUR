@@ -1,0 +1,114 @@
+# Dedicated ops pod for the prod/prod-standby zones. Holds the two node-local
+# volumes (media-data, backup-data) and stays pinned to the storage node, so the
+# serving `backend` Deployment can drop them and scale across workers.
+#
+# Handles only what the frontend routes here: /api/admin/backups* (backup,
+# list, download, restore) and /media/* (local submission serving + R2-failure
+# fallback). Same image and env as backend; the Kustomize `images` component
+# stamps the same tag onto it, so ops and serving never diverge in version.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-ops
+  namespace: vnutour-staging
+spec:
+  replicas: 1
+
+  # ReadWriteOnce local-path volumes: never surge a second pod onto another node.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: backend-ops
+
+  template:
+    metadata:
+      labels:
+        app: backend-ops
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      # media-data and backup-data are local-path claims — pin to the storage node.
+      nodeSelector:
+        vnutour/storage: "true"
+
+      containers:
+        - name: backend-ops
+          image: ghcr.io/hunndayne/vnutour-backend
+          # Tag is injected by the Kustomize images component (same as backend).
+
+          ports:
+            - name: http
+              containerPort: 8000
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Forwarded-Proto
+                  value: https
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Rarely used (admin backup/restore + near-zero local media), but a full
+          # DB serialize + zip during backup/restore can spike memory, so the
+          # ceiling matches the serving backend.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: media
+              mountPath: /app/webapi/media
+            - name: backups
+              mountPath: /app/backups
+
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backup-data

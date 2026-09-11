@@ -77,14 +77,46 @@ patches:
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: 1Gi
 
-  # --- Prod frontend: 2 replicas --------------------------------------------
+  # --- Prod serving backend: 3 replicas, spread across nodes -----------------
+  # The serving `backend` is unpinned by components/backend-ops (media/backups
+  # moved to the pinned backend-ops pod), so it can schedule on any node. Run 3
+  # replicas and spread them evenly across hosts so no single node carries the
+  # whole app tier. Soft (ScheduleAnyway) so a single-node zone (e.g. a
+  # one-node standby) still schedules all three instead of leaving pods Pending.
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: backend
+
+  # --- Prod frontend: 3 replicas, spread across nodes -----------------------
   - target:
       kind: Deployment
       name: frontend
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 2
+        value: 3
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: frontend
 
   # --- Data-safety: never let ArgoCD prune the media volume ------------------
   # If media-data ever falls out of Git (rename, refactor) ArgoCD with prune
