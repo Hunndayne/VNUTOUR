@@ -1242,7 +1242,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
     void refresh(true)
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh()
-    }, 15000)
+    }, 300000)
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)
     return () => {

@@ -820,7 +820,6 @@ def my_team_view(request: HttpRequest):
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
 
-@transaction.atomic
 def my_team_payment_view(request: HttpRequest):
     """GET: VietQR payment info (bank details + QR) for the caller's team."""
     if request.method != "GET":
@@ -829,14 +828,20 @@ def my_team_payment_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    lock_registration_capacity()
+    # Read-only preview: NO capacity row lock here. The dashboard polls this
+    # endpoint every few seconds from every captain, so taking
+    # select_for_update on the shared max_registrations row (or on the team)
+    # would serialise all of them and exhaust workers under load. The
+    # capacity check below is a plain read purely to hide the QR when full;
+    # the authoritative gates that actually consume a slot (submit, roster
+    # lock, add-member, invite, admin approval) still lock.
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = Team.objects.select_for_update().get(pk=membership.team_id)
+    team = membership.team
     payment_state = {
         "has_proof": bool(team.payment_proof_file),
         "roster_locked": bool(team.roster_locked_at),
