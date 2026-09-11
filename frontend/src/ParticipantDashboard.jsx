@@ -4,6 +4,7 @@ import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
 import RegistrationCapacityNotice from './RegistrationCapacityNotice.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
+import { TeamSummaryCard } from './TeamDetailsPage.jsx'
 import FeedCard from './FeedCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
@@ -2537,6 +2538,7 @@ function ParticipantDashboard() {
             approved (provisioning is queued on approval), so the connect card is
             only useful — and only shown — after the team is approved. */}
         {team?.approval_status === 'approved' && <DiscordConnectCard />}
+        {team?.approval_status === 'approved' && <TeamSummaryCard team={team} members={members} />}
 
         {!isFullyApproved && (
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
