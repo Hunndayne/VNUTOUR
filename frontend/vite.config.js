@@ -13,7 +13,7 @@ function cloudflareRocketLoaderOptOut() {
     enforce: 'post',
     transformIndexHtml(html) {
       return html.replace(
-        /<script(?![^>]*data-cfasync=)/g,
+        /<script(?![^>]*\sdata-cfasync=)/g,
         '<script data-cfasync="false"',
       )
     },
