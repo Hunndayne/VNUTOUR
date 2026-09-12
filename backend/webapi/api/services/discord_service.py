@@ -16,6 +16,7 @@ from api.models import (
     Account,
     DiscordBroadcast,
     Participant,
+    PendingDeprovision,
     Station,
     StationSession,
     SystemSetting,
@@ -192,8 +193,15 @@ def get_pending_team_payloads(limit: int = 50) -> list[dict]:
         .prefetch_related("memberships__participant")
         .order_by("created_at")[:limit]
     )
+    # Roles the bot is allowed to take off a member. Teams queued for cleanup
+    # are included because their rows are already gone from `Team`: without
+    # them, a member who moved across in a merge would keep the old team's role
+    # for as long as the deletion is pending, and forever if it never lands.
     managed_role_ids = list(
         Team.objects.exclude(discord_role_id__isnull=True)
+        .values_list("discord_role_id", flat=True)
+    ) + list(
+        PendingDeprovision.objects.exclude(discord_role_id__isnull=True)
         .values_list("discord_role_id", flat=True)
     )
     payloads = []
@@ -218,6 +226,49 @@ def get_pending_team_payloads(limit: int = 50) -> list[dict]:
             "members": members,
         })
     return payloads
+
+
+def get_team_resource_inventory() -> dict:
+    """The authoritative picture of which Discord resources belong to a team.
+
+    Used by the orphan sweep to decide what in the team categories is no longer
+    backed by a row in `Team`. It deliberately reports more than the recorded
+    ids:
+
+    * `pending_*` are resources already queued for deletion — the deprovision
+      loop owns those, so the sweep must not race it for them.
+    * `expected_names` covers the window where a channel or role exists in the
+      guild but its id has not been written back yet. `provision_team` finds
+      those by name before creating anything, so a name match means "a live
+      team is about to claim this", not "orphan". Without it the sweep would
+      delete a team's channels out from under an in-flight provision.
+    """
+    teams = list(
+        Team.objects.values("code", "name", "discord_role_id",
+                            "text_channel_id", "voice_channel_id")
+    )
+    pending = list(
+        PendingDeprovision.objects.values(
+            "discord_role_id", "text_channel_id", "voice_channel_id"
+        )
+    )
+
+    def ids(rows, *keys):
+        return [row[key] for row in rows for key in keys if row[key]]
+
+    expected_names = set()
+    for team in teams:
+        for label in (team["name"], team["code"]):
+            if label:
+                expected_names.add(str(label).strip().lower())
+
+    return {
+        "role_ids": ids(teams, "discord_role_id"),
+        "channel_ids": ids(teams, "text_channel_id", "voice_channel_id"),
+        "pending_role_ids": ids(pending, "discord_role_id"),
+        "pending_channel_ids": ids(pending, "text_channel_id", "voice_channel_id"),
+        "expected_names": sorted(expected_names),
+    }
 
 
 def queue_all_approved_teams() -> int:

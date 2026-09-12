@@ -9,21 +9,29 @@ from discord.ext import commands, tasks
 from .database import database_call, run_sync
 from ..utils.provisioning import provision_team
 from ..utils.deprovision import deprovision_team
+from ..utils.orphan_sweep import sweep_orphan_team_resources
 
 
 class DiscordIntegrationCog(commands.Cog):
     # How many passes to retry a queued deprovision before giving up on it.
     MAX_DEPROVISION_ATTEMPTS = 5
+    # The orphan sweep reads every channel in the team categories, so it runs
+    # far less often than provisioning. Nothing waits on it: the merge path
+    # queues its own cleanup, and this only catches what predates that or what
+    # a give-up left behind.
+    ORPHAN_SWEEP_INTERVAL_SECONDS = 900
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.integration_loop.change_interval(seconds=bot.config.discord_sync_interval)
         self.integration_loop.start()
         self.deprovision_loop.start()
+        self.orphan_sweep_loop.start()
 
     def cog_unload(self):
         self.integration_loop.cancel()
         self.deprovision_loop.cancel()
+        self.orphan_sweep_loop.cancel()
 
     def _guild(self):
         if self.bot.config.guild_id:
@@ -185,6 +193,35 @@ class DiscordIntegrationCog(commands.Cog):
                 await run_sync(delete_pending, record["id"])
             else:
                 await register_failure(record, f"errors={problems} unresolved={unresolved}")
+
+    async def _sweep_orphans(self, guild: discord.Guild) -> None:
+        from api.services.discord_service import get_team_resource_inventory
+
+        inventory = await database_call(get_team_resource_inventory)
+        result = await sweep_orphan_team_resources(self.bot, guild, inventory)
+        for channel in result["deleted_channels"]:
+            print(f"[ORPHAN SWEEP] deleted channel {channel['name']} ({channel['id']})")
+        for role in result["deleted_roles"]:
+            print(f"[ORPHAN SWEEP] deleted role {role['name']} ({role['id']})")
+        for role in result["skipped_roles"]:
+            print(f"[ORPHAN SWEEP] kept role {role['name']} ({role['id']}): {role['reason']}")
+        for error in result["errors"]:
+            print(f"[ORPHAN SWEEP ERROR] {error}")
+
+    @tasks.loop(seconds=ORPHAN_SWEEP_INTERVAL_SECONDS)
+    async def orphan_sweep_loop(self):
+        try:
+            guild = self._guild()
+            if guild is not None:
+                await self._sweep_orphans(guild)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print(f"[ORPHAN SWEEP ERROR] {error}")
+
+    @orphan_sweep_loop.before_loop
+    async def before_orphan_sweep_loop(self):
+        await self.bot.wait_until_ready()
 
     @tasks.loop(seconds=10)
     async def deprovision_loop(self):
