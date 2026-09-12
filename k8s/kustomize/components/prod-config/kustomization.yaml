@@ -52,6 +52,33 @@ patches:
       kind: Ingress
       name: vnutour
     patch: |-
+      # A frontend rollout temporarily serves old and new Vite bundles from
+      # different pods. Keep each browser on the pod that returned index.html
+      # so its hashed JS/CSS requests reach the matching bundle as well.
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1affinity
+        value: cookie
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1affinity-mode
+        value: persistent
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-name
+        value: vnutour_frontend
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-path
+        value: /
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-max-age
+        value: "600"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-samesite
+        value: Lax
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-secure
+        value: "true"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-change-on-failure
+        value: "true"
       - op: replace
         path: /spec/rules/0/host
         value: vnutour.suctremmt.com
