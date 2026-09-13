@@ -595,11 +595,6 @@ function LandingPage() {
             />
           </div>
 
-          {/* Partner Name */}
-          <h4 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-[#0c1d33] mt-1 mb-2">
-            DOL Đình Lực
-          </h4>
-
           {/* Smooth Description Reveal on Hover / Tap */}
           <div className="grid w-full transition-all duration-500 ease-in-out grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus:grid-rows-[1fr] group-focus:opacity-100">
             <div className="overflow-hidden">
@@ -639,11 +634,6 @@ function LandingPage() {
               loading="lazy"
             />
           </div>
-
-          {/* Partner Name */}
-          <h4 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-[#0c1d33] mt-1 mb-2">
-            Net Corp
-          </h4>
 
           {/* Smooth Description Reveal on Hover / Tap */}
           <div className="grid w-full transition-all duration-500 ease-in-out grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus:grid-rows-[1fr] group-focus:opacity-100">
