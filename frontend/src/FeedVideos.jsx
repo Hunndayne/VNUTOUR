@@ -7,8 +7,10 @@ export default function FeedVideos({ videos = [], compact = false }) {
           key={video.id}
           src={video.url}
           controls
+          autoPlay
+          muted
           playsInline
-          preload="none"
+          preload="metadata"
           aria-label={video.name || 'Video bài viết'}
           className="max-h-[520px] w-full rounded-xl bg-black"
         >
