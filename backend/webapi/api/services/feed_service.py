@@ -26,6 +26,7 @@ from api.services.submission_storage_service import (
     _safe_name,
     _store_local,
     delete_stored_object,
+    normalize_public_base_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -256,8 +257,9 @@ def upload_feed_image(file, author: Account | None = None, post_id: int | None =
                 ExtraArgs={"ContentType": content_type},
             )
             storage_type = STORAGE_R2
-            if settings.R2_PUBLIC_BASE_URL:
-                image_url = f"{settings.R2_PUBLIC_BASE_URL}/{key}"
+            public_base_url = normalize_public_base_url(settings.R2_PUBLIC_BASE_URL)
+            if public_base_url:
+                image_url = f"{public_base_url}/{key}"
             else:
                 image_url = f"{settings.MEDIA_URL.rstrip('/')}/{key}"
         except Exception:

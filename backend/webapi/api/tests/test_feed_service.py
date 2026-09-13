@@ -1,6 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError
@@ -125,6 +126,26 @@ class FeedServiceUnitTests(TestCase):
                 "Body",
                 image_urls=[f"https://example.com/{i}.jpg" for i in range(11)],
             )
+
+    @override_settings(
+        R2_BUCKET="vnutour",
+        R2_PUBLIC_BASE_URL="storage-vnutour.hiseku.net",
+    )
+    @patch("api.services.feed_service._r2_client")
+    def test_r2_upload_adds_https_to_schemeless_public_base_url(self, r2_client):
+        client = Mock()
+        r2_client.return_value = client
+
+        image = feed_service.upload_feed_image(
+            SimpleUploadedFile("cover.webp", b"webp", content_type="image/webp"),
+            author=self.admin,
+        )
+
+        self.assertTrue(
+            image.image_url.startswith("https://storage-vnutour.hiseku.net/feed/"),
+            image.image_url,
+        )
+        client.upload_fileobj.assert_called_once()
 
     def test_delete_post_cleans_up_image_files(self):
         """Deleting a post removes stored files for both FK-linked images and

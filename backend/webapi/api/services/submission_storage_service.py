@@ -24,6 +24,25 @@ STORAGE_R2 = "r2"
 STORAGE_LOCAL = "local"
 
 
+def normalize_public_base_url(value: str | None) -> str:
+    """Return an absolute HTTP(S) base URL for public object storage.
+
+    Browsers resolve a bare hostname such as ``storage.example.com`` relative
+    to the current page. Production pages under ``/admin`` would therefore
+    request ``/admin/storage.example.com/...`` and receive the SPA HTML rather
+    than the image. R2 custom domains are HTTPS, so a missing scheme safely
+    defaults to HTTPS.
+    """
+    base_url = str(value or "").strip().rstrip("/")
+    if not base_url:
+        return ""
+    if base_url.startswith("//"):
+        return f"https:{base_url}"
+    if not re.match(r"^https?://", base_url, flags=re.IGNORECASE):
+        return f"https://{base_url.lstrip('/')}"
+    return base_url
+
+
 def _r2_client():
     """Return a configured boto3 S3 client for R2, or None when unavailable."""
     if not (
@@ -162,8 +181,9 @@ def save_submission_files(station, team, uploaded_files, attachment_config: dict
                     ExtraArgs={"ContentType": entry["type"] or "application/octet-stream"},
                 )
                 entry["storage"] = STORAGE_R2
-                if settings.R2_PUBLIC_BASE_URL:
-                    entry["url"] = f"{settings.R2_PUBLIC_BASE_URL}/{key}"
+                public_base_url = normalize_public_base_url(settings.R2_PUBLIC_BASE_URL)
+                if public_base_url:
+                    entry["url"] = f"{public_base_url}/{key}"
                 stored.append(entry)
                 continue
             except Exception:
@@ -199,8 +219,9 @@ def save_payment_proof(team, uploaded) -> dict:
                 ExtraArgs={"ContentType": entry["type"] or "application/octet-stream"},
             )
             entry["storage"] = STORAGE_R2
-            if settings.R2_PUBLIC_BASE_URL:
-                entry["url"] = f"{settings.R2_PUBLIC_BASE_URL}/{key}"
+            public_base_url = normalize_public_base_url(settings.R2_PUBLIC_BASE_URL)
+            if public_base_url:
+                entry["url"] = f"{public_base_url}/{key}"
             return entry
         except Exception:
             logger.exception("R2 upload failed for %s; falling back to local storage", key)
@@ -243,8 +264,9 @@ def save_frame_image(uploaded) -> dict:
                 ExtraArgs={"ContentType": entry["type"] or "application/octet-stream"},
             )
             entry["storage"] = STORAGE_R2
-            if settings.R2_PUBLIC_BASE_URL:
-                entry["url"] = f"{settings.R2_PUBLIC_BASE_URL}/{key}"
+            public_base_url = normalize_public_base_url(settings.R2_PUBLIC_BASE_URL)
+            if public_base_url:
+                entry["url"] = f"{public_base_url}/{key}"
             return entry
         except Exception:
             logger.exception("R2 upload failed for %s; falling back to local storage", key)

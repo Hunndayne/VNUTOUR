@@ -108,7 +108,9 @@ R2_ENDPOINT_URL = os.getenv(
 R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.getenv("R2_BUCKET", "")
-# Public bucket/custom domain base URL; when empty, R2 files are referenced by key only
+# Public bucket/custom domain base URL. Include https://; storage services also
+# normalize a missing scheme defensively so browsers never treat the hostname
+# as a path relative to the current frontend route.
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
 
 # CORS is open only in development unless explicitly configured.
