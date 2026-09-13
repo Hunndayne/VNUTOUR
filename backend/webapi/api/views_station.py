@@ -188,6 +188,14 @@ def station_submissions_view(request: HttpRequest, station_id: int):
     })
 
 
+def _checkout_submission(session):
+    sub = StationSubmission.objects.select_related("team", "graded_by").filter(
+        station_session=session,
+        status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
+    ).order_by("-submitted_at", "-id").first()
+    return _serialize_submission(sub) if sub else None
+
+
 @csrf_exempt
 def submission_grade_view(request: HttpRequest, submission_id: int):
     """PATCH: chấm bài nộp (admin, hoặc collab được phân công trạm của bài nộp đó)."""
@@ -512,6 +520,7 @@ def station_exit_view(request: HttpRequest):
         "status": session.status,
         "exited_at": session.exited_at.isoformat() if session.exited_at else None,
         "score": session.score,
+        "submission": _checkout_submission(session),
     })
 
 
@@ -632,6 +641,7 @@ def station_scan_view(request: HttpRequest):
         "exited_at": session.exited_at.isoformat() if session.exited_at else None,
         "score": session.score,
         **_station_scoring_dict(session.station),
+        "submission": _checkout_submission(session) if is_exit else None,
     }, status=200 if is_exit else 201)
 
 

@@ -2,15 +2,21 @@ from typing import Any
 from django.db import transaction
 from api.models import QuestionBankItem, Station
 
-def import_questions(sub_event_id: int, items: list[dict[str, Any]]) -> dict[str, int]:
+@transaction.atomic
+def import_questions(sub_event_id: int, items: list[dict[str, Any]], replace=False) -> dict[str, int]:
     """
     Imports a list of questions into a SubEvent's question bank.
     items: [{"question": "...", "options": ["A","B"], "correctOption": 0, "points": 1, "tags": []}]
     """
+    if not isinstance(items, list) or not items or any(not isinstance(item, dict) for item in items):
+        raise ValueError("invalid_items")
+    # Serialize bank changes for an event; replacement is validated before deletion.
+    from api.models import SubEvent
+    SubEvent.objects.select_for_update().get(id=sub_event_id)
     to_create = []
-    max_order = QuestionBankItem.objects.filter(sub_event_id=sub_event_id).count()
+    max_order = 0 if replace else QuestionBankItem.objects.filter(sub_event_id=sub_event_id).count()
     for item in items:
-        if "question" not in item:
+        if not isinstance(item.get("question"), str) or not item["question"].strip():
             continue
         
         item_type = item.get("type", "quiz")
@@ -18,10 +24,12 @@ def import_questions(sub_event_id: int, items: list[dict[str, Any]]) -> dict[str
             item_type = "quiz"
 
         options = item.get("options", [])
-        if item_type == "quiz" and len(options) < 2:
+        if not isinstance(options, list) or (item_type == "quiz" and len(options) < 2):
             continue
         
         correct_option = item.get("correctOption")
+        if correct_option is not None and (type(correct_option) is not int or not 0 <= correct_option < len(options)):
+            raise ValueError("invalid_correct_option")
         if not isinstance(correct_option, int):
             correct_option = None
             
@@ -42,17 +50,36 @@ def import_questions(sub_event_id: int, items: list[dict[str, Any]]) -> dict[str
                 options=options,
                 correct_option=correct_option,
                 correct_text=correct_text,
+                explanation=str(item.get("explanation") or "").strip(),
                 points=points,
                 order=max_order,
-                tags=item.get("tags", [])
+                tags=item.get("tags", []) if isinstance(item.get("tags"), list) else []
             )
         )
         max_order += 1
 
+    if len(to_create) != len(items):
+        raise ValueError("invalid_questions")
+    if replace:
+        clear_questions(sub_event_id)
     if to_create:
         QuestionBankItem.objects.bulk_create(to_create)
 
     return {"imported": len(to_create)}
+
+
+@transaction.atomic
+def clear_questions(sub_event_id: int) -> None:
+    from api.models import SubEvent
+    SubEvent.objects.select_for_update().get(id=sub_event_id)
+    QuestionBankItem.objects.filter(sub_event_id=sub_event_id).delete()
+    # Explicit selections must not silently reference deleted questions.
+    for station in Station.objects.select_for_update().filter(sub_event_id=sub_event_id):
+        config = station.submission_config or {}
+        if config.get("bank", {}).get("itemIds"):
+            config["bank"]["itemIds"] = []
+            station.submission_config = config
+            station.save(update_fields=["submission_config"])
 
 def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionBankItem:
     """Update one question bank item. Raises QuestionBankItem.DoesNotExist if not
@@ -65,6 +92,8 @@ def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionB
             item.type = new_type
     if "question" in fields:
         item.question = str(fields["question"] or "").strip()
+    if "explanation" in fields:
+        item.explanation = str(fields["explanation"] or "").strip()
     if "options" in fields:
         options = fields["options"]
         if not isinstance(options, list):
@@ -169,6 +198,7 @@ def effective_quiz_items(station: Station) -> list[dict[str, Any]]:
                     "options": obj.options,
                     "correctOption": obj.correct_option,
                     "correctText": obj.correct_text,
+                    "explanation": obj.explanation,
                     "points": obj.points,
                     "required": True, # bank questions are implicitly required
                 })

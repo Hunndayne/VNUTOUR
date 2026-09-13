@@ -1,6 +1,7 @@
 import json
 import shutil
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -199,6 +200,8 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         self.session.delete()
         self.station.checkin_policy = Station.POLICY_FREE_PLAY
         self.station.submission_config = {
+            # Re-scoring remains available before the answer-review deadline.
+            "limits": {"closesAt": (timezone.now() + timedelta(minutes=10)).isoformat()},
             "quiz": {
                 "enabled": True,
                 "autoScore": True,

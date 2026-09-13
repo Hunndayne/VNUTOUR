@@ -23,8 +23,9 @@ export async function exportQuizToExcel(items, filename) {
   const rows = items.map(item => {
     const row = {
       Type: item.type || 'quiz',
-      Question: item.question,
-      Points: item.points || 1,
+      Question: item.question || item.label,
+      Explanation: item.explanation || '',
+      Points: item.points ?? 1,
       'Correct Option (0-indexed)': item.correctOption ?? '',
       'Correct Text (comma separated)': Array.isArray(item.correctText) ? item.correctText.join(', ') : '',
       Tags: (item.tags || []).join(', ')
@@ -66,18 +67,36 @@ function readAsArrayBuffer(file) {
   })
 }
 
+function validateImportedItems(items) {
+  if (!Array.isArray(items) || items.length === 0) throw new Error('Không tìm thấy câu hỏi trong file.')
+  return items.map((item, index) => {
+    const fail = reason => { throw new Error(`Câu ${index + 1}: ${reason}`) }
+    if (!item || typeof item !== 'object') fail('dữ liệu câu hỏi không hợp lệ.')
+    const type = item.type || 'quiz'
+    const question = String(item.question || item.label || '').trim()
+    if (!question) fail('thiếu nội dung câu hỏi.')
+    if (!['quiz', 'text'].includes(type)) fail('Type phải là quiz hoặc text.')
+    const options = Array.isArray(item.options) ? item.options.map(option => String(option)) : []
+    if (type === 'quiz' && (options.length < 2 || options.some(option => !option.trim()))) fail('cần ít nhất hai lựa chọn có nội dung.')
+    if (type === 'quiz' && item.correctOption != null && (!Number.isInteger(item.correctOption) || item.correctOption < 0 || item.correctOption >= options.length)) fail('đáp án đúng nằm ngoài danh sách lựa chọn.')
+    const points = Number(item.points ?? 1)
+    if (!Number.isInteger(points) || points < 0) fail('điểm phải là số nguyên không âm.')
+    return { ...item, type, question, options, points, explanation: String(item.explanation || '') }
+  })
+}
+
 export async function importFromFile(file) {
-  if (file.name.endsWith('.json')) {
+  if (file.name.toLowerCase().endsWith('.json')) {
     const text = await readAsText(file)
-    return JSON.parse(text)
-  } else if (file.name.match(/\.(xlsx|xls|csv)$/)) {
+    return validateImportedItems(JSON.parse(text))
+  } else if (file.name.match(/\.(xlsx|xls|csv)$/i)) {
     const data = await readAsArrayBuffer(file)
     const XLSX = await loadXLSX()
     const wb = XLSX.read(data)
     const ws = wb.Sheets[wb.SheetNames[0]]
     const rows = XLSX.utils.sheet_to_json(ws)
     
-    return rows.map(row => {
+    return validateImportedItems(rows.map(row => {
       // Find all option columns
       const options = []
       let optIdx = 1
@@ -108,13 +127,14 @@ export async function importFromFile(file) {
       return {
         type,
         question: row['Question'] || '',
+        explanation: String(row['Explanation'] ?? row['Giải thích'] ?? ''),
         options,
         correctOption,
         correctText,
         points,
         tags
       }
-    }).filter(item => item.question && (item.type === 'text' || item.options.length > 1))
+    }))
   } else {
     throw new Error('Unsupported file format')
   }
@@ -127,6 +147,7 @@ export function downloadSampleJson() {
       question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
       options: ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng'],
       correctOption: 0,
+      explanation: 'Hà Nội là thủ đô của nước Việt Nam.',
       points: 1,
       tags: ['dia-ly', 'de']
     },
@@ -134,6 +155,7 @@ export function downloadSampleJson() {
       type: 'text',
       question: 'Thủ đô của Việt Nam là gì? (Tự luận)',
       correctText: ['Hà Nội', 'Thủ đô Hà Nội'],
+      explanation: 'Chấp nhận tên Hà Nội hoặc cách viết đầy đủ Thủ đô Hà Nội.',
       points: 2,
       tags: ['dia-ly', 'tu-luan']
     }
@@ -148,6 +170,7 @@ export async function downloadSampleExcel() {
       question: 'Câu hỏi mẫu 1 (Thủ đô của Việt Nam là gì?)',
       options: ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng'],
       correctOption: 0,
+      explanation: 'Hà Nội là thủ đô của nước Việt Nam.',
       points: 1,
       tags: ['dia-ly', 'de']
     },
@@ -155,6 +178,7 @@ export async function downloadSampleExcel() {
       type: 'text',
       question: 'Thủ đô của Việt Nam là gì? (Tự luận)',
       correctText: ['Hà Nội', 'Thủ đô Hà Nội'],
+      explanation: 'Chấp nhận tên Hà Nội hoặc cách viết đầy đủ Thủ đô Hà Nội.',
       points: 2,
       tags: ['dia-ly', 'tu-luan']
     }

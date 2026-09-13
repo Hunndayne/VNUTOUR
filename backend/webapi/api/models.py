@@ -369,6 +369,7 @@ class QuestionBankItem(models.Model):
     options = models.JSONField(default=list)
     correct_option = models.IntegerField(null=True, blank=True)
     correct_text = models.JSONField(default=list, blank=True)
+    explanation = models.TextField(blank=True, default="")
     points = models.IntegerField(default=1)
     order = models.IntegerField(default=0)
     active = models.BooleanField(default=True)

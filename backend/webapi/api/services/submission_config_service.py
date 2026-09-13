@@ -51,6 +51,7 @@ ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT)
 
 # Keys that would leak the right answer to participants.
 _ANSWER_KEYS = (
+    "explanation",
     "correctOption", "correct_option",
     "correctText", "correct_text",
     "correctAnswer", "correct_answer", "answer",
@@ -83,6 +84,10 @@ def _text_item(raw: dict, index: int) -> dict:
         "id": _clean_str(raw.get("id")) or f"field-{index}",
         "type": TYPE_TEXT,
         "label": _clean_str(raw.get("label")),
+        "question": _clean_str(raw.get("question") or raw.get("label")),
+        "correctText": [_clean_str(value) for value in raw.get("correctText", []) if _clean_str(value)] if isinstance(raw.get("correctText"), list) else [],
+        "points": item_points(raw),
+        "explanation": _clean_str(raw.get("explanation")),
         "placeholder": _clean_str(raw.get("placeholder")),
         "required": raw.get("required", True) is not False,
     }
@@ -102,6 +107,7 @@ def _quiz_item(raw: dict, index: int) -> dict:
         "question": _clean_str(raw.get("question")),
         "options": options,
         "correctOption": correct,
+        "explanation": _clean_str(raw.get("explanation")),
         "points": item_points(raw),
         "required": raw.get("required", True) is not False,
     }
@@ -518,11 +524,11 @@ def grade_quiz(
         weight = item_points(item)
         if item["type"] == TYPE_QUIZ:
             correct = item.get("correctOption")
-            if not isinstance(correct, int):
+            if type(correct) is not int or not 0 <= correct < len(item.get("options", [])):
                 continue
             total += 1
             max_points += weight
-            if answers.get(str(item["id"])) == correct:
+            if type(answers.get(str(item["id"]))) is int and answers.get(str(item["id"])) == correct:
                 correct_count += 1
                 points += weight
         elif item["type"] == TYPE_TEXT:
@@ -548,5 +554,6 @@ def grade_quiz(
         "total": total,
         "points": points,
         "max_points": max_points,
+        "manual_count": len(items) - total,
         "all_correct": total > 0 and correct_count == total,
     }

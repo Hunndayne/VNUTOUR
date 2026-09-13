@@ -442,6 +442,11 @@ def set_session_score(
             session.note = note
         session.save(update_fields=["score", "outcome", "note", "updated_at"])
 
+        StationSubmission.objects.filter(
+            station_session=session,
+            status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
+        ).update(score=session.score, status=StationSubmission.STATUS_GRADED,
+                 graded_by=operator, graded_at=datetime.now(timezone.utc))
         _sync_station_score_entry(session.team, station, operator)
 
     return session, None
