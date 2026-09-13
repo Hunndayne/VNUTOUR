@@ -8,6 +8,8 @@ import universityLogo from "./assets/organizer-university.webp";
 import youthUnionLogo from "./assets/organizer-youth-union.webp";
 import facultyLogo from "./assets/organizer-faculty.webp";
 import SiteHeader from "./SiteHeader.jsx";
+import dolLogo from "./assets/SAT&JUNIOR-1.png";
+import netCorpLogo from "./assets/NET CORP TÁCH NỀN-01.png";
 /* ==========================================================================
    DỮ LIỆU — theo Hồ sơ tài trợ VNU Tour 2026
    ========================================================================== */
@@ -374,27 +376,105 @@ export default function TaiTro() {
       </section>
 
       {/* ===== NHÀ TÀI TRỢ HIỆN TẠI ===== */}
-      <section className="bg-gradient-to-b from-[#E8F8FF] to-white px-5 py-20 md:px-8 md:py-28 xl:px-0 xl:py-36">
-        <div className="mx-auto w-full max-w-[1400px]">
-          <SectionHeading
-            eyebrow="Đồng hành cùng chúng tôi"
-            title="Đơn vị tài trợ & đồng hành"
-          />
-          <div className="grid gap-8 md:grid-cols-2">
-            {SPONSOR_GROUPS.map((group) => (
-              <div
-                key={group}
-                className="rounded-xl border border-dashed border-[#00B6F1]/35 bg-white p-8 text-center"
-              >
-                <h3 className="text-lg font-bold uppercase tracking-[-0.02em] text-[#0c1d33]">{group}</h3>
-                <p className="mt-4 font-mono text-sm font-bold text-[#FFD54D] drop-shadow-[0_1px_2px_rgba(12,29,51,0.4)]">
-                  ⏳ Coming Soon
-                </p>
-              </div>
-            ))}
+ <section className="bg-gradient-to-b from-[#E8F8FF] to-white px-5 py-12 md:px-8 md:py-16 xl:px-0 xl:py-20">
+  <div className="mx-auto w-full max-w-[1400px]">
+    <SectionHeading
+      eyebrow="Đồng hành cùng chúng tôi"
+      title="Đơn vị tài trợ & đồng hành"
+    />
+    <div className="flex flex-col gap-16 max-w-4xl mx-auto">
+      {/* TIER 1: NHÀ TÀI TRỢ ĐỒNG */}
+      <div className="w-full">
+        <div 
+          tabIndex={0}
+          className="group relative flex flex-col items-center text-center w-full cursor-pointer focus:outline-none"
+        >
+          {/* Decorative Sparkle Accent */}
+          <div className="flex items-center justify-center text-[#1478D4] text-lg mb-2">
+            ✦
+          </div>
+
+          {/* Tier Label Header */}
+          <h3 className="text-sm sm:text-base font-extrabold uppercase tracking-[0.24em] text-[#1478D4]">
+            NHÀ TÀI TRỢ ĐỒNG
+          </h3>
+
+          {/* Thin Horizontal Divider Line */}
+          <div className="w-full max-w-md my-4 border-t border-[#1478D4]/25 transition-colors duration-300 group-hover:border-[#1478D4]/60" />
+
+          {/* Partner Logo */}
+          <div className="flex items-center justify-center py-4 px-6 h-28 sm:h-32 my-2 transition-transform duration-300 group-hover:scale-105">
+            <img
+              src={dolLogo}
+              alt="DOL Đình Lực - Sponsor VNU Tour 2026"
+              className="max-h-full max-w-[280px] sm:max-w-[340px] object-contain drop-shadow-sm"
+              loading="lazy"
+            />
+          </div>
+
+          {/* Partner Name */}
+          <h4 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-[#0c1d33] mt-1 mb-2">
+            DOL Đình Lực
+          </h4>
+
+          {/* Smooth Description Reveal on Hover / Tap */}
+          <div className="grid w-full transition-all duration-500 ease-in-out grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus:grid-rows-[1fr] group-focus:opacity-100">
+            <div className="overflow-hidden">
+              <p className="pt-3 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed text-[#0c1d33]/80 border-t border-dashed border-[#1478D4]/20 mt-2">
+                DOL Đình Lực là hệ thống luyện thi IELTS, TOEIC, SAT hàng đầu với phương pháp độc quyền <strong>LinearThinking (Tư duy tuyến tính)</strong> đã giúp hàng trăm học viên phá băng điểm số và tối ưu thời gian nhờ áp dụng tư duy vào ngôn ngữ. Với sự đồng hành của DOL cùng VNU Tour 2026, đây hứa hẹn sẽ mang đến những trải nghiệm bùng nổ cùng vô số phần quà, học bổng giá trị dành riêng cho các thí sinh tham gia năm nay.
+              </p>
+            </div>
           </div>
         </div>
-      </section>
+      </div>
+
+      {/* TIER 2: NHÀ ĐỒNG HÀNH */}
+      <div className="w-full">
+        <div 
+          tabIndex={0}
+          className="group relative flex flex-col items-center text-center w-full cursor-pointer focus:outline-none"
+        >
+          {/* Decorative Sparkle Accent */}
+          <div className="flex items-center justify-center text-[#0077b6] text-lg mb-2">
+            ✦
+          </div>
+
+          {/* Tier Label Header */}
+          <h3 className="text-sm sm:text-base font-extrabold uppercase tracking-[0.24em] text-[#0077b6]">
+            NHÀ TÀI TRỢ ĐỒNG HÀNH
+          </h3>
+
+          {/* Thin Horizontal Divider Line */}
+          <div className="w-full max-w-md my-4 border-t border-[#00B6F1]/25 transition-colors duration-300 group-hover:border-[#00B6F1]/60" />
+
+          {/* Partner Logo */}
+<div className="flex items-center justify-center py-2 px-4 h-40 sm:h-48 my-2 transition-transform duration-300 group-hover:scale-105 overflow-hidden">
+            <img
+              src={netCorpLogo}
+              alt="Net Corp - Supporting Partner VNU Tour 2026"
+              className="w-full h-full object-contain scale-[1.8] sm:scale-[2.2] drop-shadow-sm"
+              loading="lazy"
+            />
+          </div>
+
+          {/* Partner Name */}
+          <h4 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-[#0c1d33] mt-1 mb-2">
+            Net Corp
+          </h4>
+
+          {/* Smooth Description Reveal on Hover / Tap */}
+          <div className="grid w-full transition-all duration-500 ease-in-out grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus:grid-rows-[1fr] group-focus:opacity-100">
+            <div className="overflow-hidden">
+              <p className="pt-3 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed text-[#0c1d33]/80 border-t border-dashed border-[#00B6F1]/20 mt-2">
+                VNU Tour 2026 còn vinh dự có sự đồng hành của <strong>Net Corp</strong> – chuỗi giáo dục EdTech uy tín mang đến các giải pháp học tập thông minh và nền tảng công nghệ giáo dục hiện đại.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
       {/* ===== LIÊN HỆ / CTA ===== */}
       <section id="lien-he" className="relative overflow-hidden bg-[#083348] px-5 py-20 text-center md:px-8 md:py-28 xl:px-0 xl:py-36">

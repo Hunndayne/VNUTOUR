@@ -7,6 +7,8 @@ import facultyLogo from './assets/organizer-faculty.webp'
 import SiteHeader, { NavLinks } from './SiteHeader.jsx'
 import VNUTourJourneyMap from './VNUTourJourneyMap.jsx'
 import { useLocation } from './router.js'
+import dolLogo from './assets/SAT&JUNIOR-1.png'
+import netCorpLogo from './assets/NET CORP TÁCH NỀN-01.png'
 
 const organizerLogos = [
   { src: universityLogo, alt: 'Trường Đại học Công nghệ Thông tin' },
@@ -552,45 +554,115 @@ function LandingPage() {
   </div>
 </div>
 
-<div className="w-full max-w-[1350px] mx-auto px-5 py-20 md:px-8 md:py-28 xl:px-8 xl:py-36 lg:pr-16">
-  <div className="landing-border-soft grid gap-12 border-y border-[#00B6F1]/20 py-12 md:py-16 lg:grid-cols-[0.8fr_1.2fr] lg:items-stretch lg:gap-20">
+<div id="sponsors" className="w-full max-w-[1350px] mx-auto px-5 py-20 md:px-8 md:py-28 xl:px-8 xl:py-36">
+  <div className="landing-border-soft border-y border-[#00B6F1]/20 py-12 md:py-16">
     <Reveal>
-      <div className="h-full flex flex-col justify-center">
-        <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.16em] text-[#1478D4]">Đồng hành cùng VNUTour</p>
-        <h2 className="mt-5 text-4xl font-bold uppercase leading-[1.02] tracking-[-0.035em] text-[#0c1d33] sm:text-5xl lg:text-7xl">
-          Nhà tài trợ
+<div className="flex flex-col items-center text-center mb-12">
+        <p className="landing-accent-soft text-sm font-bold uppercase tracking-[0.15em] text-[#1478D4] mb-3">Đồng hành cùng VNUTour</p>
+        <h2 className="mt-1 text-3xl font-bold uppercase leading-tight tracking-[-0.035em] text-[#0c1d33] sm:text-4xl lg:text-5xl">
+          Đơn vị tài trợ &amp; đồng hành
         </h2>
       </div>
     </Reveal>
 
-    <Reveal delay={100}>
-      <div className="h-full flex flex-col justify-center">
-        <p className="landing-accent text-3xl font-bold uppercase tracking-[-0.03em] text-[#1478D4] sm:text-4xl">
-          Chưa công bố
-        </p>
-        <h3 className="mt-8 text-xl font-bold uppercase text-[#0c1d33] sm:text-2xl">
-          Trở thành nhà tài trợ của chương trình
-        </h3>
-        <p className="mt-4 max-w-[620px] text-base leading-7 text-[#0c1d33]/65">
-          Liên hệ với Ban Tổ chức để cùng đồng hành và tạo nên một hành trình đáng nhớ dành cho tân sinh viên.
-        </p>
-        <div>
-          <a
-            href="/tai-tro"
-            className="landing-focus landing-primary-cta mt-7 inline-flex min-h-13 items-center justify-center whitespace-nowrap rounded-full px-8 py-4 text-sm font-bold uppercase tracking-[0.06em] transition-all duration-200 active:translate-y-px hover:-translate-y-1"
-          >
-            Quyền lợi tài trợ
-          </a>
+    <div className="flex flex-col gap-16 max-w-4xl mx-auto">
+      {/* TIER 1: NHÀ TÀI TRỢ ĐỒNG */}
+      <Reveal delay={100} className="w-full">
+        <div 
+          tabIndex={0}
+          className="group relative flex flex-col items-center text-center w-full cursor-pointer focus:outline-none"
+        >
+          {/* Decorative Sparkle Accent */}
+          <div className="flex items-center justify-center text-[#1478D4] text-lg mb-2">
+            ✦
+          </div>
+
+          {/* Tier Label Header */}
+          <h3 className="text-sm sm:text-base font-extrabold uppercase tracking-[0.24em] text-[#1478D4]">
+            NHÀ TÀI TRỢ ĐỒNG
+          </h3>
+
+          {/* Thin Horizontal Divider Line */}
+          <div className="w-full max-w-md my-4 border-t border-[#1478D4]/25 transition-colors duration-300 group-hover:border-[#1478D4]/60" />
+
+          {/* Partner Logo */}
+          <div className="flex items-center justify-center py-4 px-6 h-28 sm:h-32 my-2 transition-transform duration-300 group-hover:scale-105">
+            <img
+              src={dolLogo}
+              alt="DOL Đình Lực - Sponsor VNU Tour 2026"
+              className="max-h-full max-w-[280px] sm:max-w-[340px] object-contain drop-shadow-sm"
+              loading="lazy"
+            />
+          </div>
+
+          {/* Partner Name */}
+          <h4 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-[#0c1d33] mt-1 mb-2">
+            DOL Đình Lực
+          </h4>
+
+          {/* Smooth Description Reveal on Hover / Tap */}
+          <div className="grid w-full transition-all duration-500 ease-in-out grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus:grid-rows-[1fr] group-focus:opacity-100">
+            <div className="overflow-hidden">
+              <p className="pt-3 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed text-[#0c1d33]/80 border-t border-dashed border-[#1478D4]/20 mt-2">
+                DOL Đình Lực là hệ thống luyện thi IELTS, TOEIC, SAT hàng đầu với phương pháp độc quyền <strong>LinearThinking (Tư duy tuyến tính)</strong> đã giúp hàng trăm học viên phá băng điểm số và tối ưu thời gian nhờ áp dụng tư duy vào ngôn ngữ. Với sự đồng hành của DOL cùng VNU Tour 2026, đây hứa hẹn sẽ mang đến những trải nghiệm bùng nổ cùng vô số phần quà, học bổng giá trị dành riêng cho các thí sinh tham gia năm nay.
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
-    </Reveal>
+      </Reveal>
+
+      {/* TIER 2: NHÀ TÀI TRỢ ĐỒNG HÀNH */}
+      <Reveal delay={200} className="w-full">
+        <div 
+          tabIndex={0}
+          className="group relative flex flex-col items-center text-center w-full cursor-pointer focus:outline-none"
+        >
+          {/* Decorative Sparkle Accent */}
+          <div className="flex items-center justify-center text-[#1478D4] text-lg mb-2">
+            ✦
+          </div>
+
+          {/* Tier Label Header */}
+          <h3 className="text-sm sm:text-base font-extrabold uppercase tracking-[0.24em] text-[#1478D4]">
+            NHÀ TÀI TRỢ ĐỒNG HÀNH
+          </h3>
+
+          {/* Thin Horizontal Divider Line */}
+          <div className="w-full max-w-md my-4 border-t border-[#1478D4]/25 transition-colors duration-300 group-hover:border-[#1478D4]/60" />
+
+          {/* Partner Logo */}
+          <div className="flex items-center justify-center py-2 px-4 h-40 sm:h-48 my-2 transition-transform duration-300 group-hover:scale-105 overflow-hidden">
+            <img
+              src={netCorpLogo}
+              alt="Net Corp - Supporting Partner VNU Tour 2026"
+              className="w-full h-full object-contain scale-[1.8] sm:scale-[2.2] drop-shadow-sm"
+              loading="lazy"
+            />
+          </div>
+
+          {/* Partner Name */}
+          <h4 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-[#0c1d33] mt-1 mb-2">
+            Net Corp
+          </h4>
+
+          {/* Smooth Description Reveal on Hover / Tap */}
+          <div className="grid w-full transition-all duration-500 ease-in-out grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus:grid-rows-[1fr] group-focus:opacity-100">
+            <div className="overflow-hidden">
+              <p className="pt-3 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed text-[#0c1d33]/80 border-t border-dashed border-[#1478D4]/20 mt-2">
+                VNU Tour 2026 còn vinh dự có sự đồng hành của <strong>Net Corp</strong> – chuỗi giáo dục EdTech uy tín mang đến các giải pháp học tập thông minh và nền tảng công nghệ giáo dục hiện đại.
+              </p>
+            </div>
+          </div>
+        </div>
+      </Reveal>
+    </div>
   </div>
 </div>
       </section>
   <section id="faq" className="landing-faq-section relative isolate overflow-hidden bg-[#083348] pb-20 pt-16 md:pb-28 md:pt-24 xl:pb-36">
   
   {/* ĐƯỜNG CHUYỂN SÓNG BIỂN NỐI LIỀN NỀN TRẮNG PHÍA TRÊN */}
-  <div className="absolute left-0 right-0 top-0 w-full overflow-hidden leading-none">
+<div className="absolute left-0 right-0 -top-1 w-full overflow-hidden leading-none z-10">
     <svg className="relative block h-10 w-full text-[#d9f5ff] md:h-16 lg:h-20" viewBox="0 0 1200 120" preserveAspectRatio="none">
       <path d="M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z" fill="currentColor"></path>
     </svg>
