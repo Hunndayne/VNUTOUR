@@ -1339,6 +1339,26 @@ class FeedPost(models.Model):
 # 26. FeedImage
 # =====================================================================
 
+class FeedVideo(models.Model):
+    """Tracked R2 upload, retained until both the object and multipart data are deleted."""
+
+    post = models.ForeignKey(FeedPost, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos")
+    uploaded_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True)
+    storage_key = models.CharField(max_length=500, unique=True)
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=50)
+    size = models.PositiveBigIntegerField()
+    upload_id = models.TextField(blank=True, default="")
+    parts = models.JSONField(default=dict)
+    state = models.CharField(max_length=12, default="uploading")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "feed_video"
+        ordering = ["created_at", "id"]
+
+
 class FeedImage(models.Model):
     """An image uploaded for use inside a FeedPost's markdown body."""
 
@@ -1417,6 +1437,10 @@ class FeedComment(models.Model):
     )
     author = models.ForeignKey(
         Account, on_delete=models.CASCADE, related_name="feed_comments",
+    )
+    parent = models.ForeignKey(
+        "self", on_delete=models.CASCADE,
+        null=True, blank=True, related_name="replies",
     )
     body = models.TextField(max_length=1000)
     is_deleted = models.BooleanField(default=False)

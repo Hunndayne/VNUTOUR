@@ -8,7 +8,8 @@ import uuid
 from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count
+from django.db import transaction
+from django.db.models import Count, Prefetch
 from django.utils import timezone
 
 from api.models import (
@@ -28,6 +29,8 @@ from api.services.submission_storage_service import (
     delete_stored_object,
     normalize_public_base_url,
 )
+
+from api.services import feed_video_service
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +73,7 @@ def _normalize_image_urls(image_urls) -> list[str]:
 
 def list_published_posts(limit: int = 10, offset: int = 0) -> tuple[list[FeedPost], int]:
     """List published posts ordered by pinned status and published date."""
-    qs = FeedPost.objects.filter(status=FeedPost.STATUS_PUBLISHED).select_related("author")
+    qs = FeedPost.objects.filter(status=FeedPost.STATUS_PUBLISHED).select_related("author").prefetch_related("videos")
     total = qs.count()
     return list(qs[offset : offset + limit]), total
 
@@ -82,11 +85,12 @@ def get_latest_published_post() -> FeedPost | None:
 
 def list_all_posts(limit: int = 20, offset: int = 0) -> tuple[list[FeedPost], int]:
     """List all posts including drafts for admin view."""
-    qs = FeedPost.objects.all().select_related("author")
+    qs = FeedPost.objects.all().select_related("author").prefetch_related("videos")
     total = qs.count()
     return list(qs[offset : offset + limit]), total
 
 
+@transaction.atomic
 def create_post(
     author: Account | None,
     title: str,
@@ -95,6 +99,7 @@ def create_post(
     image_urls: list[str] | None = None,
     status: str = FeedPost.STATUS_DRAFT,
     is_pinned: bool = False,
+    video_ids: list[int] | None = None,
 ) -> FeedPost:
     """Create a new feed post."""
     title = (title or "").strip()
@@ -110,7 +115,7 @@ def create_post(
     )
     cover = gallery[0] if gallery else ""
     published_at = timezone.now() if status == FeedPost.STATUS_PUBLISHED else None
-    return FeedPost.objects.create(
+    post = FeedPost.objects.create(
         author=author,
         title=title,
         body=body or "",
@@ -120,11 +125,14 @@ def create_post(
         is_pinned=bool(is_pinned),
         published_at=published_at,
     )
+    feed_video_service.sync_post_videos(post, video_ids if video_ids is not None else [], author)
+    return post
 
 
+@transaction.atomic
 def update_post(post_id: int, **fields) -> FeedPost:
     """Update fields on a feed post."""
-    post = FeedPost.objects.filter(id=post_id).first()
+    post = FeedPost.objects.select_for_update().filter(id=post_id).first()
     if not post:
         raise ValueError("post_not_found")
 
@@ -168,6 +176,8 @@ def update_post(post_id: int, **fields) -> FeedPost:
         update_fields.append("status")
 
     post.save(update_fields=update_fields)
+    if "video_ids" in fields:
+        feed_video_service.sync_post_videos(post, fields["video_ids"], fields.get("_video_author"))
     return post
 
 
@@ -184,6 +194,7 @@ def _urls_referenced_by_post(post: FeedPost) -> set[str]:
     return urls
 
 
+@transaction.atomic
 def delete_post(post_id: int) -> bool:
     """Delete a post and its reactions, comments, and image files.
 
@@ -192,10 +203,12 @@ def delete_post(post_id: int) -> bool:
     rows (post is NULL) whose URL the post references, which happens whenever an
     image is uploaded while composing a brand-new post (no id yet to link to).
     """
-    post = FeedPost.objects.filter(id=post_id).first()
+    post = FeedPost.objects.select_for_update().filter(id=post_id).first()
     if not post:
         raise ValueError("post_not_found")
 
+    # Abort on storage failure and retain DB records so deletion can be retried.
+    feed_video_service.delete_post_videos(post)
     images = list(FeedImage.objects.filter(post=post))
 
     referenced = _urls_referenced_by_post(post)
@@ -379,12 +392,16 @@ def toggle_reaction(post_id: int, account: Account, reaction_type: str) -> dict:
 
 def list_comments(post_id: int, limit: int = 50, offset: int = 0) -> tuple[list[FeedComment], int]:
     """List non-deleted comments for a post, newest first."""
-    qs = FeedComment.objects.filter(post_id=post_id, is_deleted=False).select_related("author")
-    total = qs.count()
+    qs = FeedComment.objects.filter(post_id=post_id, is_deleted=False, parent__isnull=True).select_related("author").prefetch_related(
+        Prefetch('replies', queryset=FeedComment.objects.filter(is_deleted=False).select_related('author').order_by('created_at'))
+    )
+    # Only top-level comments are paginated here (replies ride along via the
+    # prefetch), so the total that drives "load more" must count them alone.
+    total = FeedComment.objects.filter(post_id=post_id, is_deleted=False, parent__isnull=True).count()
     return list(qs[offset : offset + limit]), total
 
 
-def create_comment(post_id: int, author: Account, body: str) -> FeedComment:
+def create_comment(post_id: int, author: Account, body: str, parent_id: int | None = None) -> FeedComment:
     """Create a new comment on a post."""
     post = FeedPost.objects.filter(id=post_id).first()
     if not post:
@@ -396,15 +413,28 @@ def create_comment(post_id: int, author: Account, body: str) -> FeedComment:
     if len(body) > 1000:
         raise ValueError("comment_too_long")
 
+    parent_comment = None
+    if parent_id is not None:
+        parent_comment = FeedComment.objects.filter(id=parent_id).first()
+        if not parent_comment:
+            raise ValueError("parent_not_found")
+        if parent_comment.post_id != post_id:
+            raise ValueError("parent_belongs_to_different_post")
+        if parent_comment.is_deleted:
+            raise ValueError("parent_is_deleted")
+        if parent_comment.parent_id is not None:
+            raise ValueError("parent_must_be_top_level")
+
     return FeedComment.objects.create(
         post=post,
         author=author,
         body=body,
+        parent=parent_comment,
     )
 
 
 def delete_comment(comment_id: int, by_account: Account) -> FeedComment:
-    """Soft delete a comment if caller is author or admin."""
+    """Soft delete a comment (and, for a top-level one, its replies) if caller is author or admin."""
     comment = FeedComment.objects.filter(id=comment_id).first()
     if not comment:
         raise ValueError("comment_not_found")
@@ -413,8 +443,16 @@ def delete_comment(comment_id: int, by_account: Account) -> FeedComment:
     if not is_admin and comment.author_id != by_account.id:
         raise PermissionError("forbidden")
 
-    comment.is_deleted = True
-    comment.save(update_fields=["is_deleted", "updated_at"])
+    with transaction.atomic():
+        comment.is_deleted = True
+        comment.save(update_fields=["is_deleted", "updated_at"])
+        # Deleting a top-level comment removes its whole thread; soft-delete the
+        # replies too so they are not left counted-but-invisible (list_comments
+        # only surfaces replies under a non-deleted parent).
+        if comment.parent_id is None:
+            comment.replies.filter(is_deleted=False).update(
+                is_deleted=True, updated_at=timezone.now(),
+            )
     return comment
 
 
