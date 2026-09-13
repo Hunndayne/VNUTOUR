@@ -1,5 +1,10 @@
 # Runbook vận hành k3s
 
+> Với tài nguyên do Kustomize/Argo CD quản lý, đọc
+> [Kustomize: cấu hình và vận hành](KUSTOMIZE_GUIDE.vi.md) trước khi dùng lệnh
+> bên dưới. Runbook này còn mô tả luồng triển khai trực tiếp; hướng dẫn mới có
+> bảng phân biệt phạm vi và các lưu ý về migration, image, replica và failover.
+
 Cutover từ Compose sang k3s xong ngày 09/08/2026; Compose và Cloudflare Tunnel
 đã bỏ. File này là việc hằng ngày sau đó. Kiến trúc và lý do từng lựa chọn nằm
 ở `README.md` cùng thư mục.
