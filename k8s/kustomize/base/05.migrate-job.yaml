@@ -1,0 +1,88 @@
+# Migration job — runs BEFORE the backend/frontend rollout via ArgoCD PreSync Hook.
+# ArgoCD deletes the Job after a successful sync, so it re-runs on every deploy.
+# Image tag is managed by Kustomize (overlays/staging/kustomization.yaml).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vnutour-migrate
+  namespace: vnutour-staging
+  annotations:
+    # PreSync: ArgoCD runs this Job before syncing any other resource.
+    # The sync is blocked (and rolled back) if this Job fails.
+    argocd.argoproj.io/hook: PreSync
+    # BeforeHookCreation: delete the previous migrate Job before creating the
+    # new one. A Job's pod template is immutable, so without this a re-sync at a
+    # new image tag fails to apply over a lingering Job (e.g. when an earlier
+    # sync stalled after PreSync and never ran the HookSucceeded cleanup).
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+spec:
+  backoffLimit: 3
+  # 20 min: the homelab pulls each new image tag fresh over a slow residential
+  # link, and the backend image (ffmpeg + deps) is large. 300s exceeded the pull
+  # time and the PreSync hook failed with DeadlineExceeded before migrate ran.
+  activeDeadlineSeconds: 1200
+  ttlSecondsAfterFinished: 3600
+
+  template:
+    metadata:
+      labels:
+        app: vnutour-migrate
+
+    spec:
+      restartPolicy: OnFailure
+
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+
+          env:
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_NAME
+
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DB_USER
+
+            # Follow the same DB host the app uses, so this hook works across
+            # overlays: base/staging point at "postgres", prod overlays flip
+            # backend-config's DB_HOST to "pg-primary" (the Patroni HAProxy).
+            # Hardcoding "postgres" here hung the PreSync hook on prod, where
+            # no plain "postgres" Service exists anymore.
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: DB_HOST
+
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$DB_HOST" -p 5432; do
+                echo "Waiting for PostgreSQL ($DB_HOST)..."
+                sleep 3
+              done
+
+      containers:
+        - name: migrate
+          image: ghcr.io/hunndayne/vnutour-backend
+          # Tag is injected by Kustomize overlay — do NOT hardcode here.
+
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              python webapi/manage.py migrate --noinput
+              python webapi/manage.py seed_phases
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret

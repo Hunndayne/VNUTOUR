@@ -15,7 +15,6 @@ from api.models import (
     ProgramPhase, ScoreEntry, PhaseRoster, StationSubmission,
 )
 from api.services.result_lock_service import results_are_locked
-from api.services.checkin_qr_service import get_checkin_qr_state
 from api.services import scan_token_service
 
 
@@ -88,16 +87,31 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
     sessions = StationSession.objects.filter(
         station_id=station_id,
     ).select_related("team").order_by("-entered_at")[:limit]
-    return [
-        {
+
+    submissions = StationSubmission.objects.filter(
+        station_id=station_id,
+        station_session__isnull=True,
+    ).select_related("team").order_by("-created_at")[:limit]
+
+    out = []
+    for s in sessions:
+        out.append({
             "id": s.id, "team_code": s.team.code, "team_name": s.team.name,
             "status": s.status,
             "entered_at": s.entered_at.isoformat(),
             "exited_at": s.exited_at.isoformat() if s.exited_at else None,
             "score": s.score, "note": s.note,
-        }
-        for s in sessions
-    ]
+        })
+    for sub in submissions:
+        out.append({
+            "id": f"sub-{sub.id}", "team_code": sub.team.code, "team_name": sub.team.name,
+            "status": "closed",
+            "entered_at": sub.created_at.isoformat(),
+            "exited_at": sub.submitted_at.isoformat() if sub.submitted_at else sub.created_at.isoformat(),
+            "score": sub.score, "note": None,
+        })
+    out.sort(key=lambda x: x["entered_at"], reverse=True)
+    return out[:limit]
 
 
 # =====================================================================
@@ -256,12 +270,10 @@ def enter_station(
     except (ProgramPhase.DoesNotExist, SubEvent.DoesNotExist):
         return None, "event_not_found"
 
-    if str(team_ref or "").strip().lower().startswith("t:"):
-        qr_state = get_checkin_qr_state()
-        if not qr_state["enabled"]:
-            return None, "checkin_qr_disabled"
-        if qr_state.get("phase_key") != phase.key:
-            return None, "checkin_qr_phase_mismatch"
+    # No global "BTC opens check-in" switch: in the per-station model a running
+    # sub-event is the open signal, matching what the participant's QR screen now
+    # shows (see `_team_qr_enabled_for_event`). Eligibility below (roster/phase,
+    # station-in-event) still applies; the QR stays single-use via `consume`.
 
     if results_are_locked():
         return None, "results_locked"

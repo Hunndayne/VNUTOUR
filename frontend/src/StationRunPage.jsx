@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
+import { useSearchParam } from './router.js'
 import { MarkdownBlock, InvisibleWatermark, TrapPattern } from './FormResponses.jsx'
 
 const POLL_MS = 2000
@@ -108,6 +109,12 @@ function listStatusBadge(station) {
       cls: 'bg-[#3E7CA8]/14 text-[#3E7CA8]',
     }
   }
+  // Free-play: đội đã nộp bài nhưng chưa được chấm đậu — báo "Đã nộp bài"
+  // thay vì "Chưa ghé". (`passed` đã return ở trên nên khỏi loại trừ lại.)
+  if (station?.my_submission?.status === 'submitted') {
+    return { label: 'Đã nộp bài', cls: 'bg-[#E0A23A]/20 text-[#9A6B12]' }
+  }
+
   if (status === 'failed') return { label: 'Chưa qua', cls: 'bg-[#D6492B]/14 text-[#D6492B]' }
   if (status === 'not_visited') return { label: 'Chưa ghé', cls: 'bg-[#20312B]/[0.06] text-[#20312B]/45' }
 
@@ -131,7 +138,7 @@ function explainReplayLock(reason) {
  * `lockRemaining` được truyền từ ngoài vào (đã tính từ `entered_at`) để hàm này
  * thuần tuý và không phụ thuộc đồng hồ.
  */
-function deriveStep({ station, state, blockedStationId, lockRemaining }) {
+function deriveStep({ station, state, blockedStationId, lockRemaining, replayArmed }) {
   if (!station) return 'station_gone'
   if (!state) return 'loading'
 
@@ -149,7 +156,16 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
     return qrReady ? 'exit_qr' : 'exit_disabled'
   }
 
-  if (status === 'closed') return 'closed'
+  if (status === 'closed') {
+    // A finished visit stays on the "hoàn thành" screen by default. Re-entry is
+    // never automatic: showing the entry QR the instant a checkout lands lets the
+    // coop's camera re-read it and check the team straight back in. The team must
+    // tap "Chơi lại" (only offered when replay is unlocked), which arms this.
+    if (replayArmed && station.replay_locked === false) {
+      return qrReady ? 'entry_qr' : 'entry_disabled'
+    }
+    return 'closed'
+  }
 
   // `null` (chưa vào) hoặc `cancelled` (CTV đã huỷ phiên): đội đang đứng ngoài.
   if (blockedStationId != null) return 'blocked'
@@ -157,8 +173,13 @@ function deriveStep({ station, state, blockedStationId, lockRemaining }) {
   // sẵn trong `/my-team/stations` nên báo trước cho đội khỏi mất công quét hụt.
   if (station.replay_locked) return 'replay_locked'
   if (station.checkin_policy === 'free_play') {
-    if (station.has_form && !hasSubmitted(state.submission)) return 'form'
-    return 'closed'
+    if (station.has_form) {
+      // Có bài nộp: chưa nộp thì mở form, nộp xong mới coi là hoàn thành.
+      return hasSubmitted(state.submission) ? 'closed' : 'form'
+    }
+    // Không có bài nộp: trạm tự do thuần hoạt động, không có gì để "đóng" trên
+    // web — đừng báo hoàn thành khi đội chưa làm gì.
+    return 'free_play'
   }
 
   return qrReady ? 'entry_qr' : 'entry_disabled'
@@ -272,9 +293,9 @@ function QrDisabledBlock() {
       <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#E0A23A]/20 text-[#9A6B12]">
         <Icon name="clock" className="h-6 w-6" />
       </span>
-      <p className="mt-4 text-base font-semibold text-ink">BTC chưa mở điểm danh</p>
+      <p className="mt-4 text-base font-semibold text-ink">Trạm chưa nhận check-in</p>
       <p className="mt-2 text-sm leading-6 text-ink/50">
-        Mã QR sẽ tự hiện ở đây ngay khi BTC bật điểm danh. Cứ để nguyên màn hình này, không cần tải lại trang.
+        Mã QR sẽ tự hiện ở đây ngay khi trạm bắt đầu nhận check-in. Cứ để nguyên màn hình này, không cần tải lại trang.
       </p>
     </div>
   )
@@ -479,11 +500,21 @@ function StationStageScreen({
   pollError,
   onBack,
   onOpenForm,
+  onReplay,
+  serverTimeOffset = 0,
 }) {
   const payload = state?.qr?.payload || ''
   const teamCode = state?.team_code || ''
   const cancelled = state?.session?.status === 'cancelled'
   const full = isStationFull(station)
+
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffset)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now() + serverTimeOffset)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [serverTimeOffset])
 
   return (
     <div className="space-y-4">
@@ -575,8 +606,8 @@ function StationStageScreen({
         <StatusPanel
           tone="gold"
           eyebrow="Điểm danh"
-          title="Chờ BTC mở điểm danh"
-          body="Trạm này chưa nhận check-in. Màn hình vẫn đang theo dõi, QR sẽ hiện ngay khi BTC bật."
+          title="Trạm chưa mở điểm danh"
+          body="Trạm này chưa nhận check-in. Màn hình vẫn đang theo dõi, QR sẽ hiện ngay khi trạm mở."
         >
           <QrDisabledBlock />
         </StatusPanel>
@@ -613,7 +644,37 @@ function StationStageScreen({
             ? "Mở phần thi của trạm này để làm và nộp bài."
             : "CTV đã quét QR vào trạm. Mở phần thi của trạm này để làm và nộp bài."}
         >
-          <button type="button" onClick={() => onOpenForm(stationId)} className={`w-full ${TRAIL_BUTTON}`}>
+          {(() => {
+            const openTime = station?.limits?.opensAt ? new Date(station.limits.opensAt).getTime() : 0
+            const closeTime = station?.limits?.closesAt ? new Date(station.limits.closesAt).getTime() : 0
+
+            if (openTime > 0 && now < openTime) {
+              const timeStr = new Date(station.limits.opensAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+              return (
+                <div className="mb-4 flex items-center justify-between rounded-xl border border-[#DCD8CC] bg-[#DCD8CC]/30 px-5 py-3 text-[#20312B]/70">
+                  <span className="text-sm font-semibold">Phần biểu mẫu chưa được mở. Thời gian mở:</span>
+                  <span className="font-mono text-lg font-bold tabular-nums">{timeStr}</span>
+                </div>
+              )
+            }
+            if (closeTime > 0 && now >= closeTime) {
+              return (
+                <div className="mb-4 flex items-center justify-between rounded-xl border border-[#D6492B]/30 bg-[#D6492B]/10 px-5 py-3 text-[#D6492B]">
+                  <span className="text-sm font-semibold">Biểu mẫu đã đóng thời gian làm bài.</span>
+                </div>
+              )
+            }
+            return null
+          })()}
+          <button 
+            type="button" 
+            onClick={() => onOpenForm(stationId)} 
+            className={`w-full ${TRAIL_BUTTON}`}
+            disabled={
+              (station?.limits?.opensAt && now < new Date(station.limits.opensAt).getTime()) ||
+              (station?.limits?.closesAt && now >= new Date(station.limits.closesAt).getTime())
+            }
+          >
             <Icon name="doc" className="h-5 w-5" />
             Mở phần thi của trạm
           </button>
@@ -650,8 +711,8 @@ function StationStageScreen({
         <StatusPanel
           tone="gold"
           eyebrow="Bước cuối"
-          title="Chờ BTC mở điểm danh"
-          body="Đội vẫn đang trong trạm. QR rời trạm sẽ hiện ngay khi BTC bật lại điểm danh — báo CTV nếu chờ quá lâu."
+          title="Chưa hiện được QR rời trạm"
+          body="Đội vẫn đang trong trạm. QR rời trạm sẽ hiện lại ngay — báo CTV nếu chờ quá lâu."
         >
           <QrDisabledBlock />
         </StatusPanel>
@@ -670,13 +731,34 @@ function StationStageScreen({
         </StatusPanel>
       )}
 
+      {step === 'free_play' && (
+        <StatusPanel
+          tone="trail"
+          eyebrow="Trạm tự do"
+          title="Tham gia hoạt động tại trạm"
+          body="Trạm này không cần quét QR hay nộp bài trên hệ thống. Cứ tham gia hoạt động tại trạm, CTV sẽ ghi nhận kết quả cho đội."
+        >
+          <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
+            Về danh sách trạm
+          </button>
+        </StatusPanel>
+      )}
+
       {step === 'closed' && (
         <StatusPanel
           tone="trail"
           eyebrow="Hoàn tất"
           title="Đã hoàn thành trạm này"
-          body="Lượt chơi tại trạm đã được đóng. Chúc đội may mắn ở trạm tiếp theo."
+          body={station?.replay_locked === false
+            ? 'Lượt chơi tại trạm đã đóng. Đội đã đi hết các trạm nên có thể chơi lại trạm này — bấm "Chơi lại" rồi đưa QR cho CTV quét.'
+            : 'Lượt chơi tại trạm đã được đóng. Chúc đội may mắn ở trạm tiếp theo.'}
         >
+          {station?.replay_locked === false && typeof onReplay === 'function' && (
+            <button type="button" onClick={onReplay} className={`mb-3 w-full ${TRAIL_BUTTON}`}>
+              <Icon name="doc" className="h-5 w-5" />
+              Chơi lại trạm này
+            </button>
+          )}
           <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
             Chọn trạm tiếp theo
           </button>
@@ -696,13 +778,24 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   const [listPayload, setListPayload] = useState(null)
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState('')
-  const [openStationId, setOpenStationId] = useState(null)
+  // The open station rides in the URL (`?station=<id>`) so a redirect back from
+  // the form — and a plain reload — reopens the same station instead of dropping
+  // the team on the list. openStation/backToList keep this in sync.
+  const [stationParam, setStationParam] = useSearchParam('station', '')
+  const [openStationId, setOpenStationId] = useState(() => {
+    const parsed = Number(stationParam)
+    return stationParam && !Number.isNaN(parsed) ? parsed : null
+  })
   const [stationState, setStationState] = useState(null)
+  // Đã bấm "Chơi lại" cho trạm đang mở? Chỉ khi armed thì màn hoàn thành mới cho
+  // hiện lại QR vào trạm — tránh việc checkout xong QR vào tự hiện và bị quét lại.
+  const [replayArmed, setReplayArmed] = useState(false)
   // `undefined` = chưa hỏi bao giờ, `null` = đội không mở phiên ở đâu cả.
   const [globalSession, setGlobalSession] = useState(undefined)
   const [pollError, setPollError] = useState('')
   const [sessionExpired, setSessionExpired] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [serverTimeOffset, setServerTimeOffset] = useState(0)
 
   const stations = useMemo(() => listPayload?.stations || [], [listPayload])
 
@@ -710,6 +803,12 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     setListLoading(true)
     try {
       const payload = await apiRequest('/my-team/stations')
+      if (payload?.server_now) {
+        const serverNow = new Date(payload.server_now).getTime()
+        if (!isNaN(serverNow)) {
+          setServerTimeOffset(serverNow - Date.now())
+        }
+      }
       setListPayload(payload)
       setListError('')
     } catch (error) {
@@ -842,20 +941,31 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     [stations, blockedStationId],
   )
 
-  const step = deriveStep({ station, state: stationState, blockedStationId, lockRemaining })
+  const step = deriveStep({ station, state: stationState, blockedStationId, lockRemaining, replayArmed })
+
+  // Once a re-entry actually lands (a fresh active session), disarm — otherwise
+  // the next checkout would auto-show the entry QR again and reopen the loop.
+  const sessionStatus = stationState?.session?.status
+  useEffect(() => {
+    if (sessionStatus === 'active') setReplayArmed(false)
+  }, [sessionStatus])
 
   const openStation = (stationId) => {
     // Không mang theo payload của trạm cũ: QR xoay sau mỗi lần quét nên một mã
     // cũ hiện ra ở đây chỉ dẫn tới 409 ở máy CTV.
     setStationState(null)
     setPollError('')
+    setReplayArmed(false)
     setOpenStationId(stationId)
+    setStationParam(String(stationId), { replace: true })
   }
 
   const backToList = () => {
     setOpenStationId(null)
     setStationState(null)
     setPollError('')
+    setReplayArmed(false)
+    setStationParam('', { replace: true })
     loadStations()
     loadGlobalSession()
   }
@@ -899,6 +1009,8 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
             pollError={pollError}
             onBack={backToList}
             onOpenForm={handleOpenForm}
+            onReplay={() => setReplayArmed(true)}
+            serverTimeOffset={serverTimeOffset}
           />
         )}
     </div>
@@ -916,7 +1028,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   }
 
   return (
-    <div className="relative min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
+    <div className="relative min-h-screen min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
       <Contours />
       <InvisibleWatermark text={listPayload?.team_code} />
       {body}

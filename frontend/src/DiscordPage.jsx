@@ -25,6 +25,8 @@ function explainApiError(error) {
     missing_fields: 'Vui lòng điền đủ tiêu đề và nội dung.',
     team_not_found: 'Không tìm thấy đội cần đồng bộ lại.',
     member_not_found: 'Không tìm thấy thành viên cần sync.',
+    missing_channel_ids: 'Hãy chọn ít nhất một kênh Discord.',
+    invalid_channel_ids: 'Danh sách kênh đã thay đổi. Hãy tải lại và chọn lại kênh.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu Discord.'
 }
@@ -105,6 +107,10 @@ function normalizeMember(item) {
 }
 
 function targetLabel(item) {
+  if (item.target === 'channels') {
+    const count = Array.isArray(item.targetPayload?.channel_ids) ? item.targetPayload.channel_ids.length : 0
+    return `${count} kênh Discord`
+  }
   if (item.target === 'team_ids') {
     const count = Array.isArray(item.targetPayload?.team_codes) ? item.targetPayload.team_codes.length : 0
     return count > 0 ? `${count} đội cụ thể` : 'Nhóm đội tự chọn'
@@ -443,7 +449,7 @@ function MembersTab({ members, busyKey, onSync }) {
   )
 }
 
-function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast }) {
+function ChannelsTab({ teams, discordChannels, broadcasts, busyKey, onRetry, onCreateBroadcast }) {
   // A plain in-page tab bar, not a modal — same reload/back concerns as the
   // page-level `view` above, so it gets its own URL param.
   const [tab, setTab] = useEnumSearchParam('panel', ['channels', 'compose', 'history'], 'channels')
@@ -455,7 +461,9 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
     message: '',
     target: 'all',
     teamCodes: [],
+    channelIds: [],
   })
+  const [channelSearch, setChannelSearch] = useState('')
 
   const readyTeams = useMemo(
     () => teams.filter(team => team.provisionState === 'done'),
@@ -473,10 +481,31 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
     }))
   }
 
+  const toggleChannelId = (channelId) => {
+    setComposeForm((current) => {
+      const selected = Array.isArray(current.channelIds) ? current.channelIds : []
+      return {
+        ...current,
+        channelIds: selected.includes(channelId)
+          ? selected.filter(id => id !== channelId)
+          : [...selected, channelId],
+      }
+    })
+  }
+
+  const filteredDiscordChannels = useMemo(() => {
+    const query = channelSearch.trim().toLocaleLowerCase('vi')
+    if (!query) return discordChannels
+    return discordChannels.filter(channel =>
+      channel.name.toLocaleLowerCase('vi').includes(query)
+      || channel.category.toLocaleLowerCase('vi').includes(query),
+    )
+  }, [channelSearch, discordChannels])
+
   const handleSubmit = async () => {
     await onCreateBroadcast(composeForm)
     composeDraft.clear()
-    setComposeForm({ title: '', message: '', target: 'all', teamCodes: [] })
+    setComposeForm({ title: '', message: '', target: 'all', teamCodes: [], channelIds: [] })
     // The page redirecting itself post-submit, not a tab the user clicked.
     setTab('history', { replace: true })
   }
@@ -610,7 +639,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                 {[
                   { key: 'all', label: 'Tất cả đội' },
                   { key: 'approved', label: 'Đội đã duyệt' },
-                  { key: 'pending', label: 'Đội chưa provision xong' },
+                  { key: 'channels', label: 'Chọn kênh Discord' },
                   { key: 'team_ids', label: 'Chọn đội cụ thể' },
                 ].map((option) => (
                   <button
@@ -650,6 +679,56 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
               </div>
             )}
 
+            {composeForm.target === 'channels' && (
+              <div className="rounded-lg border border-stone bg-paper px-4 py-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-ink">Chọn kênh Discord</p>
+                    <p className="mt-0.5 text-xs text-ink/40">
+                      {(composeForm.channelIds || []).length} kênh đã chọn
+                    </p>
+                  </div>
+                  <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
+                    <Icon name="search" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/25" />
+                    <input
+                      type="search"
+                      value={channelSearch}
+                      onChange={event => setChannelSearch(event.target.value)}
+                      placeholder="Tìm tên hoặc nhóm kênh..."
+                      className="w-full rounded-lg border border-stone bg-white py-2 pl-9 pr-3 text-sm text-ink placeholder:text-ink/25 focus:border-trail/40 focus:outline-none focus:ring-2 focus:ring-trail/10"
+                    />
+                  </div>
+                </div>
+
+                <div className="max-h-64 overflow-y-auto rounded-lg border border-stone bg-white">
+                  {filteredDiscordChannels.length > 0 ? filteredDiscordChannels.map((channel, index) => (
+                    <label
+                      key={channel.id}
+                      className={`flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm transition hover:bg-paper ${index > 0 ? 'border-t border-stone/60' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(composeForm.channelIds || []).includes(channel.id)}
+                        onChange={() => toggleChannelId(channel.id)}
+                        className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+                      />
+                      <span className="font-mono text-ink/30">#</span>
+                      <span className="min-w-0 flex-1 truncate font-medium text-ink/70">{channel.name}</span>
+                      {channel.category && (
+                        <span className="max-w-[40%] truncate text-xs text-ink/35">{channel.category}</span>
+                      )}
+                    </label>
+                  )) : (
+                    <div className="px-4 py-8 text-center text-sm text-ink/35">
+                      {discordChannels.length === 0
+                        ? 'Bot chưa đồng bộ được danh sách kênh. Kiểm tra trạng thái bot rồi tải lại.'
+                        : 'Không tìm thấy kênh phù hợp.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-ink/45">
                 Broadcast hiện tạo bản nháp trong database; bot sẽ đọc queue này để gửi về Discord.
@@ -662,6 +741,7 @@ function ChannelsTab({ teams, broadcasts, busyKey, onRetry, onCreateBroadcast })
                   || !composeForm.title.trim()
                   || !composeForm.message.trim()
                   || (composeForm.target === 'team_ids' && composeForm.teamCodes.length === 0)
+                  || (composeForm.target === 'channels' && (composeForm.channelIds || []).length === 0)
                 }
                 className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:opacity-40"
               >
@@ -712,15 +792,17 @@ export default function DiscordPage() {
   const [queue, setQueue] = useState([])
   const [members, setMembers] = useState({ items: [], counts: { all: 0, linked: 0, unlinked: 0 } })
   const [teams, setTeams] = useState([])
+  const [discordChannels, setDiscordChannels] = useState([])
   const [broadcasts, setBroadcasts] = useState([])
 
   const loadDiscordData = useCallback(async () => {
-    const [statusPayload, queuePayload, membersPayload, broadcastsPayload, teamsPayload] = await Promise.all([
+    const [statusPayload, queuePayload, membersPayload, broadcastsPayload, teamsPayload, channelsPayload] = await Promise.all([
       apiRequest('/discord/status'),
       apiRequest('/discord/provisioning-queue'),
       apiRequest('/discord/members?limit=100'),
       apiRequest('/discord/broadcasts'),
       apiRequest('/teams?limit=200'),
+      apiRequest('/discord/channels'),
     ])
 
     setStatus(statusPayload || { bot: { online: false }, provisioning: { pending: 0, failed: 0, done: 0 } })
@@ -741,6 +823,11 @@ export default function DiscordPage() {
       targetPayload: item.target_payload || null,
     })))
     setTeams((teamsPayload?.items || []).map(normalizeTeam))
+    setDiscordChannels((channelsPayload?.items || []).map(channel => ({
+      id: String(channel.id),
+      name: channel.name || String(channel.id),
+      category: channel.category || '',
+    })))
   }, [])
 
   useEffect(() => {
@@ -819,7 +906,9 @@ export default function DiscordPage() {
           target: form.target,
           target_payload: form.target === 'team_ids'
             ? { team_codes: form.teamCodes }
-            : null,
+            : form.target === 'channels'
+              ? { channel_ids: form.channelIds }
+              : null,
         },
       })
       await loadDiscordData()
@@ -878,6 +967,7 @@ export default function DiscordPage() {
           {activeTab === 'channels' && (
             <ChannelsTab
               teams={teams}
+              discordChannels={discordChannels}
               broadcasts={broadcasts}
               busyKey={busyKey}
               onRetry={handleRetryProvision}

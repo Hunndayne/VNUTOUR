@@ -1,0 +1,79 @@
+# Primary-following TCP proxy. The app connects to the Service `pg-primary`
+# (DB_HOST=pg-primary); HAProxy health-checks each Patroni member's REST API on
+# :8008 GET /primary — which returns 200 ONLY on the current leader — and routes
+# 5432 traffic to whichever member is primary. On failover it follows the new
+# leader within a few checks.
+#
+# HAProxy runs as an ordinary pod (no hostNetwork): it egresses to the member
+# NODE IPs over the mesh, which pod egress can reach via the node routes. Runs in
+# BOTH prod clusters so each zone's app has a local primary endpoint.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-haproxy
+data:
+  haproxy.cfg: |
+    global
+      maxconn 500
+    defaults
+      mode tcp
+      log global
+      retries 2
+      timeout connect 5s
+      timeout client 30m
+      timeout server 30m
+      timeout check 5s
+    # Patroni REST health endpoint decides who is primary.
+    listen postgres
+      bind *:5432
+      option httpchk GET /primary
+      http-check expect status 200
+      default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+      server homelab 192.168.1.111:5432 check port 8008
+      server linode  10.88.0.2:5432     check port 8008
+    # Optional: a read-only endpoint could target /replica on :5433 later.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-haproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg-haproxy
+  template:
+    metadata:
+      labels:
+        app: pg-haproxy
+    spec:
+      containers:
+        - name: haproxy
+          image: haproxy:2.9-alpine
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          volumeMounts:
+            - name: cfg
+              mountPath: /usr/local/etc/haproxy
+              readOnly: true
+          resources:
+            requests: { cpu: "25m", memory: "32Mi" }
+            limits:   { cpu: "200m", memory: "128Mi" }
+      volumes:
+        - name: cfg
+          configMap:
+            name: pg-haproxy
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-primary
+spec:
+  selector:
+    app: pg-haproxy
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

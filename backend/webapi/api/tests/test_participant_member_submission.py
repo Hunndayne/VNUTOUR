@@ -16,7 +16,73 @@ from api.views_participant import _member_resolution, _prepare_member_submission
 
 
 class ParticipantMemberSubmissionTests(TestCase):
-    def test_member_resolution_excludes_cccd_value_and_field_when_backend_has_cccd(self):
+    def test_adding_uit_member_does_not_request_cccd_and_saves_uit_default(self):
+        ProgramPhase.objects.create(
+            key="registration", label="Registration", order=1, is_current=True,
+        )
+        SystemSetting.objects.create(key="registration_open", value=True)
+        captain = Account.objects.create(
+            username="uit-captain", email="uit-captain@example.com", password_hash="x",
+            role=Account.ROLE_PARTICIPANT, mssv="SVUIT00",
+        )
+        team = Team.objects.create(
+            code="TUIT", name="UIT test team", owner_account=captain,
+        )
+        captain_profile = Participant.objects.create(
+            account=captain, mssv=captain.mssv, email=captain.email,
+        )
+        TeamMembership.objects.create(team=team, participant=captain_profile, is_captain=True)
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {generate_session(captain)}"}
+
+        for index, source in enumerate(("account", "participant", "linked"), start=1):
+            with self.subTest(source=source):
+                identity = {"mssv": f"SVUIT0{index}", "email": f"uit-{index}@example.com"}
+                profile = {
+                    **identity, "full_name": "UIT Member", "school": "UIT",
+                    "faculty": "KHMT", "phone": "0911111111",
+                }
+                account = None
+                if source in ("account", "linked"):
+                    account = Account.objects.create(
+                        **profile, username=f"uit-member-{index}", password_hash="x",
+                        role=Account.ROLE_PARTICIPANT,
+                    )
+                remaining = {
+                    "gender": "male", "date_of_birth": "2006-01-01",
+                    "facebook": "https://example.com/uit-member",
+                }
+                if source in ("participant", "linked"):
+                    Participant.objects.create(
+                        **profile, account=account, cccd="",
+                        date_of_birth=remaining["date_of_birth"],
+                        facebook=remaining["facebook"], extra={"gender": remaining["gender"]},
+                    )
+
+                resolved = self.client.post(
+                    "/api/my-team/members/resolve", data=identity,
+                    content_type="application/json", **auth,
+                )
+                self.assertEqual(resolved.status_code, 200)
+                payload = resolved.json()
+                self.assertEqual(payload["profile"], identity)
+                self.assertNotIn("cccd", [field["key"] for field in payload["fields"]])
+
+                # Submit exactly the fields offered by resolve, with no CCCD.
+                submission = {
+                    **payload["profile"],
+                    **{field["key"]: remaining[field["key"]]
+                       for field in payload["fields"] if field["key"] in remaining},
+                }
+                added = self.client.post(
+                    "/api/my-team/members", data=submission,
+                    content_type="application/json", **auth,
+                )
+                self.assertEqual(added.status_code, 201, added.content)
+                participant = Participant.objects.get(mssv=identity["mssv"])
+                self.assertEqual(participant.cccd, "UIT")
+                self.assertTrue(TeamMembership.objects.filter(team=team, participant=participant).exists())
+
+    def test_member_resolution_hides_stored_fields_and_never_returns_their_values(self):
         Account.objects.create(
             username="member1",
             email="member1@gmail.com",
@@ -43,10 +109,56 @@ class ParticipantMemberSubmissionTests(TestCase):
         payload, error = _member_resolution({"mssv": "26520002", "email": "member1@gmail.com"})
 
         self.assertIsNone(error)
-        self.assertNotIn("cccd", payload["profile"])
-        self.assertNotIn("cccd", [field["key"] for field in payload["fields"]])
-        self.assertEqual(payload["profile"]["full_name"], "Member One")
-        self.assertEqual(payload["profile"]["school"], "HCMUT")
+        # The profile echoes only the identity the captain typed — no PII of a
+        # member who may belong to another team is ever disclosed.
+        self.assertEqual(
+            payload["profile"], {"mssv": "26520002", "email": "member1@gmail.com"},
+        )
+        field_keys = [field["key"] for field in payload["fields"]]
+        # Every already-stored field is hidden (write-only); the captain cannot
+        # view or overwrite it. Only the typed identity stays visible.
+        for hidden in ("cccd", "full_name", "school", "phone", "faculty", "facebook"):
+            self.assertNotIn(hidden, field_keys)
+        self.assertIn("mssv", field_keys)
+        self.assertIn("email", field_keys)
+
+    def test_member_resolution_shows_only_the_single_missing_field(self):
+        # B has a complete profile except for the Facebook link. When A adds B,
+        # A must see only the Facebook input (plus the identity A typed) — every
+        # field B already filled stays hidden.
+        Account.objects.create(
+            username="member3",
+            email="member3@gmail.com",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="26520005",
+            full_name="Member Three",
+            phone="0955555555",
+            school="HCMUT",
+            faculty="CNTT",
+        )
+        Participant.objects.create(
+            mssv="26520005",
+            full_name="Member Three",
+            email="member3@gmail.com",
+            phone="0955555555",
+            school="HCMUT",
+            faculty="CNTT",
+            facebook="",  # the only blank
+            cccd="012345678905",
+            date_of_birth="2006-01-05",
+            extra={"gender": "male"},
+        )
+
+        payload, error = _member_resolution({"mssv": "26520005", "email": "member3@gmail.com"})
+
+        self.assertIsNone(error)
+        field_keys = [field["key"] for field in payload["fields"]]
+        # Only the missing field is offered for input, alongside the identity.
+        self.assertEqual(set(field_keys), {"mssv", "email", "facebook"})
+        self.assertEqual(
+            payload["profile"], {"mssv": "26520005", "email": "member3@gmail.com"},
+        )
 
     def test_member_resolution_keeps_cccd_field_when_backend_missing_cccd(self):
         Account.objects.create(
@@ -128,7 +240,7 @@ class ParticipantMemberSubmissionTests(TestCase):
 
         self.assertEqual(error, "missing:member:cccd")
 
-    def test_patch_team_member_hides_private_fields_from_captain(self):
+    def test_patch_team_member_returns_editable_registration_fields_to_captain(self):
         ProgramPhase.objects.create(
             key="registration",
             label="Registration",
@@ -188,7 +300,11 @@ class ParticipantMemberSubmissionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             set(response.json()),
-            {"mssv", "full_name", "school"},
+            {
+                "mssv", "full_name", "school", "email", "phone", "faculty",
+                "facebook", "cccd", "date_of_birth", "extra", "is_captain",
+                "has_account",
+            },
         )
         member.refresh_from_db()
         self.assertEqual(member.date_of_birth, date(2006, 2, 3))

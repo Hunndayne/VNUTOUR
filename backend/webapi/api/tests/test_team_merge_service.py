@@ -7,9 +7,10 @@ from django.test import TestCase
 from django.db.models.query import QuerySet
 
 from api.models import (
-    Account, CaptainVote, Participant, ScoreEntry, SubEvent, ProgramPhase,
-    Team, TeamMembership,
+    Account, CaptainVote, Participant, PendingDeprovision, ScoreEntry, SubEvent,
+    ProgramPhase, Team, TeamMembership,
 )
+from api.services import discord_service
 from api.services import team_merge_service as svc
 from api.services.auth_service import generate_session
 from api.services.team_service import add_member
@@ -505,3 +506,89 @@ class MergeTeamsApiTests(TeamMergeTestBase):
         self.assertEqual(TeamMembership.objects.filter(team=first).count(), 2)
         self.assertEqual(TeamMembership.objects.filter(team=untouched).count(), 1)
         self.assertTrue(Team.objects.filter(code=untouched.code).exists())
+
+
+class MergeDiscordSyncTests(TeamMergeTestBase):
+    """A merge has to leave Discord matching the database, not just the DB."""
+
+    def _provisioned(self, code, member_count, role_id, text_id, voice_id):
+        team, members = self._team(code, member_count)
+        Team.objects.filter(id=team.id).update(
+            discord_role_id=role_id,
+            text_channel_id=text_id,
+            voice_channel_id=voice_id,
+            provision_state=Team.PROVISION_DONE,
+        )
+        team.refresh_from_db()
+        return team, members
+
+    def test_source_discord_resources_are_queued_for_deletion(self):
+        target, _ = self._provisioned("T1000", 2, 111, 112, 113)
+        source, _ = self._provisioned("T1001", 2, 221, 222, 223)
+
+        merged, error, _ = svc.merge_team_group([target.code, source.code])
+        self.assertIsNone(error)
+        self.assertEqual(merged.code, target.code)
+
+        queued = list(PendingDeprovision.objects.values(
+            "team_code", "discord_role_id", "text_channel_id", "voice_channel_id",
+        ))
+        self.assertEqual(queued, [{
+            "team_code": "T1001",
+            "discord_role_id": 221,
+            "text_channel_id": 222,
+            "voice_channel_id": 223,
+        }])
+
+    def test_surviving_team_is_requeued_for_provisioning(self):
+        target, _ = self._provisioned("T1010", 2, 311, 312, 313)
+        source, _ = self._provisioned("T1011", 2, 321, 322, 323)
+
+        merged, error, _ = svc.merge_team_group([target.code, source.code])
+        self.assertIsNone(error)
+
+        # Its roster and name both changed, so the bot has to rename the role
+        # and channels and move the newcomers onto the surviving role.
+        self.assertEqual(merged.provision_state, Team.PROVISION_PENDING)
+        self.assertIsNone(merged.provision_last_error)
+        self.assertEqual(merged.discord_role_id, 311)
+
+    def test_a_team_with_no_discord_resources_queues_nothing(self):
+        target, _ = self._provisioned("T1020", 2, 411, 412, 413)
+        source, _ = self._team("T1021", 2)
+
+        _, error, _ = svc.merge_team_group([target.code, source.code])
+        self.assertIsNone(error)
+        self.assertFalse(PendingDeprovision.objects.exists())
+
+    def test_every_source_in_a_multi_team_merge_is_queued(self):
+        target, _ = self._provisioned("T1030", 1, 511, 512, 513)
+        second, _ = self._provisioned("T1031", 1, 521, 522, 523)
+        third, _ = self._provisioned("T1032", 1, 531, 532, 533)
+
+        _, error, _ = svc.merge_team_group([target.code, second.code, third.code])
+        self.assertIsNone(error)
+
+        self.assertEqual(
+            sorted(PendingDeprovision.objects.values_list("team_code", flat=True)),
+            ["T1031", "T1032"],
+        )
+
+    def test_queued_roles_stay_strippable_after_the_team_row_is_gone(self):
+        """The gap that made a stale role permanent.
+
+        `managed_role_ids` is the only list provisioning will remove a role
+        from, and it used to be built from live `Team` rows alone. A merge
+        deletes the source row, so its role fell off that list and no later
+        pass could ever take it off the members who moved across.
+        """
+        target, _ = self._provisioned("T1040", 2, 611, 612, 613)
+        source, _ = self._provisioned("T1041", 2, 621, 622, 623)
+
+        merged, error, _ = svc.merge_team_group([target.code, source.code])
+        self.assertIsNone(error)
+        self.assertFalse(Team.objects.filter(code="T1041").exists())
+
+        payloads = discord_service.get_pending_team_payloads()
+        payload = next(item for item in payloads if item["code"] == merged.code)
+        self.assertIn(621, payload["managed_role_ids"])

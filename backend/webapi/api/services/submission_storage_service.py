@@ -86,6 +86,40 @@ def _store_local(key: str, uploaded) -> str:
     return f"{settings.MEDIA_URL.rstrip('/')}/{key}"
 
 
+def delete_stored_object(storage: str | None, key: str | None) -> bool:
+    """Best-effort deletion of one stored file (R2 or local).
+
+    Returns True when a delete was attempted without error. Never raises —
+    orphaned-file cleanup must not roll back or block the surrounding DB
+    operation, so callers can fire-and-forget after the row is gone.
+    """
+    if not key:
+        return False
+
+    if storage == STORAGE_R2:
+        client = _r2_client()
+        if client is None:
+            return False
+        try:
+            client.delete_object(Bucket=settings.R2_BUCKET, Key=key)
+            return True
+        except Exception:
+            logger.exception("failed to delete R2 object %s", key)
+            return False
+
+    if storage == STORAGE_LOCAL:
+        try:
+            path = Path(settings.MEDIA_ROOT) / key
+            if path.exists():
+                path.unlink()
+            return True
+        except Exception:
+            logger.exception("failed to delete local file %s", key)
+            return False
+
+    return False
+
+
 def presigned_url(key: str, expires: int = 3600) -> str | None:
     """Generate a temporary signed GET URL for a private R2 object, or None on failure."""
     client = _r2_client()

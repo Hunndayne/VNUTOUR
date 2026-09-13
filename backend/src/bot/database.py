@@ -43,3 +43,7 @@ def _database_call(function: Callable[..., T], *args: Any, **kwargs: Any) -> T:
 async def database_call(function: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """Run synchronous Django ORM work without blocking Discord heartbeats."""
     return await asyncio.to_thread(partial(_database_call, function, *args, **kwargs))
+
+
+run_sync = database_call
+

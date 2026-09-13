@@ -19,7 +19,7 @@ from django.db import transaction
 from api.models import (
     Account, Participant, Team, TeamMembership, SystemSetting, ProgramPhase,
 )
-from api.services import team_service
+from api.services import registration_emails, team_service
 
 
 SCHEMA_KEY = "registration_form_schema"
@@ -238,6 +238,10 @@ def _validate_person(schema: dict, data: dict, who: str) -> Tuple[dict, dict, Op
         key = f["key"]
         raw = data.get(key)
         value = raw.strip() if isinstance(raw, str) else raw
+        if key == "mssv" and isinstance(value, str):
+            value = value.upper()
+        elif key == "email" and isinstance(value, str):
+            value = value.lower()
         # A field hidden by a conditional is not required from the user.
         if f.get("required") and not value and not _is_hidden(f, data):
             return {}, {}, f"missing:{who}:{key}"
@@ -308,7 +312,15 @@ def register_individual(data: dict) -> Tuple[Optional[Participant], Optional[str
     columns, extra, err = _validate_person(schema, data, "individual")
     if err:
         return None, err
-    return _upsert_participant(columns, extra)
+    remaining = team_service.registration_capacity_remaining()
+    if remaining is not None and remaining <= 0:
+        if not Participant.objects.filter(mssv=columns["mssv"]).exists():
+            return None, "registration_capacity_reached"
+    participant, err = _upsert_participant(columns, extra)
+    if err:
+        return None, err
+    registration_emails.send_registration_received_individual(participant)
+    return participant, None
 
 
 def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
@@ -360,6 +372,13 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
 
     try:
         with transaction.atomic():
+            team_service.lock_registration_capacity()
+            # This endpoint creates a new submitted team. Existing teamless
+            # profiles consume a slot too; identities already on a team are
+            # rejected by _upsert_participant below.
+            capacity_error = team_service.registration_capacity_error(total_members)
+            if capacity_error:
+                return None, capacity_error
             team, err = team_service.create_team(
                 team_name,
                 is_late_registration=is_late_registration,
@@ -390,6 +409,7 @@ def register_team(data: dict) -> Tuple[Optional[Team], Optional[str]]:
     except _Rollback as r:
         return None, r.code
 
+    registration_emails.send_registration_received_team(team)
     return team, None
 
 
@@ -413,8 +433,8 @@ def lookup_participant(mssv: str, email: str) -> dict:
       {"status": "email_mismatch"}
       {"status": "match", "full_name", "school", "faculty"}
     """
-    mssv = (mssv or "").strip()
-    email = (email or "").strip()
+    mssv = (mssv or "").strip().upper()
+    email = (email or "").strip().lower()
     if not mssv:
         return {"status": "not_found"}
 
@@ -436,7 +456,7 @@ def lookup_participant(mssv: str, email: str) -> dict:
 
 def validate_account_mssv_claim(account: Account, mssv: str) -> Optional[str]:
     """Return an error code if an account is not allowed to claim this MSSV."""
-    mssv = (mssv or "").strip()
+    mssv = (mssv or "").strip().upper()
     if not account or not mssv:
         return None
 

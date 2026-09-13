@@ -134,17 +134,16 @@ class RosterLockTests(RosterLockTestBase):
         self.team.refresh_from_db()
         self.assertIsNone(self.team.roster_locked_at)
 
-    def test_lock_refuses_a_partial_roster(self):
-        # 3 of 5 — neither solo nor full.
+    def test_lock_allows_a_partial_roster_within_range(self):
+        # 3 of 5 — within min..max range, so locking is allowed.
         self._add_member("SV002")
         self._add_member("SV003")
 
         response = self._patch({"roster_locked": True})
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["error"], "team_size_not_final:5")
+        self.assertEqual(response.status_code, 200)
         self.team.refresh_from_db()
-        self.assertIsNone(self.team.roster_locked_at)
+        self.assertIsNotNone(self.team.roster_locked_at)
 
     def test_lock_refuses_an_over_full_roster(self):
         for index in range(2, 7):  # SV002..SV006 → 6 members with the captain

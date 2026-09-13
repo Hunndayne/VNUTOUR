@@ -1,0 +1,22 @@
+# REFERENCE ONLY — overlays/prod-standby applies these changes INLINE (kustomize
+# load-restrictor forbids a patches: path outside the overlay dir). Keep in sync.
+#
+# Flips the homelab-primary default to the Linode replica: pins POD_IP to the
+# Linode mesh IP 10.88.0.2, which is what Spilo uses to advertise its
+# postgresql/restapi connect_address (it ignores PATRONI_*_CONNECT_ADDRESS, and
+# the Linode node hostname "localhost" would otherwise resolve to ::1).
+#
+# NOTE: the Linode cluster is a single node — label it so the storage
+# nodeSelector matches:  kubectl label node <linode-node> vnutour/storage=true
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-ha
+spec:
+  template:
+    spec:
+      containers:
+        - name: patroni
+          env:
+            - name: POD_IP
+              value: "10.88.0.2"

@@ -12,11 +12,16 @@ from django.db.models import Q, Count
 
 from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
-    create_team, approve_team, reject_team,
-    get_team_members, add_member, link_account_profile,
+    create_team, approve_team, reject_team, delete_team,
+    get_team_members, add_member, remove_member, link_account_profile,
+    fix_participant_identity,
     registration_is_open, set_registration_open,
+    get_max_registrations, set_max_registrations, get_current_registrations,
+    team_name_is_duplicate,
+    COUNTED_TEAM_STATUSES, lock_registration_capacity, registration_capacity_error,
 )
 from api.services.audit_service import record_audit
+from api.services.account_identity_service import AccountUpdateError, update_admin_account
 from api.services import team_merge_service
 from api.services.registration_service import normalize_gender, get_schema, save_schema
 from api.services.submission_storage_service import proof_file_response
@@ -36,6 +41,45 @@ def _lock_registration_phase() -> bool:
 # Teams
 # =====================================================================
 
+def _team_leader_fields(team, memberships):
+    """Return the actual captain's stable display identity.
+
+    ``owner_account`` is stamped at creation and never re-synced, so it goes
+    stale when the captain leaves the team or changes their MSSV — leaving a
+    ghost leader who is no longer on the roster (shown as captain here while
+    being a member elsewhere). The ``is_captain`` membership is the real leader,
+    so its participant profile supplies the name and MSSV shown in admin. Keep
+    ``owner_username`` for backwards compatibility with older clients.
+
+    Fall back to ``owner_account`` only when the roster has no captain yet.
+    """
+    captain = next((m for m in memberships if m.is_captain), None)
+    if captain:
+        participant = captain.participant
+        account = participant.account if participant.account_id else None
+        owner_username = (
+            (account.username if account else None)
+            or participant.full_name
+            or participant.mssv
+        )
+        return {
+            "owner_username": owner_username,
+            "captain_name": (
+                participant.full_name
+                or (account.full_name if account else None)
+                or owner_username
+            ),
+            "captain_mssv": participant.mssv or (account.mssv if account else None),
+        }
+
+    owner = team.owner_account if team.owner_account_id else None
+    return {
+        "owner_username": owner.username if owner else None,
+        "captain_name": (owner.full_name or owner.username) if owner else None,
+        "captain_mssv": owner.mssv if owner else None,
+    }
+
+
 @csrf_exempt
 def teams_collection_view(request: HttpRequest):
     """GET: list teams. POST: admin creates team."""
@@ -53,8 +97,17 @@ def teams_collection_view(request: HttpRequest):
             base_qs = base_qs.filter(
                 Q(name__icontains=q)
                 | Q(code__icontains=q)
-                | Q(owner_account__username__icontains=q),
-            )
+                | Q(owner_account__username__icontains=q)
+                | Q(owner_account__full_name__icontains=q)
+                | Q(owner_account__mssv__icontains=q)
+                | (
+                    Q(memberships__is_captain=True)
+                    & (
+                        Q(memberships__participant__full_name__icontains=q)
+                        | Q(memberships__participant__mssv__icontains=q)
+                    )
+                ),
+            ).distinct()
 
         # Per-status totals for the tab badges — counted across the whole
         # (search-filtered) set, not just the loaded page.
@@ -64,7 +117,7 @@ def teams_collection_view(request: HttpRequest):
             Team.APPROVAL_APPROVED: 0,
             Team.APPROVAL_REJECTED: 0,
         }
-        for row in base_qs.values("approval_status").annotate(n=Count("id")):
+        for row in base_qs.values("approval_status").annotate(n=Count("id", distinct=True)):
             status_counts[row["approval_status"]] = row["n"]
         total_all = sum(status_counts.values())
 
@@ -81,7 +134,9 @@ def teams_collection_view(request: HttpRequest):
             page, limit = 1, 50
         offset = (page - 1) * limit
         total = qs.count()
-        teams = qs.prefetch_related("memberships__participant")[offset:offset + limit]
+        teams = qs.select_related("owner_account").prefetch_related(
+            "memberships__participant__account",
+        )[offset:offset + limit]
 
         items = []
         for t in teams:
@@ -115,7 +170,7 @@ def teams_collection_view(request: HttpRequest):
                         "is_captain": membership.is_captain,
                     })
                 item.update({
-                    "owner_username": t.owner_account.username if t.owner_account else None,
+                    **_team_leader_fields(t, memberships),
                     "gender_counts": gender_counts,
                     "member_summaries": member_summaries,
                     "provision_state": t.provision_state,
@@ -146,7 +201,10 @@ def teams_collection_view(request: HttpRequest):
 
         name = str((data.get("team_name") or data.get("name") or "").strip())
         owner_username = str((data.get("owner_username") or data.get("owner") or "").strip())
-        owner_account = acc
+        # An unassigned team created by an organiser has no participant owner.
+        # Storing the admin as owner would make one organiser appear to captain
+        # many teams and conflicts with the one-team-per-participant invariant.
+        owner_account = None
         if owner_username:
             owner_account = Account.objects.filter(
                 username__iexact=owner_username,
@@ -163,7 +221,8 @@ def teams_collection_view(request: HttpRequest):
 
         team, err = create_team(name, owner_account=owner_account, auto_approve=True)
         if err:
-            return JsonResponse({"error": err}, status=400)
+            status = 409 if err == "duplicate_team_name" else 400
+            return JsonResponse({"error": err}, status=status)
 
         if owner_account and owner_account.mssv:
             _, member_err = add_member(
@@ -220,7 +279,10 @@ def team_item_view(request: HttpRequest, team_key: str):
         if is_admin(acc):
             payload.update({
                 "id": team.id,
-                "owner_username": team.owner_account.username if team.owner_account else None,
+                **_team_leader_fields(
+                    team,
+                    list(team.memberships.select_related("participant__account").all()),
+                ),
                 "approval_note": team.approval_note,
                 "payment_proof": team.payment_proof,
                 # True only for a real uploaded image (drawer renders it inline);
@@ -247,7 +309,10 @@ def team_item_view(request: HttpRequest, team_key: str):
 
         new_name = data.get("name") or data.get("team_name")
         if new_name:
-            team.name = str(new_name).strip()
+            cleaned_name = str(new_name).strip()
+            if team_name_is_duplicate(cleaned_name, exclude_team=team):
+                return JsonResponse({"error": "duplicate_team_name"}, status=409)
+            team.name = cleaned_name
             team.save(update_fields=["name", "updated_at"])
 
         new_approval_status = data.get("approval_status")
@@ -255,6 +320,7 @@ def team_item_view(request: HttpRequest, team_key: str):
             if new_approval_status not in dict(Team.APPROVAL_CHOICES):
                 return JsonResponse({"error": "invalid_approval_status"}, status=400)
             with transaction.atomic():
+                lock_registration_capacity()
                 if not _lock_registration_phase():
                     return JsonResponse({"error": "registration_phase_closed"}, status=409)
                 team = Team.objects.select_for_update().get(pk=team.pk)
@@ -272,6 +338,14 @@ def team_item_view(request: HttpRequest, team_key: str):
                 elif new_approval_status == Team.APPROVAL_REJECTED:
                     reject_team(team, acc, data.get("approval_note") or data.get("note"))
                 else:
+                    additional_members = (
+                        TeamMembership.objects.filter(team=team).count()
+                        if new_approval_status in COUNTED_TEAM_STATUSES
+                        and team.approval_status not in COUNTED_TEAM_STATUSES else 0
+                    )
+                    capacity_error = registration_capacity_error(additional_members)
+                    if capacity_error:
+                        return JsonResponse({"error": capacity_error}, status=409)
                     team.approval_status = new_approval_status
                     team.save(update_fields=["approval_status", "updated_at"])
 
@@ -284,9 +358,8 @@ def team_item_view(request: HttpRequest, team_key: str):
     if request.method == "DELETE":
         if not is_admin(acc):
             return JsonResponse({"error": "forbidden"}, status=403)
-        code = team.code
-        team.delete()
-        return JsonResponse({"status": "deleted", "code": code})
+        result = delete_team(team, acc)
+        return JsonResponse({"status": "deleted", **result})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -376,6 +449,66 @@ def team_reject_view(request: HttpRequest, team_key: str):
         "code": team.code, "approval_status": team.approval_status,
         "approval_note": team.approval_note,
     })
+
+
+@csrf_exempt
+@transaction.atomic
+def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
+    """DELETE a single member (by MSSV) from a team — admin only.
+
+    Unlike the captain roster editor, an admin may remove a member from a team
+    in any approval state (the captain path is locked once a team is submitted).
+    Removal frees the registration slot naturally by dropping the membership row;
+    the participant profile itself is kept for audit/identity continuity.
+    """
+    if request.method != "DELETE":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    try:
+        team = Team.objects.select_for_update().get(code=team_key)
+    except Team.DoesNotExist:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    normalized_mssv = (mssv or "").strip().upper()
+    membership = (
+        TeamMembership.objects.filter(team=team, participant__mssv=normalized_mssv)
+        .select_related("participant")
+        .first()
+    )
+    if not membership:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    participant = membership.participant
+    before_data = {
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "email": participant.email,
+        "is_captain": membership.is_captain,
+    }
+
+    success, remove_err = remove_member(team, normalized_mssv)
+    if not success:
+        status = 404 if remove_err == "not_found" else 400
+        return JsonResponse({"error": remove_err or "remove_failed"}, status=status)
+
+    record_audit(
+        actor=acc,
+        action="team.member.remove",
+        summary=(
+            f"Xóa thành viên {before_data['full_name'] or normalized_mssv} "
+            f"({normalized_mssv}) khỏi đội {team.code} - {team.name}"
+        ),
+        target_type="Team",
+        target_id=team.id,
+        before_data=before_data,
+        after_data=None,
+        reversible=False,
+    )
+    return JsonResponse({"status": "removed", "mssv": normalized_mssv})
 
 
 # =====================================================================
@@ -471,6 +604,8 @@ def admin_site_config_view(request: HttpRequest):
     if request.method == "GET":
         return JsonResponse({
             "registration_open": registration_is_open(),
+            "max_registrations": get_max_registrations(),
+            "current_registrations": get_current_registrations(),
             "antibot": antibot_config(),
         })
 
@@ -487,6 +622,15 @@ def admin_site_config_view(request: HttpRequest):
             else:
                 value = bool(raw)
             response["registration_open"] = set_registration_open(value)
+        if "max_registrations" in data:
+            raw = data.get("max_registrations")
+            try:
+                val = int(raw)
+                if val < 0:
+                    val = 0
+            except (TypeError, ValueError):
+                val = 0
+            response["max_registrations"] = set_max_registrations(val)
         if "antibot_enabled" in data:
             raw = data.get("antibot_enabled")
             if isinstance(raw, str):
@@ -497,6 +641,8 @@ def admin_site_config_view(request: HttpRequest):
         if not response:
             return JsonResponse({"error": "missing_fields"}, status=400)
         response.setdefault("registration_open", registration_is_open())
+        response.setdefault("max_registrations", get_max_registrations())
+        response.setdefault("current_registrations", get_current_registrations())
         response.setdefault("antibot", antibot_config())
         return JsonResponse(response)
 
@@ -684,37 +830,28 @@ def admin_account_detail_view(request: HttpRequest, username: str):
 
     if request.method == "PATCH":
         data = _json_body(request)
-        if data is None:
+        if not isinstance(data, dict):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
-        if "email" in data and data["email"]:
-            target.email = str(data["email"]).strip()
-        if "mssv" in data:
-            target.mssv = str(data["mssv"]).strip() or None
-        if "full_name" in data or "fullName" in data:
-            target.full_name = str(data.get("full_name") or data.get("fullName") or "").strip() or None
-        if "role" in data and data["role"] in dict(Account.ROLE_CHOICES):
-            if data["role"] == Account.ROLE_MASTER_ADMIN and not _may_touch_master(acc):
-                return _master_admin_forbidden()
-            target.role = data["role"]
-        if "is_active" in data:
-            target.is_active = bool(data["is_active"])
-        if "password" in data and data["password"]:
-            if len(str(data["password"])) < settings.AUTH_MIN_PASSWORD_LENGTH:
-                return JsonResponse({"error": "password_too_short"}, status=400)
-            target.password_hash = make_password(data["password"])
         try:
-            target.save()
+            target = update_admin_account(target.pk, data, actor=acc)
+        except AccountUpdateError as exc:
+            payload = {"error": exc.code}
+            if exc.field:
+                payload["field"] = exc.field
+            return JsonResponse(payload, status=exc.status)
         except IntegrityError:
             return JsonResponse({"error": "conflict"}, status=409)
-        return JsonResponse({
+
+        resp = {
             "username": target.username,
             "email": target.email,
             "mssv": target.mssv,
             "full_name": target.full_name,
             "role": target.role,
             "is_active": target.is_active,
-        })
+        }
+        return JsonResponse(resp)
 
     if request.method == "DELETE":
         target.is_active = False
@@ -722,6 +859,55 @@ def admin_account_detail_view(request: HttpRequest, username: str):
         return JsonResponse({"status": "deactivated"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+def admin_fix_participant_identity_view(request: HttpRequest):
+    """POST: correct a roster participant's mis-typed MSSV and link its account.
+
+    Body: ``{"current_mssv": "<wrong>", "correct_mssv": "<right>"}``.
+
+    Fixes the Participant row that carries the team membership — so the account
+    holding ``correct_mssv`` can finally see its team — instead of the account's
+    own MSSV, which team resolution does not read for the roster side.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    current_mssv = str((data.get("current_mssv") or "").strip())
+    correct_mssv = str((data.get("correct_mssv") or "").strip())
+    if not current_mssv or not correct_mssv:
+        return JsonResponse({"error": "missing_fields"}, status=400)
+
+    participant, error = fix_participant_identity(
+        current_mssv, correct_mssv, actor=acc,
+    )
+    if error == "participant_not_found":
+        return JsonResponse({"error": error}, status=404)
+    if error == "missing_correct_mssv":
+        return JsonResponse({"error": "missing_fields"}, status=400)
+    if error:
+        # mssv_conflict_roster:<code> and account_link_conflict
+        return JsonResponse({"error": error}, status=409)
+
+    membership = (
+        TeamMembership.objects.filter(participant=participant)
+        .select_related("team").first()
+    )
+    return JsonResponse({
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "account_linked": bool(participant.account_id),
+        "team_code": membership.team.code if membership else None,
+        "team_name": membership.team.name if membership else None,
+    })
 
 
 # =====================================================================

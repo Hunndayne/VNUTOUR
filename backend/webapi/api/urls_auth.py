@@ -6,6 +6,7 @@ from api.views_auth import (
     register_view, signup_view, google_login_view,
     change_password_view, google_link_view,
     discord_link_view, discord_status_view,
+    forgot_password_view, reset_password_view,
 )
 
 urlpatterns = [
@@ -19,4 +20,6 @@ urlpatterns = [
     path("auth/register", register_view),
     path("auth/signup", signup_view),
     path("auth/google", google_login_view),
+    path("auth/forgot-password", forgot_password_view),
+    path("auth/reset-password", reset_password_view),
 ]

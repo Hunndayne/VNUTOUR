@@ -2,6 +2,7 @@ from django.test import TestCase
 
 from api.models import Participant, ProgramPhase, SystemSetting, Team
 from api.services.registration_service import get_schema, register_individual, register_team
+from api.services.team_service import set_max_registrations, set_registration_open
 
 
 def person(mssv: str) -> dict:
@@ -137,6 +138,18 @@ class TeamNamingRuleTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(team.name, "Doi Ngu Manh")
 
+    def test_a_full_team_cannot_reuse_an_existing_name(self):
+        Team.objects.create(code="T9001", name="Đội  Sao Mai")
+
+        team, error = register_team({
+            "team_name": " ĐỘI SAO MAI ",
+            "captain": person("SV215"),
+            "members": [person(f"SV2{i:02d}") for i in range(16, 20)],
+        })
+
+        self.assertIsNone(team)
+        self.assertEqual(error, "duplicate_team_name")
+
     def test_an_under_strength_team_may_not_choose_a_name(self):
         team, error = register_team({
             "team_name": "Ten Dat Som",
@@ -155,3 +168,79 @@ class TeamNamingRuleTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(team.name, "Pending team SV230")
+
+
+class CapacityLimitingTests(TestCase):
+    def setUp(self):
+        set_registration_open(True)
+
+    def test_individual_registration_does_not_consume_capacity(self):
+        # The cap counts members of submitted teams only. A lone registrant is
+        # not on a submitted team, so they never fill a slot — registration
+        # stays open however many register individually.
+        set_max_registrations(2)
+        for mssv in ("SV301", "SV302", "SV303"):
+            p, err = register_individual(person(mssv))
+            self.assertIsNone(err)
+            self.assertIsNotNone(p)
+
+    def test_team_registration_blocked_when_exceeding_remaining(self):
+        # A submitted team consumes one slot per member. 4 spots total.
+        set_max_registrations(4)
+
+        # A team of 2 takes 2 of the 4 slots.
+        team_a, err_a = register_team({
+            "captain": person("SV310"), "members": [person("SV311")],
+        })
+        self.assertIsNone(err_a)
+        self.assertIsNotNone(team_a)
+
+        # A team of 3 needs 3 more, but only 2 remain -> blocked.
+        team_b, err_b = register_team({
+            "captain": person("SV312"),
+            "members": [person("SV313"), person("SV314")],
+        })
+        self.assertIsNone(team_b)
+        self.assertEqual(err_b, "registration_capacity_reached")
+
+        # A team of 2 fits exactly into the 2 remaining slots.
+        team_c, err_c = register_team({
+            "captain": person("SV315"), "members": [person("SV316")],
+        })
+        self.assertIsNone(err_c)
+        self.assertIsNotNone(team_c)
+
+    def test_zero_capacity_allows_unlimited(self):
+        set_max_registrations(0)
+        p, err = register_individual(person("SV320"))
+        self.assertIsNone(err)
+        self.assertIsNotNone(p)
+
+    def test_views_return_registration_full_and_block_post(self):
+        set_max_registrations(2)
+        # A submitted team of 2 fills the cap.
+        register_team({"captain": person("SV330"), "members": [person("SV331")]})
+
+        # schema_view has registration_full = True
+        resp = self.client.get("/api/register/schema")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["registration_full"])
+
+        # POST /api/register/individual returns 403
+        resp_ind = self.client.post(
+            "/api/register/individual",
+            data=person("SV332"),
+            content_type="application/json",
+        )
+        self.assertEqual(resp_ind.status_code, 403)
+        self.assertEqual(resp_ind.json()["error"], "registration_capacity_reached")
+
+        # POST /api/register/team returns 403
+        resp_team = self.client.post(
+            "/api/register/team",
+            data={"captain": person("SV333"), "members": []},
+            content_type="application/json",
+        )
+        self.assertEqual(resp_team.status_code, 403)
+        self.assertEqual(resp_team.json()["error"], "registration_capacity_reached")
+

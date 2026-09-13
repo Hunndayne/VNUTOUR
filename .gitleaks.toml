@@ -1,0 +1,18 @@
+# gitleaks configuration for VNUTour.
+#
+# We keep the full default ruleset (useDefault = true) so real secrets - Discord bot tokens, client secrets, DB URLs with credentials, private keys, etc. - are still caught. The two adjustments below only silence confirmed false positives:
+#
+# 1. discord-client-id: a Discord *client ID* (and channel/user snowflake IDs) are PUBLIC identifiers, not secrets - the client ID is shipped in the frontend OAuth URL by design. The default rule flags them as if secret, which is pure noise (frontend/src/DiscordPage.jsx, the OAuth tests). The Discord bot token / client *secret* have their own rules and stay enabled.
+# 2. generic-api-key inside Django's auto-generated migrations: those files reference the previous migration's name/hash, which trips the entropy rule. Migrations never hold real secrets.
+
+title = "VNUTour gitleaks config"
+
+[extend]
+useDefault = true
+disabledRules = ["discord-client-id"]
+
+[allowlist]
+description = "Non-secret high-entropy strings flagged by generic rules"
+paths = [
+    '''backend/webapi/api/migrations/.*\.py''',
+]

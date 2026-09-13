@@ -1,0 +1,170 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Shared PROD app-tier configuration, applied on top of ../../base by BOTH the
+# homelab (overlays/prod) and the Linode standby (overlays/prod-standby). Keeping
+# it in one component guarantees the two zones run byte-identical app config, so
+# the only thing that can differ between them is what each overlay adds on top
+# (e.g. homelab later adds bot/email/monitoring/backup — the standby never does).
+#
+# The base carries staging defaults (hunn.io.vn, small resources); everything
+# here retargets it at the prod host and prod sizing.
+patches:
+  # --- Prod host / URLs ------------------------------------------------------
+  - target:
+      kind: ConfigMap
+      name: backend-config
+    patch: |-
+      # Point the app at the Patroni HA database via the primary-following
+      # HAProxy (pg-primary) instead of the old single-node postgres Service.
+      # The base ships DB_HOST=postgres; both prod zones now have their own
+      # pg-primary (db-patroni), so this one line retargets both.
+      - op: replace
+        path: /data/DB_HOST
+        value: pg-primary
+      - op: replace
+        path: /data/DJANGO_ALLOWED_HOSTS
+        value: vnutour.suctremmt.com,localhost,127.0.0.1
+      - op: replace
+        path: /data/WEB_BASE_URL
+        value: https://vnutour.suctremmt.com
+      - op: replace
+        path: /data/DISCORD_OAUTH_REDIRECT_URIS
+        value: https://vnutour.suctremmt.com/participant
+      # Public OAuth client IDs (safe to commit — they appear in the browser).
+      # The base leaves DISCORD_CLIENT_ID blank for staging; prod needs the real
+      # app id or the Discord connect/login flow breaks. GOOGLE_CLIENT_ID is
+      # also backed by the Secret (which wins via envFrom), but we set it here
+      # too so the ConfigMap alone is a complete, self-describing prod config.
+      - op: add
+        path: /data/DISCORD_CLIENT_ID
+        value: "1406380236303630386"
+      - op: add
+        path: /data/GOOGLE_CLIENT_ID
+        value: "447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com"
+      # Public Discord server invite (used in registration emails). Base leaves
+      # it blank for staging; prod points at the real server.
+      - op: replace
+        path: /data/DISCORD_INVITE_URL
+        value: "https://discord.gg/w9ppm8psu"
+
+  - target:
+      kind: Ingress
+      name: vnutour
+    patch: |-
+      # A frontend rollout temporarily serves old and new Vite bundles from
+      # different pods. Keep each browser on the pod that returned index.html
+      # so its hashed JS/CSS requests reach the matching bundle as well.
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1affinity
+        value: cookie
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1affinity-mode
+        value: persistent
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-name
+        value: vnutour_frontend
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-path
+        value: /
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-max-age
+        value: "600"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-samesite
+        value: Lax
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-secure
+        value: "true"
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1session-cookie-change-on-failure
+        value: "true"
+      - op: replace
+        path: /spec/rules/0/host
+        value: vnutour.suctremmt.com
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: vnutour.suctremmt.com
+
+  # --- Prod resource sizing (backend) ---------------------------------------
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 250m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 1Gi
+
+  # --- Prod serving backend: 3 replicas, spread across nodes -----------------
+  # The serving `backend` is unpinned by components/backend-ops (media/backups
+  # moved to the pinned backend-ops pod), so it can schedule on any node. Run 3
+  # replicas and spread them evenly across hosts so no single node carries the
+  # whole app tier. Soft (ScheduleAnyway) so a single-node zone (e.g. a
+  # one-node standby) still schedules all three instead of leaving pods Pending.
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: backend
+
+  # --- Prod frontend: 3 replicas, spread across nodes -----------------------
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: frontend
+
+  # --- Data-safety: never let ArgoCD prune the media volume ------------------
+  # If media-data ever falls out of Git (rename, refactor) ArgoCD with prune
+  # enabled would delete the PVC and take the data with it. Opt it out.
+  # Prod/standby provision it at 10Gi (base ships 5Gi for the disposable staging
+  # env). local-path cannot shrink a bound PVC, so Git MUST request the live size
+  # or every sync fails with "can not be less than status.capacity" and blocks
+  # the whole app (image rollout included).
+  #
+  # NOTE: postgres-data and the `postgres` StatefulSet are no longer rendered
+  # here — prod's DB is external Patroni HA, kept out of GitOps (DB HA runbook,
+  # Phase 0.5). The pre-existing live postgres objects stay running unmanaged;
+  # prune=false on the Application is what protects them once they leave Git.
+  - target:
+      kind: PersistentVolumeClaim
+      name: media-data
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-options: Prune=false
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 10Gi

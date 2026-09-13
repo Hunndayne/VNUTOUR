@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import logoImage from './assets/vnutour-logo.webp'
 import { roleHomePath } from './api.js'
+import { navigate } from './router.js'
 import { TurnstileWidget, HoneypotField } from './antibot.jsx'
 import { useFormSignals, ANTIBOT_ERROR_TEXT, ANTIBOT_ERROR_CODES } from './antibot.js'
 
@@ -146,7 +147,11 @@ function LoginPage() {
     localStorage.setItem('user', JSON.stringify(data.user))
     // Straight to the role's own screen. Going via `/` worked, but it made the
     // first thing after signing in a visible redirect off the landing page.
-    window.location.replace(roleHomePath(data.user?.role))
+    const requestedPath = new URLSearchParams(window.location.search).get('return_to') || ''
+    const safeReturnPath = requestedPath.startsWith('/join-team?')
+      ? requestedPath
+      : ''
+    window.location.replace(safeReturnPath || roleHomePath(data.user?.role))
   }, [])
 
   // ── Login ───────────────────────────────────────────────────────────
@@ -358,7 +363,7 @@ function LoginPage() {
   // ── Render helpers ──────────────────────────────────────────────────
   const inputClass = (hasErr) =>
     [
-      'w-full rounded-2xl border px-4 py-3 text-sm text-white placeholder-white/30 bg-white/[0.06] backdrop-blur transition outline-none',
+      'w-full appearance-none rounded-2xl border px-4 py-3 text-sm text-white placeholder-white/30 bg-white/[0.06] backdrop-blur transition outline-none',
       hasErr
         ? 'border-rose-400/60 focus:border-rose-400 focus:ring-2 focus:ring-rose-400/30'
         : 'border-white/15 focus:border-white/40 focus:ring-2 focus:ring-white/10',
@@ -439,7 +444,13 @@ function LoginPage() {
                   {errors.username && <p className="mt-1 text-xs text-rose-400">{errors.username}</p>}
                 </div>
                 <div>
-                  <label htmlFor="password" className={labelCls}>Mật khẩu</label>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="password" className={labelCls}>Mật khẩu</label>
+                    <button type="button" onClick={() => navigate('/forgot-password')}
+                      className="text-xs text-white/40 underline underline-offset-4 transition hover:text-white/60">
+                      Quên mật khẩu?
+                    </button>
+                  </div>
                   <input id="password" name="password" type="password" value={form.password} onChange={handleChange}
                     placeholder="Nhập mật khẩu" className={inputClass(!!errors.password)} disabled={isLoading} />
                   {errors.password && <p className="mt-1 text-xs text-rose-400">{errors.password}</p>}
