@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import logoImage from './assets/vnutour-logo.webp'
-import { apiRequest, getStoredUser, logoutAndRedirect } from './api.js'
+import { apiRequest, getStoredUser, logoutAndRedirect, roleHomePath } from './api.js'
 import FeedCard from './FeedCard.jsx'
 import { navigate } from './router.js'
 
@@ -85,7 +85,7 @@ export default function FeedPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => navigate('/participant')}
+              onClick={() => navigate(roleHomePath(user?.role))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm font-semibold text-[#20312B]/75 transition hover:bg-[#F3F4F1] hover:text-[#20312B]"
             >
               <span>←</span>

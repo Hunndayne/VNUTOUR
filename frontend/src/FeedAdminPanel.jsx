@@ -7,6 +7,7 @@ import useFeedVideoUploads from './useFeedVideoUploads.js'
 import { videoErrorMessage } from './feedVideoUpload.js'
 import { getFeedImageUrls } from './feedImages.js'
 import MarkdownPreview from './MarkdownPreview.jsx'
+import { navigate } from './router.js'
 import { Badge, CARD, Icon } from './ui.jsx'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10'
@@ -524,9 +525,15 @@ export default function FeedAdminPanel() {
             Đăng thông báo, tin tức và cập nhật sự kiện tới các đội đã được duyệt ({total} bài viết)
           </p>
         </div>
-        <button type="button" onClick={handleOpenCreate} className={PRIMARY_BTN}>
-          <span>+ Tạo bài viết mới</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => navigate('/feed')} className={SECONDARY_BTN}>
+            <Icon name="eye" className="h-4 w-4" />
+            <span>Xem trang bảng tin</span>
+          </button>
+          <button type="button" onClick={handleOpenCreate} className={PRIMARY_BTN}>
+            <span>+ Tạo bài viết mới</span>
+          </button>
+        </div>
       </div>
 
       {apiError && (
@@ -1029,6 +1036,9 @@ export default function FeedAdminPanel() {
                 const urls = getFeedImageUrls(viewingPost)
                 return urls.length > 0 ? <FeedImageCarousel images={urls} title={viewingPost.title} /> : null
               })()}
+
+              {/* Uploaded videos */}
+              <FeedVideos videos={viewingPost.videos} />
 
               {/* Markdown body */}
               <div className="border-t border-stone/50 pt-4">

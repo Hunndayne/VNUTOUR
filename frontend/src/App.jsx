@@ -29,7 +29,7 @@ const ROUTES = {
   },
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
   '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
-  '/feed': { render: () => <FeedPage />, allows: (role) => role === 'participant' },
+  '/feed': { render: () => <FeedPage />, allows: (role) => role === 'participant' || isAdminRole(role) },
 }
 
 // Paths that used to exist, kept alive so old links and bookmarks still land
