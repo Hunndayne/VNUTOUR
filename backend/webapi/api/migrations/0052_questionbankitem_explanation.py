@@ -2,7 +2,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("api", "0049_fix_schemeless_feed_image_urls")]
+    dependencies = [("api", "0051_feedcomment_parent")]
 
     operations = [
         migrations.AddField(

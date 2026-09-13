@@ -25,7 +25,7 @@
 - `POST /api/station-scan` khi checkout và `POST /api/station-sessions/exit`: thêm `submission`, chỉ thuộc phiên vừa đóng.
 - `POST /api/program/sub-events/:id/question-bank`: nhận `mode: append | replace`, mặc định `append` cho client cũ.
 - `DELETE /api/program/sub-events/:id/question-bank`: gỡ bộ câu hỏi và dọn các ID tham chiếu trong cấu hình trạm của sự kiện.
-- Cần chạy `python webapi/manage.py migrate` từ thư mục backend để áp dụng migration `0050_questionbankitem_explanation`, rồi cập nhật backend và frontend cùng nhau.
+- Cần chạy `python webapi/manage.py migrate` từ thư mục backend để áp dụng migration `0052_questionbankitem_explanation`, rồi cập nhật backend và frontend cùng nhau.
 
 ## Kiểm tra
 
