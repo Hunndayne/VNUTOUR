@@ -1030,6 +1030,9 @@ export default function FeedAdminPanel() {
                 return urls.length > 0 ? <FeedImageCarousel images={urls} title={viewingPost.title} /> : null
               })()}
 
+              {/* Uploaded videos */}
+              <FeedVideos videos={viewingPost.videos} />
+
               {/* Markdown body */}
               <div className="border-t border-stone/50 pt-4">
                 <MarkdownPreview content={viewingPost.body || ''} emptyMessage="(Không có nội dung)" allowVideos />
