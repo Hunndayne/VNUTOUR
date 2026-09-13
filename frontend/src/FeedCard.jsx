@@ -249,7 +249,7 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
 
       {/* Markdown Body */}
       <div className="my-4 text-ink leading-relaxed">
-        <MarkdownPreview content={postState.body || ''} />
+        <MarkdownPreview content={postState.body || ''} allowVideos />
       </div>
 
       {/* Reaction Bar */}

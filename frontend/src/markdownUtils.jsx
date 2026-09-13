@@ -73,6 +73,7 @@ export function stripMarkdown(markdown = '') {
   return markdown
     .replace(/\r\n/g, '\n')
     .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, ' Video ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')

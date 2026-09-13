@@ -600,9 +600,12 @@ export default function FeedAdminPanel() {
                     ref={textareaRef}
                     value={body}
                     onChange={(e) => setBody(e.target.value)}
-                    placeholder="Soạn nội dung bằng Markdown (tiêu đề ##, danh sách -, liên kết [tên](link), ảnh ![mô tả](link)...)"
+                    placeholder="Soạn Markdown; nhúng video bằng @[video](link Facebook hoặc YouTube)"
                     className={`${FIELD_CLASS} flex-1 resize-none font-mono text-xs leading-relaxed`}
                   />
+                  <p className="mt-1.5 text-[11px] text-ink/45">
+                    Video: dán riêng link Facebook/YouTube, iframe được copy, hoặc dùng @[video](link).
+                  </p>
                 </div>
 
                 {/* Post Options */}
@@ -668,7 +671,11 @@ export default function FeedAdminPanel() {
                   )}
 
                   <div className="border-t border-stone/50 pt-3">
-                    <MarkdownPreview content={body || ''} emptyMessage="Nội dung xem trước sẽ hiển thị ở đây..." />
+                    <MarkdownPreview
+                      content={body || ''}
+                      emptyMessage="Nội dung xem trước sẽ hiển thị ở đây..."
+                      allowVideos
+                    />
                   </div>
                 </div>
               </div>

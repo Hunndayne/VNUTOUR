@@ -1,7 +1,29 @@
 import { createElement } from 'react'
 import { renderInlineMarkdown } from './markdownUtils.jsx'
+import { parseVideoEmbedLine } from './videoEmbeds.js'
 
-export default function MarkdownPreview({ content, emptyMessage = 'Chưa có mô tả markdown.' }) {
+function VideoEmbed({ embed }) {
+  const providerName = embed.provider === 'youtube' ? 'YouTube' : 'Facebook'
+  return (
+    <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-stone bg-black">
+      <iframe
+        src={embed.src}
+        title={`Video ${providerName}`}
+        className="absolute inset-0 h-full w-full border-0"
+        loading="lazy"
+        allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+        referrerPolicy="strict-origin-when-cross-origin"
+        allowFullScreen
+      />
+    </div>
+  )
+}
+
+export default function MarkdownPreview({
+  content,
+  emptyMessage = 'Chưa có mô tả markdown.',
+  allowVideos = false,
+}) {
   const normalized = content.replace(/\r\n/g, '\n').trim()
   if (!normalized) {
     return <p className="text-sm italic text-ink/35">{emptyMessage}</p>
@@ -18,6 +40,7 @@ export default function MarkdownPreview({ content, emptyMessage = 'Chưa có mô
     || /^\d+\.\s+/.test(line)
     || line.trim().startsWith('```')
     || /^!\[([^\]]*)\]\(([^)]+)\)$/.test(line.trim())
+    || Boolean(allowVideos && parseVideoEmbedLine(line))
   )
 
   while (index < lines.length) {
@@ -46,6 +69,15 @@ export default function MarkdownPreview({ content, emptyMessage = 'Chưa có mô
           <code>{codeLines.join('\n')}</code>
         </pre>,
       )
+      continue
+    }
+
+    const videoEmbed = allowVideos ? parseVideoEmbedLine(trimmed) : null
+    if (videoEmbed) {
+      blocks.push(
+        <VideoEmbed key={`video-${blocks.length}`} embed={videoEmbed} />,
+      )
+      index += 1
       continue
     }
 
