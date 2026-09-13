@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiRequest } from './api.js'
 import MarkdownPreview from './MarkdownPreview.jsx'
 import FeedImageCarousel from './FeedImageCarousel.jsx'
+import FeedVideos from './FeedVideos.jsx'
 import { getFeedImageUrls } from './feedImages.js'
 import { stripMarkdown } from './markdownUtils.jsx'
 import { navigate } from './router.js'
@@ -203,6 +204,7 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
           </div>
         )}
 
+        <FeedVideos videos={postState.videos} compact />
         <p className="mt-2 text-sm leading-relaxed text-ink/70 line-clamp-3">
           {plainText}
         </p>
@@ -248,6 +250,7 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
       )}
 
       {/* Markdown Body */}
+      <FeedVideos videos={postState.videos} />
       <div className="my-4 text-ink leading-relaxed">
         <MarkdownPreview content={postState.body || ''} allowVideos />
       </div>

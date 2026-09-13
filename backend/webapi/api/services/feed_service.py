@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Count
 from django.utils import timezone
 
@@ -28,6 +29,8 @@ from api.services.submission_storage_service import (
     delete_stored_object,
     normalize_public_base_url,
 )
+
+from api.services import feed_video_service
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +73,7 @@ def _normalize_image_urls(image_urls) -> list[str]:
 
 def list_published_posts(limit: int = 10, offset: int = 0) -> tuple[list[FeedPost], int]:
     """List published posts ordered by pinned status and published date."""
-    qs = FeedPost.objects.filter(status=FeedPost.STATUS_PUBLISHED).select_related("author")
+    qs = FeedPost.objects.filter(status=FeedPost.STATUS_PUBLISHED).select_related("author").prefetch_related("videos")
     total = qs.count()
     return list(qs[offset : offset + limit]), total
 
@@ -82,11 +85,12 @@ def get_latest_published_post() -> FeedPost | None:
 
 def list_all_posts(limit: int = 20, offset: int = 0) -> tuple[list[FeedPost], int]:
     """List all posts including drafts for admin view."""
-    qs = FeedPost.objects.all().select_related("author")
+    qs = FeedPost.objects.all().select_related("author").prefetch_related("videos")
     total = qs.count()
     return list(qs[offset : offset + limit]), total
 
 
+@transaction.atomic
 def create_post(
     author: Account | None,
     title: str,
@@ -95,6 +99,7 @@ def create_post(
     image_urls: list[str] | None = None,
     status: str = FeedPost.STATUS_DRAFT,
     is_pinned: bool = False,
+    video_ids: list[int] | None = None,
 ) -> FeedPost:
     """Create a new feed post."""
     title = (title or "").strip()
@@ -110,7 +115,7 @@ def create_post(
     )
     cover = gallery[0] if gallery else ""
     published_at = timezone.now() if status == FeedPost.STATUS_PUBLISHED else None
-    return FeedPost.objects.create(
+    post = FeedPost.objects.create(
         author=author,
         title=title,
         body=body or "",
@@ -120,11 +125,14 @@ def create_post(
         is_pinned=bool(is_pinned),
         published_at=published_at,
     )
+    feed_video_service.sync_post_videos(post, video_ids if video_ids is not None else [], author)
+    return post
 
 
+@transaction.atomic
 def update_post(post_id: int, **fields) -> FeedPost:
     """Update fields on a feed post."""
-    post = FeedPost.objects.filter(id=post_id).first()
+    post = FeedPost.objects.select_for_update().filter(id=post_id).first()
     if not post:
         raise ValueError("post_not_found")
 
@@ -168,6 +176,8 @@ def update_post(post_id: int, **fields) -> FeedPost:
         update_fields.append("status")
 
     post.save(update_fields=update_fields)
+    if "video_ids" in fields:
+        feed_video_service.sync_post_videos(post, fields["video_ids"], fields.get("_video_author"))
     return post
 
 
@@ -184,6 +194,7 @@ def _urls_referenced_by_post(post: FeedPost) -> set[str]:
     return urls
 
 
+@transaction.atomic
 def delete_post(post_id: int) -> bool:
     """Delete a post and its reactions, comments, and image files.
 
@@ -192,10 +203,12 @@ def delete_post(post_id: int) -> bool:
     rows (post is NULL) whose URL the post references, which happens whenever an
     image is uploaded while composing a brand-new post (no id yet to link to).
     """
-    post = FeedPost.objects.filter(id=post_id).first()
+    post = FeedPost.objects.select_for_update().filter(id=post_id).first()
     if not post:
         raise ValueError("post_not_found")
 
+    # Abort on storage failure and retain DB records so deletion can be retried.
+    feed_video_service.delete_post_videos(post)
     images = list(FeedImage.objects.filter(post=post))
 
     referenced = _urls_referenced_by_post(post)
