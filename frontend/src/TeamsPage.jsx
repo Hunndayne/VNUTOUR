@@ -76,6 +76,7 @@ function explainApiError(error) {
     team_not_submitted: 'Chỉ có thể duyệt hoặc từ chối đội đã gửi đăng ký.',
     registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này.',
     forbidden: 'Bạn không có quyền thực hiện thao tác này.',
+    remove_failed: 'Không xóa được thành viên. Vui lòng thử lại.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu đội.'
 }
@@ -132,12 +133,15 @@ function memberStripCls(member) {
   return 'bg-stone'
 }
 
-function MemberCard({ member, isAdmin = false, onFixIdentity }) {
+function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) {
   const strip = memberStripCls(member)
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(member.mssv || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState('')
 
   const startEdit = () => {
     setValue(member.mssv || '')
@@ -148,6 +152,17 @@ function MemberCard({ member, isAdmin = false, onFixIdentity }) {
     setEditing(false)
     setSaving(false)
     setError('')
+  }
+  const confirmRemove = async () => {
+    try {
+      setRemoving(true)
+      setRemoveError('')
+      // On success the drawer reloads and this card unmounts.
+      await onRemoveMember(member.mssv)
+    } catch (err) {
+      setRemoveError(explainApiError(err) || 'Không xóa được thành viên.')
+      setRemoving(false)
+    }
   }
   const submit = async () => {
     const next = value.trim().toUpperCase()
@@ -226,16 +241,55 @@ function MemberCard({ member, isAdmin = false, onFixIdentity }) {
           </div>
         </div>
 
-        {isAdmin && onFixIdentity && (
+        {isAdmin && (onFixIdentity || onRemoveMember) && (
           <div className="mt-2 border-t border-stone/40 pt-2">
-            {!editing ? (
-              <button
-                type="button"
-                onClick={startEdit}
-                className="text-[11px] font-medium text-trail/80 underline underline-offset-2 transition hover:text-trail"
-              >
-                Sửa MSSV / nối tài khoản
-              </button>
+            {!editing && !confirmingRemove ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                {onFixIdentity && (
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    className="text-[11px] font-medium text-trail/80 underline underline-offset-2 transition hover:text-trail"
+                  >
+                    Sửa MSSV / nối tài khoản
+                  </button>
+                )}
+                {onRemoveMember && (
+                  <button
+                    type="button"
+                    onClick={() => { setRemoveError(''); setConfirmingRemove(true) }}
+                    className="text-[11px] font-medium text-clay/80 underline underline-offset-2 transition hover:text-clay"
+                  >
+                    Xóa khỏi đội
+                  </button>
+                )}
+              </div>
+            ) : confirmingRemove ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] leading-relaxed text-ink/55">
+                  Xóa <span className="font-semibold text-ink">{member.full_name || member.mssv}</span>
+                  {member.is_captain && <span className="text-clay"> (đội trưởng)</span>} khỏi đội? Điểm và lượt điểm danh gắn với đội vẫn giữ nguyên.
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={confirmRemove}
+                    disabled={removing}
+                    className="rounded-md bg-clay px-3 py-1 text-xs font-semibold text-white transition hover:bg-clay/90 disabled:opacity-60"
+                  >
+                    {removing ? 'Đang xóa...' : 'Xóa'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setConfirmingRemove(false); setRemoveError('') }}
+                    disabled={removing}
+                    className="rounded-md border border-stone bg-white px-3 py-1 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60"
+                  >
+                    Huỷ
+                  </button>
+                </div>
+                {removeError && <p className="text-[11px] leading-relaxed text-clay">{removeError}</p>}
+              </div>
             ) : (
               <div className="space-y-1.5">
                 <p className="text-[11px] leading-relaxed text-ink/45">
@@ -423,7 +477,7 @@ function DeleteTeamModal({ team, deleting, error, onClose, onConfirm }) {
   )
 }
 
-function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, onFixIdentity, isAdmin: isAdminProp }) {
+function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, onFixIdentity, onRemoveMember, isAdmin: isAdminProp }) {
   const [mode, setMode] = useState('idle')
   const [note, setNote] = useState('')
   const [teamToDelete, setTeamToDelete] = useState(null)
@@ -554,6 +608,7 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReloa
                           member={member}
                           isAdmin={isAdmin}
                           onFixIdentity={onFixIdentity}
+                          onRemoveMember={onRemoveMember}
                         />
                       ))
                     : <p className="px-4 py-5 text-sm italic text-ink/30">Đội chưa có thành viên.</p>}
@@ -1230,6 +1285,30 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
     }
   }
 
+  // Remove a single member from a team. Like handleFixIdentity, this stays
+  // outside withBusy so the member card can show its own inline spinner/error;
+  // a 401 still bounces to login.
+  const handleRemoveMember = async (mssv) => {
+    try {
+      const res = await apiRequest(
+        `/teams/${selectedId}/members/${encodeURIComponent(mssv)}`,
+        { method: 'DELETE' },
+      )
+      await loadTeams()
+      if (selectedId) {
+        const detail = await apiRequest(`/teams/${selectedId}`)
+        setSelectedTeam(mapTeamDetail(detail))
+      }
+      return res
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      throw error
+    }
+  }
+
   const loadMergeCandidates = useCallback(async () => {
     setMergeLoading(true)
     try {
@@ -1483,6 +1562,7 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
         onReject={handleReject}
         onReload={loadTeams}
         onFixIdentity={handleFixIdentity}
+        onRemoveMember={handleRemoveMember}
         isAdmin={isAdmin}
       />
 

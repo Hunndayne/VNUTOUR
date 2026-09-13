@@ -13,7 +13,7 @@ from django.db.models import Q, Count
 from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team, delete_team,
-    get_team_members, add_member, link_account_profile,
+    get_team_members, add_member, remove_member, link_account_profile,
     fix_participant_identity,
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
@@ -449,6 +449,66 @@ def team_reject_view(request: HttpRequest, team_key: str):
         "code": team.code, "approval_status": team.approval_status,
         "approval_note": team.approval_note,
     })
+
+
+@csrf_exempt
+@transaction.atomic
+def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
+    """DELETE a single member (by MSSV) from a team — admin only.
+
+    Unlike the captain roster editor, an admin may remove a member from a team
+    in any approval state (the captain path is locked once a team is submitted).
+    Removal frees the registration slot naturally by dropping the membership row;
+    the participant profile itself is kept for audit/identity continuity.
+    """
+    if request.method != "DELETE":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    try:
+        team = Team.objects.select_for_update().get(code=team_key)
+    except Team.DoesNotExist:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    normalized_mssv = (mssv or "").strip().upper()
+    membership = (
+        TeamMembership.objects.filter(team=team, participant__mssv=normalized_mssv)
+        .select_related("participant")
+        .first()
+    )
+    if not membership:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    participant = membership.participant
+    before_data = {
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "email": participant.email,
+        "is_captain": membership.is_captain,
+    }
+
+    success, remove_err = remove_member(team, normalized_mssv)
+    if not success:
+        status = 404 if remove_err == "not_found" else 400
+        return JsonResponse({"error": remove_err or "remove_failed"}, status=status)
+
+    record_audit(
+        actor=acc,
+        action="team.member.remove",
+        summary=(
+            f"Xóa thành viên {before_data['full_name'] or normalized_mssv} "
+            f"({normalized_mssv}) khỏi đội {team.code} - {team.name}"
+        ),
+        target_type="Team",
+        target_id=team.id,
+        before_data=before_data,
+        after_data=None,
+        reversible=False,
+    )
+    return JsonResponse({"status": "removed", "mssv": normalized_mssv})
 
 
 # =====================================================================
