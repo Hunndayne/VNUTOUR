@@ -1,12 +1,17 @@
 """Tests for public photo-frame endpoints — gallery and detail."""
 
 import tempfile
+import io
 from pathlib import Path
+from unittest.mock import patch
 
+from PIL import Image
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.test.client import BOUNDARY, MULTIPART_CONTENT, encode_multipart
 
-from api.models import PhotoFrame
+from api.models import Account, PhotoFrame
+from api.services.auth_service import generate_session
 from api.services import photo_frame_service
 
 
@@ -38,6 +43,40 @@ class PhotoFramePublicApiTests(TestCase):
         frame_ids = [f["id"] for f in data["frames"]]
         self.assertIn(self.active_frame.id, frame_ids)
         self.assertNotIn(self.inactive_frame.id, frame_ids)
+
+    def test_gallery_uses_image_endpoint_for_legacy_and_local_urls(self):
+        for url in ("storage.example/frames/old.png", "/media/frames/local.png"):
+            self.active_frame.image = {"url": url, "key": "frames/old.png", "storage": "r2"}
+            self.active_frame.save()
+            frame = self.client.get(f"/api/public/frames/{self.active_frame.id}").json()["frame"]
+            self.assertEqual(frame["image_url"], f"http://testserver/api/public/frames/{self.active_frame.id}/image")
+
+    def test_replace_image_with_multipart_patch(self):
+        admin = Account.objects.create(username="frame-admin", role=Account.ROLE_ADMIN, password_hash="x")
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            data = encode_multipart(BOUNDARY, {
+                "file": SimpleUploadedFile("new.png", b"new-image", content_type="image/png"),
+                "title": "Updated frame",
+            })
+            response = self.client.patch(
+                f"/api/admin/frames/{self.active_frame.id}", data=data,
+                content_type=MULTIPART_CONTENT,
+                HTTP_AUTHORIZATION=f"Bearer {generate_session(admin)}",
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+            self.active_frame.refresh_from_db()
+            self.assertEqual(self.active_frame.title, "Updated frame")
+            self.assertEqual((Path(media_root) / self.active_frame.image["key"]).read_bytes(), b"new-image")
+
+    def test_r2_frame_upload_preserves_image_dimensions(self):
+        buffer = io.BytesIO()
+        Image.new("RGBA", (32, 24)).save(buffer, format="PNG")
+        uploaded = SimpleUploadedFile("frame.png", buffer.getvalue(), content_type="image/png")
+        with patch("api.services.submission_storage_service._r2_client") as factory:
+            # Boto3's managed transfer closes the input stream after upload.
+            factory.return_value.upload_fileobj.side_effect = lambda file, *args, **kwargs: file.close()
+            frame = photo_frame_service.create_frame(uploaded, "Frame", "", True, None)
+        self.assertEqual((frame.width, frame.height), (32, 24))
 
     def test_get_public_frame_detail_success(self):
         resp = self.client.get(f"/api/public/frames/{self.active_frame.id}")

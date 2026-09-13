@@ -86,6 +86,30 @@ def _r2_client():
     )
 
 
+def _read_r2_object(client, key: str, *, metadata_only: bool = False):
+    """Read canonical keys first, then pre-normalization bucket-prefixed keys.
+
+    Old endpoints included the bucket in their path, so the same metadata key
+    was physically stored as ``bucket/key``. Only a missing object permits a
+    fallback; authorization and transport failures must not be masked.
+    """
+    from botocore.exceptions import ClientError
+
+    operation = client.head_object if metadata_only else client.get_object
+    try:
+        return key, operation(Bucket=settings.R2_BUCKET, Key=key)
+    except ClientError as exc:
+        bucket = str(settings.R2_BUCKET or "").strip("/")
+        if (
+            exc.response.get("Error", {}).get("Code") not in {"NoSuchKey", "NotFound", "404"}
+            or not bucket
+            or key.startswith(f"{bucket}/")
+        ):
+            raise
+        legacy_key = f"{bucket}/{key}"
+        return legacy_key, operation(Bucket=settings.R2_BUCKET, Key=legacy_key)
+
+
 def _allowed_extensions(attachment_config: dict) -> set[str]:
     """Parse 'JPG, PNG, PDF' style config into a lowercase extension set."""
     raw = str(attachment_config.get("allowedTypes") or "")
@@ -161,13 +185,16 @@ def delete_stored_object(storage: str | None, key: str | None) -> bool:
 
 def presigned_url(key: str, expires: int = 3600) -> str | None:
     """Generate a temporary signed GET URL for a private R2 object, or None on failure."""
+    if not key:
+        return None
     client = _r2_client()
     if client is None:
         return None
     try:
+        resolved_key, _ = _read_r2_object(client, key, metadata_only=True)
         return client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.R2_BUCKET, "Key": key},
+            Params={"Bucket": settings.R2_BUCKET, "Key": resolved_key},
             ExpiresIn=expires,
         )
     except Exception:
@@ -318,8 +345,11 @@ def frame_file_response(entry: dict):
         if client is None:
             return None
         try:
-            obj = client.get_object(Bucket=settings.R2_BUCKET, Key=key)
-            data = obj["Body"].read()
+            _, obj = _read_r2_object(client, key)
+            try:
+                data = obj["Body"].read()
+            finally:
+                obj["Body"].close()
         except Exception:
             logger.exception("failed to read frame image from R2: %s", key)
             return None
@@ -361,8 +391,11 @@ def proof_file_response(entry: dict):
         if client is None:
             return None
         try:
-            obj = client.get_object(Bucket=settings.R2_BUCKET, Key=key)
-            data = obj["Body"].read()
+            _, obj = _read_r2_object(client, key)
+            try:
+                data = obj["Body"].read()
+            finally:
+                obj["Body"].close()
         except Exception:
             logger.exception("failed to read payment proof from R2: %s", key)
             return None

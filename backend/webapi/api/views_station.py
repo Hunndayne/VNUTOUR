@@ -138,7 +138,9 @@ def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
     attachment = sub.attachment_payload or {}
     for f in (attachment.get("files") or []):
         entry = dict(f)
-        if presign and entry.get("storage") == STORAGE_R2 and not entry.get("url"):
+        if presign and entry.get("storage") == STORAGE_R2:
+            # Stored public URLs may predate endpoint/scheme normalization.
+            # Resolve the actual object key before signing private attachments.
             entry["url"] = presigned_url(entry.get("key"))
         files.append(entry)
 

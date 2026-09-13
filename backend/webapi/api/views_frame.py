@@ -5,6 +5,7 @@ Photo-frame overlay views — public gallery + downloads, admin CRUD (frames).
 from __future__ import annotations
 
 from django.http import HttpRequest, JsonResponse
+from django.http.multipartparser import MultiPartParser, MultiPartParserError
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 
@@ -149,16 +150,26 @@ def admin_frame_detail_view(request: HttpRequest, frame_id: int):
         return err
 
     if request.method == "PATCH":
-        uploaded = request.FILES.get("file")
-        if uploaded:
-            title = request.POST.get("title")
-            description = request.POST.get("description")
-            is_active_raw = request.POST.get("is_active")
+        uploaded = None
+        if request.content_type == "multipart/form-data":
+            # Django only populates POST/FILES automatically for POST requests.
+            try:
+                data, files = MultiPartParser(
+                    request.META, request, request.upload_handlers, request.encoding,
+                ).parse()
+            except MultiPartParserError:
+                return JsonResponse({"error": "invalid_multipart"}, status=400)
+            # Let request.close() release any temporary upload files.
+            request._files = files
+            uploaded = files.get("file")
+            title = data.get("title")
+            description = data.get("description")
+            is_active_raw = data.get("is_active")
             is_active = (
                 str(is_active_raw).strip().lower() in TRUTHY
                 if is_active_raw is not None else None
             )
-            sort_order_raw = request.POST.get("sort_order")
+            sort_order_raw = data.get("sort_order")
             sort_order = int(sort_order_raw) if sort_order_raw not in (None, "") else None
         else:
             data = _json_body(request)

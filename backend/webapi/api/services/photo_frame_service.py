@@ -48,14 +48,10 @@ def _image_dimensions(uploaded) -> tuple[int, int]:
 
 
 def serialize_frame(frame: PhotoFrame, request: HttpRequest | None = None, *, admin: bool = False) -> dict:
-    # Prefer the direct R2 public URL (fast, CDN-cached) stored in the image
-    # metadata; fall back to the Django proxy endpoint for local storage.
-    direct_url = (frame.image or {}).get("url", "")
-    if direct_url:
-        image_url = direct_url
-    else:
-        path = f"/api/public/frames/{frame.id}/image"
-        image_url = request.build_absolute_uri(path) if request is not None else path
+    # The proxy handles legacy R2 keys and local files, and keeps canvas
+    # rendering same-origin regardless of stale URLs in stored metadata.
+    path = f"/api/public/frames/{frame.id}/image"
+    image_url = request.build_absolute_uri(path) if request is not None else path
 
     data = {
         "id": frame.id,
@@ -82,8 +78,8 @@ def list_admin_frames():
 
 
 def create_frame(uploaded, title: str, description: str, is_active: bool, account) -> PhotoFrame:
-    entry = save_frame_image(uploaded)
     width, height = _image_dimensions(uploaded)
+    entry = save_frame_image(uploaded)
     frame = PhotoFrame.objects.create(
         title=title,
         description=description or "",
@@ -124,8 +120,8 @@ def update_frame(
     if uploaded is not None:
         if isinstance(frame.image, dict):
             old_image = frame.image
-        entry = save_frame_image(uploaded)
         width, height = _image_dimensions(uploaded)
+        entry = save_frame_image(uploaded)
         frame.image = entry
         frame.width = width
         frame.height = height
