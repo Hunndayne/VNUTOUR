@@ -98,6 +98,8 @@ def _format_comment(comment: FeedComment, team_map: dict[str, str], current_acc:
         "body": comment.body,
         "is_my_comment": bool(current_acc and comment.author_id == current_acc.id),
         "created_at": _dt_to_iso(comment.created_at),
+        "parent_id": comment.parent_id,
+        "replies": [],
     }
 
 
@@ -203,8 +205,22 @@ def participant_feed_comments_view(request: HttpRequest, post_id: int):
             offset = 0
 
         comments, total = feed_service.list_comments(post_id, limit=limit, offset=offset)
-        team_map = _build_team_map(comments)
-        payload = [_format_comment(c, team_map, acc) for c in comments]
+        
+        all_comments = list(comments)
+        for c in comments:
+            if hasattr(c, 'replies'):
+                all_comments.extend(c.replies.all())
+        team_map = _build_team_map(all_comments)
+
+        payload = []
+        for i, c in enumerate(comments):
+            formatted = _format_comment(c, team_map, acc)
+            # Attach replies
+            if hasattr(c, 'replies'):
+                reply_team_map = _build_team_map(list(c.replies.all()))
+                reply_team_map.update(team_map)
+                formatted['replies'] = [_format_comment(r, reply_team_map, acc) for r in c.replies.all()]
+            payload.append(formatted)
 
         return JsonResponse({
             "comments": payload,
@@ -216,8 +232,9 @@ def participant_feed_comments_view(request: HttpRequest, post_id: int):
     if request.method == "POST":
         data = _json_body(request)
         body = data.get("body") if data else ""
+        parent_id = data.get("parent_id") if data else None
         try:
-            comment = feed_service.create_comment(post_id, acc, body)
+            comment = feed_service.create_comment(post_id, acc, body, parent_id=parent_id)
             team_map = _build_team_map([comment])
             return JsonResponse(
                 {"comment": _format_comment(comment, team_map, acc)},

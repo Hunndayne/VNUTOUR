@@ -1417,6 +1417,10 @@ class FeedComment(models.Model):
     author = models.ForeignKey(
         Account, on_delete=models.CASCADE, related_name="feed_comments",
     )
+    parent = models.ForeignKey(
+        "self", on_delete=models.CASCADE,
+        null=True, blank=True, related_name="replies",
+    )
     body = models.TextField(max_length=1000)
     is_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

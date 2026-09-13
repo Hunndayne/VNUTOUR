@@ -44,6 +44,9 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
   const [hasMoreComments, setHasMoreComments] = useState(false)
   const [commentInput, setCommentInput] = useState('')
   const [sendingComment, setSendingComment] = useState(false)
+  const [replyingTo, setReplyingTo] = useState(null)
+  const [replyInput, setReplyInput] = useState('')
+  const [sendingReply, setSendingReply] = useState(false)
   const [reacting, setReacting] = useState(false)
 
   useEffect(() => {
@@ -162,7 +165,21 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
       await apiRequest(`/feed/${postState.id}/comments/${commentId}`, {
         method: 'DELETE',
       })
-      setComments((prev) => prev.filter((c) => c.id !== commentId))
+      // Check if it's a reply (exists in some comment's replies array)
+      let isReply = false
+      setComments((prev) =>
+        prev.map((c) => {
+          const replyIndex = (c.replies || []).findIndex((r) => r.id === commentId)
+          if (replyIndex !== -1) {
+            isReply = true
+            return { ...c, replies: c.replies.filter((r) => r.id !== commentId) }
+          }
+          return c
+        }).filter((c) => {
+          if (!isReply && c.id === commentId) return false
+          return true
+        }),
+      )
       const updated = {
         ...postState,
         comment_count: Math.max(0, (postState.comment_count || 0) - 1),
@@ -171,6 +188,40 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
       if (onPostUpdated) onPostUpdated(updated)
     } catch {
       // ignore
+    }
+  }
+
+  const handleSendReply = async (parentComment) => {
+    const trimmed = replyInput.trim()
+    if (!trimmed || sendingReply || !postState?.id) return
+    setSendingReply(true)
+    try {
+      const res = await apiRequest(`/feed/${postState.id}/comments`, {
+        method: 'POST',
+        body: { body: trimmed, parent_id: parentComment.id },
+      })
+      if (res.comment) {
+        // Add reply under the parent comment
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === parentComment.id
+              ? { ...c, replies: [...(c.replies || []), res.comment] }
+              : c,
+          ),
+        )
+        setReplyingTo(null)
+        setReplyInput('')
+        const updated = {
+          ...postState,
+          comment_count: (postState.comment_count || 0) + 1,
+        }
+        setPostState(updated)
+        if (onPostUpdated) onPostUpdated(updated)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSendingReply(false)
     }
   }
 
@@ -308,32 +359,117 @@ export default function FeedCard({ post, compact = false, onPostUpdated }) {
         {comments.length > 0 ? (
           <div className="space-y-3 divide-y divide-[#DCD8CC]/40">
             {comments.map((comment) => (
-              <div key={comment.id} className="pt-3 first:pt-0">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5">
-                    {comment.team_name && (
-                      <span className="font-bold text-[#1F7A6B]">{comment.team_name}</span>
+              <div key={comment.id} className="pt-3 first:pt-0 space-y-2">
+                {/* Top-level comment */}
+                <div>
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5">
+                      {comment.team_name && (
+                        <span className="font-bold text-[#1F7A6B]">{comment.team_name}</span>
+                      )}
+                      {comment.team_name && comment.author_name && <span>•</span>}
+                      {comment.author_name && (
+                        <span className="font-medium text-ink/80">{comment.author_name}</span>
+                      )}
+                      <span>•</span>
+                      <span className="text-ink/40">{formatRelativeTime(comment.created_at)}</span>
+                    </div>
+                    {comment.is_my_comment && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteComment(comment.id)}
+                        className="text-[#D6492B] hover:underline"
+                      >
+                        Xoá
+                      </button>
                     )}
-                    {comment.team_name && comment.author_name && <span>•</span>}
-                    {comment.author_name && (
-                      <span className="font-medium text-ink/80">{comment.author_name}</span>
-                    )}
-                    <span>•</span>
-                    <span className="text-ink/40">{formatRelativeTime(comment.created_at)}</span>
                   </div>
-                  {comment.is_my_comment && (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteComment(comment.id)}
-                      className="text-[#D6492B] hover:underline"
-                    >
-                      Xoá
-                    </button>
-                  )}
+                  <p className="mt-1 text-sm text-ink/85 whitespace-pre-line leading-relaxed">
+                    {comment.body}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplyingTo(replyingTo === comment.id ? null : comment.id)
+                      setReplyInput('')
+                    }}
+                    className="mt-1.5 text-xs font-semibold text-[#1F7A6B] hover:underline"
+                  >
+                    Trả lời
+                  </button>
                 </div>
-                <p className="mt-1 text-sm text-ink/85 whitespace-pre-line leading-relaxed">
-                  {comment.body}
-                </p>
+
+                {/* Replies */}
+                {(comment.replies || []).length > 0 && (
+                  <div className="ml-5 space-y-2 border-l-2 border-[#DCD8CC]/50 pl-4">
+                    {comment.replies.map((reply) => (
+                      <div key={reply.id}>
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5">
+                            {reply.team_name && (
+                              <span className="font-bold text-[#1F7A6B]">{reply.team_name}</span>
+                            )}
+                            {reply.team_name && reply.author_name && <span>•</span>}
+                            {reply.author_name && (
+                              <span className="font-medium text-ink/80">{reply.author_name}</span>
+                            )}
+                            <span>•</span>
+                            <span className="text-ink/40">{formatRelativeTime(reply.created_at)}</span>
+                          </div>
+                          {reply.is_my_comment && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteComment(reply.id)}
+                              className="text-[#D6492B] hover:underline"
+                            >
+                              Xoá
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-1 text-sm text-ink/85 whitespace-pre-line leading-relaxed">
+                          {reply.body}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Reply input */}
+                {replyingTo === comment.id && (
+                  <div className="ml-5 pl-4">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        handleSendReply(comment)
+                      }}
+                      className="flex gap-2"
+                    >
+                      <input
+                        type="text"
+                        value={replyInput}
+                        onChange={(e) => setReplyInput(e.target.value)}
+                        placeholder={`Trả lời ${comment.author_name || ''}...`}
+                        maxLength={1000}
+                        className="flex-1 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/30 px-2.5 py-2 text-sm text-ink placeholder-ink/40 transition focus:border-[#1F7A6B] focus:bg-white focus:outline-none"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        disabled={!replyInput.trim() || sendingReply}
+                        className={TRAIL_BUTTON}
+                      >
+                        {sendingReply ? '...' : 'Gửi'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setReplyingTo(null); setReplyInput('') }}
+                        className="rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm font-semibold text-ink/70 transition hover:bg-[#F3F4F1]"
+                      >
+                        Huỷ
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
             ))}
 
