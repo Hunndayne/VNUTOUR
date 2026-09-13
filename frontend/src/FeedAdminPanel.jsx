@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiRequest, formatDateTime } from './api.js'
 import { compressImage } from './imageCompress.js'
 import FeedImageCarousel from './FeedImageCarousel.jsx'
+import FeedVideos from './FeedVideos.jsx'
+import useFeedVideoUploads from './useFeedVideoUploads.js'
+import { videoErrorMessage } from './feedVideoUpload.js'
 import { getFeedImageUrls } from './feedImages.js'
 import MarkdownPreview from './MarkdownPreview.jsx'
 import { Badge, CARD, Icon } from './ui.jsx'
@@ -31,6 +34,12 @@ export default function FeedAdminPanel() {
   const [uploadingBodyImg, setUploadingBodyImg] = useState(false)
   const [savingPost, setSavingPost] = useState(false)
   const [editorError, setEditorError] = useState('')
+  const videoUploads = useFeedVideoUploads(setEditorError)
+
+  const handleCloseEditor = async () => {
+    if (savingPost || uploadingGallery || uploadingBodyImg) return
+    if (await videoUploads.discard()) setIsEditorOpen(false)
+  }
 
   // Comment management modal state
   const [isCommentModalOpen, setIsCommentModalOpen] = useState(false)
@@ -42,6 +51,7 @@ export default function FeedAdminPanel() {
   // Delete post modal state
   const [postToDelete, setPostToDelete] = useState(null)
   const [deletingPost, setDeletingPost] = useState(false)
+  const [deletePostError, setDeletePostError] = useState('')
 
   const textareaRef = useRef(null)
   const galleryInputRef = useRef(null)
@@ -71,6 +81,7 @@ export default function FeedAdminPanel() {
     setTitle('')
     setBody('')
     setImageUrls([])
+    videoUploads.reset()
     setStatus('draft')
     setIsPinned(false)
     setEditorError('')
@@ -83,6 +94,7 @@ export default function FeedAdminPanel() {
     setTitle(post.title || '')
     setBody(post.body || '')
     setImageUrls(getFeedImageUrls(post))
+    videoUploads.reset(post.videos || [])
     setStatus(post.status || 'draft')
     setIsPinned(Boolean(post.is_pinned))
     setEditorError('')
@@ -199,6 +211,7 @@ export default function FeedAdminPanel() {
   // Save post (create or update)
   const handleSavePost = async (e) => {
     e.preventDefault()
+    if (videoUploads.busy) return
     if (!title.trim()) {
       setEditorError('Vui lòng nhập tiêu đề bài viết.')
       return
@@ -211,6 +224,7 @@ export default function FeedAdminPanel() {
         title: title.trim(),
         body: body || '',
         image_urls: imageUrls,
+        video_ids: videoUploads.videos.map((video) => video.id),
         status,
         is_pinned: isPinned,
       }
@@ -227,10 +241,11 @@ export default function FeedAdminPanel() {
         })
       }
 
+      videoUploads.saved()
       setIsEditorOpen(false)
       fetchPosts()
     } catch (err) {
-      setEditorError(err?.message || 'Có lỗi xảy ra khi lưu bài viết.')
+      setEditorError(err?.message?.startsWith('video_') ? videoErrorMessage(err) : err?.message || 'Có lỗi xảy ra khi lưu bài viết.')
     } finally {
       setSavingPost(false)
     }
@@ -250,12 +265,13 @@ export default function FeedAdminPanel() {
   const handleDeletePost = async () => {
     if (!postToDelete) return
     setDeletingPost(true)
+    setDeletePostError('')
     try {
       await apiRequest(`/admin/feed/${postToDelete.id}`, { method: 'DELETE' })
       setPostToDelete(null)
       fetchPosts()
-    } catch {
-      setApiError('Xoá bài viết thất bại.')
+    } catch (error) {
+      setDeletePostError(error?.message === 'video_delete_failed' ? videoErrorMessage(error) : 'Xoá bài viết thất bại.')
     } finally {
       setDeletingPost(false)
     }
@@ -371,7 +387,7 @@ export default function FeedAdminPanel() {
                             </div>
                           ) : (
                             <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded bg-stone/40 text-xs text-ink/30 font-mono">
-                              No img
+                              {post.videos?.length ? `▶ ${post.videos.length} video` : 'No img'}
                             </div>
                           )}
                           <div className="min-w-0 max-w-xs">
@@ -435,7 +451,7 @@ export default function FeedAdminPanel() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setPostToDelete(post)}
+                          onClick={() => { setDeletePostError(''); setPostToDelete(post) }}
                           className="rounded p-1 text-clay/70 hover:bg-clay/10 hover:text-clay"
                           title="Xoá bài viết"
                         >
@@ -462,7 +478,8 @@ export default function FeedAdminPanel() {
               </h3>
               <button
                 type="button"
-                onClick={() => setIsEditorOpen(false)}
+                onClick={handleCloseEditor}
+                disabled={videoUploads.busy || savingPost}
                 className="rounded-lg p-1.5 text-ink/40 hover:bg-stone/30 hover:text-ink"
               >
                 ✕
@@ -573,6 +590,38 @@ export default function FeedAdminPanel() {
                   )}
                 </div>
 
+                <div className="space-y-2.5">
+                  <label className={LABEL_CLASS}>Video bài viết</label>
+                  <p className="text-xs text-ink/50">MP4 hoặc WebM, tối đa 100 MB/file. Video đã đăng được xóa khỏi R2 khi bạn gỡ video và lưu bài, hoặc xóa bài.</p>
+                  <input
+                    type="file"
+                    accept="video/mp4,video/webm,.mp4,.webm"
+                    aria-label="Tải video bảng tin, tối đa 100 MB"
+                    disabled={videoUploads.busy || savingPost}
+                    className="block w-full text-sm text-ink/70 file:mr-3 file:rounded-lg file:border file:border-stone file:bg-paper file:px-3 file:py-2"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      videoUploads.upload(file)
+                    }}
+                  />
+                  {videoUploads.busy && (
+                    <div className="space-y-1" role="status">
+                      <progress value={videoUploads.progress} max="100" className="w-full accent-trail" />
+                      <div className="flex items-center justify-between text-xs text-ink/60">
+                        <span>Đang xử lý video… {videoUploads.progress}%</span>
+                        <button type="button" onClick={videoUploads.cancel} className="text-clay">Dừng tải lên</button>
+                      </div>
+                    </div>
+                  )}
+                  {videoUploads.videos.map((video) => (
+                    <div key={video.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone p-3 text-xs">
+                      <span className="min-w-0 truncate">{video.name} · {(video.size / 1024 / 1024).toFixed(1)} MB</span>
+                      <button type="button" disabled={videoUploads.busy || savingPost} onClick={() => videoUploads.remove(video)} className="shrink-0 text-clay disabled:opacity-40">Gỡ video</button>
+                    </div>
+                  ))}
+                </div>
+
                 {/* Body editor */}
                 <div className="flex-1 flex flex-col min-h-[220px]">
                   <div className="flex items-center justify-between mb-1.5">
@@ -671,6 +720,7 @@ export default function FeedAdminPanel() {
                   )}
 
                   <div className="border-t border-stone/50 pt-3">
+                    <FeedVideos videos={videoUploads.videos} />
                     <MarkdownPreview
                       content={body || ''}
                       emptyMessage="Nội dung xem trước sẽ hiển thị ở đây..."
@@ -685,7 +735,8 @@ export default function FeedAdminPanel() {
             <div className="flex items-center justify-end gap-3 border-t border-stone px-6 py-3.5 bg-paper">
               <button
                 type="button"
-                onClick={() => setIsEditorOpen(false)}
+                onClick={handleCloseEditor}
+                disabled={videoUploads.busy || savingPost}
                 className={SECONDARY_BTN}
               >
                 Huỷ
@@ -693,7 +744,7 @@ export default function FeedAdminPanel() {
               <button
                 type="button"
                 onClick={handleSavePost}
-                disabled={savingPost}
+                disabled={savingPost || videoUploads.busy || uploadingGallery || uploadingBodyImg}
                 className={PRIMARY_BTN}
               >
                 {savingPost ? 'Đang lưu...' : status === 'published' ? 'Xuất bản' : 'Lưu bản nháp'}
@@ -789,6 +840,7 @@ export default function FeedAdminPanel() {
             <p className="text-sm text-ink/70">
               Bạn có chắc chắn muốn xoá bài viết &quot;<strong className="text-ink">{postToDelete.title}</strong>&quot;? Mọi tương tác và bình luận liên quan cũng sẽ bị xoá vĩnh viễn.
             </p>
+            {deletePostError && <p role="alert" className="text-sm text-clay">{deletePostError}</p>}
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"

@@ -1,6 +1,7 @@
 """Feed / Announcement URL routes."""
 
 from django.urls import path
+from api.views_feed_video import video_upload_view
 from api.views_feed import (
     admin_feed_delete_comment_view,
     admin_feed_detail_update_delete_view,
@@ -28,6 +29,9 @@ urlpatterns = [
     path("feed/<int:post_id>/comments/<int:comment_id>/", participant_feed_delete_comment_view),
 
     # Admin Feed
+    path("admin/feed/videos", video_upload_view),
+    path("admin/feed/videos/<int:video_id>", video_upload_view),
+    path("admin/feed/videos/<int:video_id>/parts/<int:part_number>", video_upload_view),
     path("admin/feed", admin_feed_list_create_view),
     path("admin/feed/", admin_feed_list_create_view),
     path("admin/feed/upload-image", admin_feed_upload_image_view),

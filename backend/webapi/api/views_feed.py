@@ -7,6 +7,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from api.models import Account, FeedComment, FeedPost, Team, TeamMembership
 from api.services import feed_service
+from api.services.feed_video_service import VideoStorageError, serialize_video
 from .views_shared import (
     _auth_or_401,
     _dt_to_iso,
@@ -59,6 +60,7 @@ def _format_post(post: FeedPost, reactions: dict, comment_count: int) -> dict:
         "body": post.body,
         "cover_image_url": post.cover_image_url,
         "image_urls": image_urls,
+        "videos": [serialize_video(video) for video in post.videos.all() if video.state == "ready"],
         "status": post.status,
         "is_pinned": post.is_pinned,
         "author_name": author_name,
@@ -299,6 +301,7 @@ def admin_feed_list_create_view(request: HttpRequest):
                 image_urls=data.get("image_urls"),
                 status=data.get("status", FeedPost.STATUS_DRAFT),
                 is_pinned=data.get("is_pinned", False),
+                video_ids=data.get("video_ids"),
             )
             reactions = feed_service.get_reaction_summary(post.id, account=acc)
             return JsonResponse(
@@ -329,11 +332,14 @@ def admin_feed_detail_update_delete_view(request: HttpRequest, post_id: int):
 
     if request.method == "PUT":
         data = _json_body(request) or {}
+        data["_video_author"] = acc
         try:
             post = feed_service.update_post(post_id, **data)
             reactions = feed_service.get_reaction_summary(post.id, account=acc)
             comment_count = feed_service.get_comment_count(post.id)
             return JsonResponse({"post": _format_post(post, reactions, comment_count)})
+        except VideoStorageError as e:
+            return JsonResponse({"error": str(e)}, status=503)
         except ValueError as e:
             msg = str(e)
             if msg == "post_not_found":
@@ -344,6 +350,8 @@ def admin_feed_detail_update_delete_view(request: HttpRequest, post_id: int):
         try:
             feed_service.delete_post(post_id)
             return JsonResponse({"ok": True})
+        except VideoStorageError as e:
+            return JsonResponse({"error": str(e)}, status=503)
         except ValueError:
             return JsonResponse({"error": "not_found"}, status=404)
 
