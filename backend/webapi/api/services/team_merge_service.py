@@ -19,8 +19,8 @@ from collections import Counter
 from django.db import transaction
 
 from api.models import (
-    CaptainVote, EventCheckIn, Participant, ScoreEntry, StationSession,
-    StationSubmission, ProgramPhase, Team, TeamMembership,
+    CaptainVote, EventCheckIn, Participant, PendingDeprovision, ScoreEntry,
+    StationSession, StationSubmission, ProgramPhase, Team, TeamMembership,
 )
 from api.services.registration_service import get_schema
 
@@ -94,6 +94,39 @@ def can_merge_group(teams: list[Team]) -> str | None:
     return None
 
 
+def _queue_discord_resync(target: Team, sources: list[Team]) -> None:
+    """Make Discord follow a merge: drop the source teams, rebuild the target.
+
+    Merging is only offered for approved teams, and approval is what provisions
+    a team on Discord — so every merge leaves behind a role and a pair of
+    channels for each source team, and a target whose roster and name no longer
+    match what the guild shows.
+
+    Deleting the source rows through the ORM bypasses `delete_team()`, which is
+    the only place that queues Discord cleanup, and there is no post_delete
+    signal to catch it. So queue the cleanup here, while the ids are still
+    readable, and put the target back in the provisioning queue so the bot
+    renames its role/channels, moves everyone onto the surviving role and
+    re-syncs nicknames.
+
+    Deleting a role removes it from every member holding it, which is what
+    lifts the source teams' roles off the members who just moved across.
+    """
+    PendingDeprovision.objects.bulk_create([
+        PendingDeprovision(
+            discord_role_id=team.discord_role_id,
+            text_channel_id=team.text_channel_id,
+            voice_channel_id=team.voice_channel_id,
+            team_code=team.code,
+        )
+        for team in sources
+        if any([team.discord_role_id, team.text_channel_id, team.voice_channel_id])
+    ])
+
+    target.provision_state = Team.PROVISION_PENDING
+    target.provision_last_error = None
+
+
 @transaction.atomic
 def merge_team_group(team_codes: list[str]) -> tuple[Team | None, str | None, list[str]]:
     """Merge two or more teams without exceeding the maximum roster size.
@@ -142,6 +175,7 @@ def merge_team_group(team_codes: list[str]) -> tuple[Team | None, str | None, li
     TeamMembership.objects.filter(team__in=teams).update(is_captain=False)
     TeamMembership.objects.filter(team__in=sources).update(team=target)
     CaptainVote.objects.filter(team__in=teams).delete()
+    _queue_discord_resync(target, sources)
     Team.objects.filter(id__in=[team.id for team in sources]).delete()
 
     target.name = target.code
@@ -149,7 +183,10 @@ def merge_team_group(team_codes: list[str]) -> tuple[Team | None, str | None, li
     # The merge reshapes the roster and opens a ballot; the payment-confirm
     # lock described a team shape that no longer exists.
     target.roster_locked_at = None
-    target.save(update_fields=["name", "owner_account", "roster_locked_at", "updated_at"])
+    target.save(update_fields=[
+        "name", "owner_account", "roster_locked_at",
+        "provision_state", "provision_last_error", "updated_at",
+    ])
     target.refresh_from_db()
     target.merged_from_codes = source_codes
     target.merge_before = before
@@ -174,6 +211,7 @@ def merge_teams(source: Team, target: Team) -> Team:
     CaptainVote.objects.filter(team__in=[source, target]).delete()
 
     source_code = source.code
+    _queue_discord_resync(target, [source])
     source.delete()
 
     # The code is the one label that is certainly still true after a merge; any
@@ -183,7 +221,10 @@ def merge_teams(source: Team, target: Team) -> Team:
     # The merge reshapes the roster and opens a ballot; the payment-confirm
     # lock described a team shape that no longer exists.
     target.roster_locked_at = None
-    target.save(update_fields=["name", "owner_account", "roster_locked_at", "updated_at"])
+    target.save(update_fields=[
+        "name", "owner_account", "roster_locked_at",
+        "provision_state", "provision_last_error", "updated_at",
+    ])
     target.refresh_from_db()
     target.merged_from_code = source_code  # transient, for the caller's audit line
     return target

@@ -473,10 +473,12 @@ function isTeamNamed(team) {
   return Boolean(team?.team_name) && !team?.name_is_placeholder
 }
 
-function getStepState(step, profile, team, members, fields) {
+function getStepState(step, profile, team, members, fields, profilePersisted = true) {
   const status = team?.approval_status
   const done = {
-    profile: isProfileComplete(profile, fields),
+    // Values typed into the form are not enough to create a team: the backend
+    // reads Account.mssv, which only changes after /me/profile accepts the save.
+    profile: profilePersisted && isProfileComplete(profile, fields),
     team: Boolean(team?.roster_size_final) && (team?.can_name ? isTeamNamed(team) : true),
     members: members.length > 0,
     payment: Boolean(team?.has_payment_proof),
@@ -492,13 +494,21 @@ function getStepState(step, profile, team, members, fields) {
   return 'idle'
 }
 
-function getNextAction(profile, team, members, fields, editable = true) {
+function getNextAction(profile, team, members, fields, editable = true, profilePersisted = true) {
   const missingProfileFields = getMissingProfileFields(profile, fields)
   if (missingProfileFields.length > 0) {
     return {
       title: 'Hoàn thiện thông tin đội trưởng',
       body: `Còn thiếu ${missingProfileFields.map((field) => field.label).join(', ')}. Bổ sung ngay trong danh sách thành viên.`,
       action: 'Bổ sung thông tin',
+      kind: 'profile',
+    }
+  }
+  if (!profilePersisted) {
+    return {
+      title: 'Lưu thông tin đội trưởng',
+      body: 'Thông tin đã điền đủ nhưng chưa được lưu. Hãy lưu trước khi tạo đội.',
+      action: 'Lưu thông tin',
       kind: 'profile',
     }
   }
@@ -1594,6 +1604,8 @@ function ParticipantDashboard() {
   })
   const [profile, setProfile] = useState(EMPTY_PROFILE)
   const [profileSaved, setProfileSaved] = useState(false)
+  const [profilePersisted, setProfilePersisted] = useState(false)
+  const [profileDirty, setProfileDirty] = useState(false)
   // Profile-save feedback lives next to the captain form, not in the page-level
   // apiError, so a "missing Trường/CCCD" reason is visible right at the button.
   const [profileError, setProfileError] = useState('')
@@ -1654,6 +1666,8 @@ function ParticipantDashboard() {
       // members come back at "self" visibility rather than the thinner "basic".
       setUser((current) => ({ ...current, ...me }))
       setProfile(normalizeProfile(me, profilePayload))
+      setProfilePersisted(Boolean(profilePayload?.profile_complete))
+      setProfileDirty(false)
       const normalizedTeam = normalizeTeam(teamPayload)
       setTeam(normalizedTeam)
       // A placeholder name ("Pending team <mssv>") is server bookkeeping, not a
@@ -1782,10 +1796,11 @@ function ParticipantDashboard() {
     [profile, personFields],
   )
   const profileComplete = missingProfileFields.length === 0
+  const profileReady = profileComplete && profilePersisted
   const profilePanelOpen = profileDetailsOpen
   const nextAction = useMemo(
-    () => getNextAction(profile, team, members, personFields, editable),
-    [profile, team, members, personFields, editable],
+    () => getNextAction(profile, team, members, personFields, editable, profilePersisted),
+    [profile, team, members, personFields, editable, profilePersisted],
   )
   const captainIndex = members.findIndex((member) => member.is_captain)
   const myMssv = profile.mssv || user.mssv || ''
@@ -1813,8 +1828,10 @@ function ParticipantDashboard() {
   // This is what keeps member editing off the Thanh toán screen — you navigate
   // back to the Thành viên step for that.
   const stepStates = useMemo(
-    () => Object.fromEntries(STEPS.map((s) => [s.key, getStepState(s, profile, team, members, personFields)])),
-    [profile, team, members, personFields],
+    () => Object.fromEntries(STEPS.map((s) => [s.key, getStepState(
+      s, profile, team, members, personFields, profilePersisted,
+    )])),
+    [profile, team, members, personFields, profilePersisted],
   )
   // Once the captain confirmed the roster for payment, its steps are closed:
   // the amount was computed from that roster, so editing it afterwards — even
@@ -1859,8 +1876,7 @@ function ParticipantDashboard() {
   // fallback tracks live data. Leaving the param out is what let the team
   // record appearing (or the roster growing) recompute `currentStepKey` under
   // the user and yank them to a later step, e.g. straight to Thanh toán.
-  const gotoStep = (key) => {
-    if (!stepUnlocked(key)) return
+  const writeStepToUrl = (key) => {
     pendingStepScroll.current = key
     const params = new URLSearchParams(window.location.search)
     params.set('step', key)
@@ -1876,6 +1892,11 @@ function ParticipantDashboard() {
         })
       })
     }
+  }
+
+  const gotoStep = (key) => {
+    if (!stepUnlocked(key)) return
+    writeStepToUrl(key)
   }
 
   // `useEnumSearchParam`'s fallback is `currentStepKey`, recomputed on every
@@ -1903,7 +1924,7 @@ function ParticipantDashboard() {
   const teamAutoCreated = useRef(false)
   useEffect(() => {
     if (teamAutoCreated.current) return
-    if (loading || !registrationOpen || !profileComplete) return
+    if (loading || !registrationOpen || !profileReady) return
     if (activeStep !== 'members' || team) return
     teamAutoCreated.current = true
     withBusy('create-team', async () => {
@@ -1916,7 +1937,7 @@ function ParticipantDashboard() {
       }
       await loadDashboard()
     })
-  }, [activeStep, team, loading, registrationOpen, profileComplete])
+  }, [activeStep, team, loading, registrationOpen, profileReady])
 
   // Adding a member means typing MSSV, email and whatever the schema asks for,
   // five times over. The dialog is not a `useDraftState` because the parent
@@ -2152,8 +2173,14 @@ function ParticipantDashboard() {
     }
   })
 
+  const patchProfile = (patch) => {
+    setProfile((current) => ({ ...current, ...patch }))
+    setProfileDirty(true)
+    setProfileSaved(false)
+  }
+
   const saveProfile = async (event) => {
-    event.preventDefault()
+    event?.preventDefault?.()
     // Catch empty required fields (e.g. Trường not picked, CCCD blank) before
     // the request so the reason lands at the button instead of a rejected save
     // that reads as "nothing happened".
@@ -2171,6 +2198,8 @@ function ParticipantDashboard() {
       })
       const updatedProfile = { ...profile, ...nextProfile }
       setProfile(updatedProfile)
+      setProfilePersisted(true)
+      setProfileDirty(false)
       if (isProfileComplete(updatedProfile, personFields)) setProfileDetailsOpen(false)
       setProfileSaved(true)
       window.setTimeout(() => setProfileSaved(false), 1400)
@@ -2178,15 +2207,26 @@ function ParticipantDashboard() {
       if (inviteToken && updatedProfile.mssv) {
         window.location.replace(`/join-team?token=${encodeURIComponent(inviteToken)}`)
       }
+      return true
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
-        return
+        return false
       }
       setProfileError(explainApiError(error))
+      return false
     } finally {
       setBusyAction('')
     }
+  }
+
+  const continueFromProfile = async () => {
+    if (!profileComplete) return
+    if ((profileDirty || !profilePersisted) && !(await saveProfile())) return
+    // The state update from saveProfile lands on the next render. Write the URL
+    // directly here so the successful save and the explicit Continue click are
+    // one action; the normal gotoStep guard would still see the previous render.
+    writeStepToUrl('members')
   }
 
   const saveMember = async (event) => {
@@ -2521,14 +2561,15 @@ function ParticipantDashboard() {
                         saved={profileSaved}
                         saving={busyAction === 'save-profile'}
                         error={profileError}
-                        onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                        onPatch={patchProfile}
                         onSave={saveProfile}
                       />
                     </div>
                     <div className="mt-5">
                       <StepNav
-                        onNext={() => gotoStep('members')}
-                        nextDisabled={!profileComplete}
+                        onNext={continueFromProfile}
+                        nextLabel={busyAction === 'save-profile' ? 'Đang lưu...' : 'Tiếp tục'}
+                        nextDisabled={!profileComplete || busyAction === 'save-profile'}
                         hint={!profileComplete ? 'Cần điền đủ thông tin hồ sơ để sang bước tiếp theo.' : undefined}
                       />
                     </div>
@@ -2974,7 +3015,7 @@ function ParticipantDashboard() {
                       saved={profileSaved}
                       saving={busyAction === 'save-profile'}
                       error={profileError}
-                      onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                      onPatch={patchProfile}
                       onSave={saveProfile}
                     />
                   </div>
@@ -3052,7 +3093,7 @@ function ParticipantDashboard() {
                           saved={profileSaved}
                           saving={busyAction === 'save-profile'}
                           error={profileError}
-                          onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                          onPatch={patchProfile}
                           onSave={saveProfile}
                         />
                       )}

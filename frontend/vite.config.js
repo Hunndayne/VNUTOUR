@@ -1,6 +1,25 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Cloudflare Rocket Loader rewrites `type="module"` into a placeholder type and
+// re-loads the script with its own loader, which cannot handle ES modules: the
+// hashed bundle comes back ERR_ABORTED 404 and the app never boots. The
+// documented opt-out is `data-cfasync="false"` on the tag, but Vite drops
+// unknown attributes from the entry <script> when it rewrites index.html, so
+// the attribute has to be re-applied to the tags Vite emits.
+function cloudflareRocketLoaderOptOut() {
+  return {
+    name: 'cloudflare-rocket-loader-opt-out',
+    enforce: 'post',
+    transformIndexHtml(html) {
+      return html.replace(
+        /<script(?![^>]*\sdata-cfasync=)/g,
+        '<script data-cfasync="false"',
+      )
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // In dev, short links (/s/<code>) are served by Django just like the API,
@@ -9,7 +28,7 @@ export default defineConfig(({ mode }) => {
   const backend = env.VITE_API_BASE_URL || 'http://backend:8000'
 
   return {
-    plugins: [react()],
+    plugins: [react(), cloudflareRocketLoaderOptOut()],
     build: {
       target: ['es2015', 'safari13'],
       cssTarget: ['safari13'],
