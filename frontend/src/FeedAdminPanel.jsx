@@ -56,6 +56,7 @@ export default function FeedAdminPanel() {
   const textareaRef = useRef(null)
   const galleryInputRef = useRef(null)
   const bodyImgInputRef = useRef(null)
+  const videoInputRef = useRef(null)
 
   const fetchPosts = useCallback(async () => {
     setLoading(true)
@@ -594,17 +595,26 @@ export default function FeedAdminPanel() {
                   <label className={LABEL_CLASS}>Video bài viết</label>
                   <p className="text-xs text-ink/50">MP4 hoặc WebM, tối đa 100 MB/file. Video đã đăng được xóa khỏi R2 khi bạn gỡ video và lưu bài, hoặc xóa bài.</p>
                   <input
+                    ref={videoInputRef}
                     type="file"
                     accept="video/mp4,video/webm,.mp4,.webm"
-                    aria-label="Tải video bảng tin, tối đa 100 MB"
-                    disabled={videoUploads.busy || savingPost}
-                    className="block w-full text-sm text-ink/70 file:mr-3 file:rounded-lg file:border file:border-stone file:bg-paper file:px-3 file:py-2"
+                    className="hidden"
                     onChange={(event) => {
                       const file = event.target.files?.[0]
                       event.target.value = ''
                       videoUploads.upload(file)
                     }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => videoInputRef.current?.click()}
+                    disabled={videoUploads.busy || savingPost}
+                    aria-label="Tải video bảng tin, tối đa 100 MB"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-trail/40 bg-trail/[0.04] px-4 py-3 text-sm font-semibold text-trail transition hover:border-trail/70 hover:bg-trail/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <span className="text-lg leading-none">+</span>
+                    {videoUploads.busy ? 'Đang tải video lên...' : 'Chọn video'}
+                  </button>
                   {videoUploads.busy && (
                     <div className="space-y-1" role="status">
                       <progress value={videoUploads.progress} max="100" className="w-full accent-trail" />
