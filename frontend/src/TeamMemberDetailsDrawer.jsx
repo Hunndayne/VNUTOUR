@@ -216,7 +216,7 @@ export default function TeamMemberDetailsDrawer({ mssv, onClose }) {
 
           <p className="flex items-start gap-2 px-1 text-xs leading-5 text-[#20312B]/45">
             <Icon name="check" className="mt-0.5 h-4 w-4 shrink-0 text-[#1F7A6B]" />
-            Thông tin được mã hóa khi truyền và chỉ giải mã trong lần xem này.
+            Thông tin đã được mã hóa
           </p>
         </>}
       </div>
