@@ -101,6 +101,8 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = os.getenv("MEDIA_ROOT", str(BASE_DIR / "media"))
 
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+# S3 account endpoint only (no /bucket suffix). The storage client also strips
+# an accidentally duplicated bucket path defensively.
 R2_ENDPOINT_URL = os.getenv(
     "R2_ENDPOINT_URL",
     f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "",

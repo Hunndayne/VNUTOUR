@@ -11,6 +11,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 from django.http import FileResponse, HttpResponse
@@ -43,6 +44,25 @@ def normalize_public_base_url(value: str | None) -> str:
     return base_url
 
 
+def normalize_r2_endpoint_url(value: str | None, bucket: str | None) -> str:
+    """Remove a duplicated bucket path from an R2 account endpoint.
+
+    Boto3 receives the bucket separately. Configuring both an endpoint ending
+    in ``/bucket`` and ``Bucket=bucket`` silently stores objects under a second
+    ``bucket/`` key prefix, while the public URL still points at the intended
+    key. Cloudflare's canonical S3 endpoint therefore ends at the account host.
+    """
+    endpoint_url = str(value or "").strip().rstrip("/")
+    bucket_name = str(bucket or "").strip().strip("/")
+    if not endpoint_url or not bucket_name:
+        return endpoint_url
+
+    parts = urlsplit(endpoint_url)
+    if parts.path.rstrip("/") == f"/{bucket_name}":
+        return urlunsplit((parts.scheme, parts.netloc, "", parts.query, parts.fragment))
+    return endpoint_url
+
+
 def _r2_client():
     """Return a configured boto3 S3 client for R2, or None when unavailable."""
     if not (
@@ -59,7 +79,7 @@ def _r2_client():
         return None
     return boto3.client(
         "s3",
-        endpoint_url=settings.R2_ENDPOINT_URL,
+        endpoint_url=normalize_r2_endpoint_url(settings.R2_ENDPOINT_URL, settings.R2_BUCKET),
         aws_access_key_id=settings.R2_ACCESS_KEY_ID,
         aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
         region_name="auto",
