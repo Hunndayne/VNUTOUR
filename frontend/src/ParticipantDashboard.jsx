@@ -1648,7 +1648,23 @@ function ParticipantDashboard() {
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [confirmPaymentLoading, setConfirmPaymentLoading] = useState(false)
   const [confirmPaymentError, setConfirmPaymentError] = useState('')
-  const [latestPost, setLatestPost] = useState(null)
+  const [feedPosts, setFeedPosts] = useState([])
+  const [feedIdx, setFeedIdx] = useState(0)
+
+  // Rotate the pinned-post teaser: 10s for text/image posts, 30s for posts
+  // with a video (so the muted autoplay has time to run).
+  useEffect(() => {
+    setFeedIdx(0)
+  }, [feedPosts])
+  useEffect(() => {
+    if (feedPosts.length <= 1) return undefined
+    const current = feedPosts[feedIdx] || feedPosts[0]
+    const hasVideo = (current?.videos?.length || 0) > 0
+    const timer = setTimeout(() => {
+      setFeedIdx((i) => (i + 1) % feedPosts.length)
+    }, hasVideo ? 30000 : 10000)
+    return () => clearTimeout(timer)
+  }, [feedPosts, feedIdx])
   const [teamInvite, setTeamInvite] = useState(null)
   const [inviteNotice, setInviteNotice] = useState('')
 
@@ -1684,13 +1700,17 @@ function ParticipantDashboard() {
 
       if (normalizedTeam?.approval_status === 'approved') {
         try {
-          const feedRes = await apiRequest('/feed/latest')
-          setLatestPost(feedRes?.post || null)
+          const feedRes = await apiRequest('/feed?limit=20&offset=0')
+          const posts = feedRes?.posts || []
+          const pinned = posts.filter((p) => p.is_pinned)
+          // Rotate through the pinned posts when there are several; otherwise
+          // just show the top post like before.
+          setFeedPosts(pinned.length >= 2 ? pinned : posts.slice(0, 1))
         } catch {
-          setLatestPost(null)
+          setFeedPosts([])
         }
       } else {
-        setLatestPost(null)
+        setFeedPosts([])
       }
       setDashboardReady(true)
     } catch (error) {
@@ -2493,7 +2513,7 @@ function ParticipantDashboard() {
               />
             )}
             {/* Feed Announcement Card for approved teams */}
-            {team?.approval_status === 'approved' && latestPost && (
+            {team?.approval_status === 'approved' && feedPosts.length > 0 && (
               <section className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h2 className="font-display text-lg font-bold text-ink sm:text-xl">Bảng tin Ban tổ chức</h2>
@@ -2508,7 +2528,24 @@ function ParticipantDashboard() {
                     Xem tất cả →
                   </a>
                 </div>
-                <FeedCard post={latestPost} compact />
+                {(() => {
+                  const activePost = feedPosts[feedIdx] || feedPosts[0]
+                  return <FeedCard key={activePost.id} post={activePost} compact />
+                })()}
+                {feedPosts.length > 1 && (
+                  <div className="flex justify-center gap-1.5 pt-1">
+                    {feedPosts.map((p, i) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setFeedIdx(i)}
+                        aria-label={`Bài ghim ${i + 1}`}
+                        aria-current={i === feedIdx}
+                        className={`h-1.5 rounded-full transition-all ${i === feedIdx ? 'w-5 bg-trail' : 'w-1.5 bg-ink/20 hover:bg-ink/40'}`}
+                      />
+                    ))}
+                  </div>
+                )}
               </section>
             )}
 
