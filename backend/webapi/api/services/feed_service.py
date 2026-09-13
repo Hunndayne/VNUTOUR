@@ -9,7 +9,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Prefetch
 from django.utils import timezone
 
 from api.models import (
@@ -392,12 +392,16 @@ def toggle_reaction(post_id: int, account: Account, reaction_type: str) -> dict:
 
 def list_comments(post_id: int, limit: int = 50, offset: int = 0) -> tuple[list[FeedComment], int]:
     """List non-deleted comments for a post, newest first."""
-    qs = FeedComment.objects.filter(post_id=post_id, is_deleted=False).select_related("author")
-    total = qs.count()
+    qs = FeedComment.objects.filter(post_id=post_id, is_deleted=False, parent__isnull=True).select_related("author").prefetch_related(
+        Prefetch('replies', queryset=FeedComment.objects.filter(is_deleted=False).select_related('author').order_by('created_at'))
+    )
+    # Only top-level comments are paginated here (replies ride along via the
+    # prefetch), so the total that drives "load more" must count them alone.
+    total = FeedComment.objects.filter(post_id=post_id, is_deleted=False, parent__isnull=True).count()
     return list(qs[offset : offset + limit]), total
 
 
-def create_comment(post_id: int, author: Account, body: str) -> FeedComment:
+def create_comment(post_id: int, author: Account, body: str, parent_id: int | None = None) -> FeedComment:
     """Create a new comment on a post."""
     post = FeedPost.objects.filter(id=post_id).first()
     if not post:
@@ -409,15 +413,28 @@ def create_comment(post_id: int, author: Account, body: str) -> FeedComment:
     if len(body) > 1000:
         raise ValueError("comment_too_long")
 
+    parent_comment = None
+    if parent_id is not None:
+        parent_comment = FeedComment.objects.filter(id=parent_id).first()
+        if not parent_comment:
+            raise ValueError("parent_not_found")
+        if parent_comment.post_id != post_id:
+            raise ValueError("parent_belongs_to_different_post")
+        if parent_comment.is_deleted:
+            raise ValueError("parent_is_deleted")
+        if parent_comment.parent_id is not None:
+            raise ValueError("parent_must_be_top_level")
+
     return FeedComment.objects.create(
         post=post,
         author=author,
         body=body,
+        parent=parent_comment,
     )
 
 
 def delete_comment(comment_id: int, by_account: Account) -> FeedComment:
-    """Soft delete a comment if caller is author or admin."""
+    """Soft delete a comment (and, for a top-level one, its replies) if caller is author or admin."""
     comment = FeedComment.objects.filter(id=comment_id).first()
     if not comment:
         raise ValueError("comment_not_found")
@@ -426,8 +443,16 @@ def delete_comment(comment_id: int, by_account: Account) -> FeedComment:
     if not is_admin and comment.author_id != by_account.id:
         raise PermissionError("forbidden")
 
-    comment.is_deleted = True
-    comment.save(update_fields=["is_deleted", "updated_at"])
+    with transaction.atomic():
+        comment.is_deleted = True
+        comment.save(update_fields=["is_deleted", "updated_at"])
+        # Deleting a top-level comment removes its whole thread; soft-delete the
+        # replies too so they are not left counted-but-invisible (list_comments
+        # only surfaces replies under a non-deleted parent).
+        if comment.parent_id is None:
+            comment.replies.filter(is_deleted=False).update(
+                is_deleted=True, updated_at=timezone.now(),
+            )
     return comment
 
 
