@@ -3,6 +3,7 @@ import logoImage from './assets/vnutour-logo.webp'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, getStoredUser, logoutAndRedirect } from './api.js'
 import { navigate } from './router.js'
+import TeamMemberDetailsDrawer from './TeamMemberDetailsDrawer.jsx'
 
 const COLORS = {
   paper: '#F3F4F1',
@@ -113,6 +114,7 @@ export default function TeamDetailsPage() {
   const [payload, setPayload] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedMemberMssv, setSelectedMemberMssv] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -121,7 +123,7 @@ export default function TeamDetailsPage() {
       try {
         setLoading(true)
         setError('')
-        const result = await apiRequest('/my-team', { signal: controller.signal, cache: 'no-store' })
+        const result = await apiRequest('/my-team?view=summary', { signal: controller.signal, cache: 'no-store' })
         setPayload(result)
       } catch (requestError) {
         if (requestError?.name === 'AbortError') return
@@ -260,11 +262,18 @@ export default function TeamDetailsPage() {
 
               <section className={`${CARD} px-5 py-6 sm:px-7`}>
                 <h2 className="font-display text-xl font-bold text-[#20312B]">Thành viên</h2>
+                <p className="mt-1 text-sm text-[#20312B]/50">Nhấn vào một thành viên để xem thông tin liên hệ và tình trạng tài khoản.</p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   {members.map((member) => {
                     const isMe = String(member.mssv || '').toLowerCase() === String(user?.mssv || '').toLowerCase()
                     return (
-                      <article key={member.mssv} className="flex min-w-0 items-center gap-3 rounded-lg bg-[#F3F4F1]/75 px-4 py-3.5">
+                      <button
+                        key={member.mssv}
+                        type="button"
+                        onClick={() => setSelectedMemberMssv(member.mssv)}
+                        className="group flex min-w-0 items-center gap-3 rounded-lg border border-transparent bg-[#F3F4F1]/75 px-4 py-3.5 text-left transition hover:border-[#1F7A6B]/25 hover:bg-[#1F7A6B]/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1F7A6B] focus-visible:ring-offset-2 active:scale-[0.99]"
+                        aria-label={`Xem chi tiết thành viên ${member.full_name || member.mssv}`}
+                      >
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#20312B]/[0.08] text-xs font-bold text-[#20312B]/65">
                           {initials(member.full_name)}
                         </div>
@@ -281,7 +290,8 @@ export default function TeamDetailsPage() {
                             {member.school && <span> · {member.school}</span>}
                           </p>
                         </div>
-                      </article>
+                        <Icon name="chevronR" className="h-4 w-4 shrink-0 text-[#20312B]/25 transition group-hover:translate-x-0.5 group-hover:text-[#1F7A6B]" />
+                      </button>
                     )
                   })}
                 </div>
@@ -289,6 +299,12 @@ export default function TeamDetailsPage() {
             </>
           )}
         </main>
+      )}
+      {selectedMemberMssv && (
+        <TeamMemberDetailsDrawer
+          mssv={selectedMemberMssv}
+          onClose={() => setSelectedMemberMssv('')}
+        />
       )}
     </div>
   )

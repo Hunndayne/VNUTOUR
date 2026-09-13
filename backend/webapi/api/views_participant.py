@@ -7,6 +7,7 @@ from pathlib import Path
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import never_cache
 from django.db import IntegrityError, transaction
 from django.db.models import Count
 from django.utils import timezone
@@ -27,6 +28,8 @@ from api.services.submission_storage_service import (
     delete_stored_object, save_submission_files, save_payment_proof, proof_file_response,
 )
 from api.services.payment_service import build_payment_info
+from api.services.account_detail_encryption import encrypt_account_details, load_browser_public_key
+from api.services.audit_service import record_audit
 from api.services.timo_service import confirm_team_payment_via_timo, is_timo_configured
 from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
@@ -652,7 +655,14 @@ def my_team_view(request: HttpRequest):
             },
             "members": get_team_members(
                 team,
-                visibility="captain" if membership.is_captain else "self",
+                # The standalone participant team page only needs roster
+                # identity. Contact fields are fetched separately through the
+                # encrypted click-to-view endpoint below.
+                visibility=(
+                    "basic" if request.GET.get("view") == "summary"
+                    else "captain" if membership.is_captain
+                    else "self"
+                ),
                 requester=acc,
             ),
             "editable": team_is_editable(team),
@@ -1301,6 +1311,95 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         return JsonResponse({"status": "removed", "mssv": target_mssv})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+@never_cache
+def my_team_member_private_details_view(request: HttpRequest, mssv: str):
+    """Return the requested teammate dossier in an encrypted response.
+
+    Every team member may inspect the small contact dossier requested by the
+    participant UI, but only for somebody on their own team.  The list endpoint
+    remains intentionally sparse; private contact data is fetched only after an
+    explicit click and never has a plaintext fallback.
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if len(request.body) > 4096:
+        return JsonResponse({"error": "invalid_public_key"}, status=400)
+
+    data = _json_body(request)
+    if not isinstance(data, dict):
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    try:
+        public_key = load_browser_public_key(data.get("public_key"))
+    except ValueError:
+        return JsonResponse({"error": "invalid_public_key"}, status=400)
+
+    requester_membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not requester_membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    target_mssv = (mssv or "").strip().upper()
+    target_membership = TeamMembership.objects.filter(
+        team=requester_membership.team,
+        participant__mssv=target_mssv,
+    ).select_related("participant", "participant__account").first()
+    if not target_membership:
+        # Do not reveal whether that MSSV exists in another team.
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    # Reuse the canonical account-linking/status policy, then select only the
+    # fields this participant-facing view is allowed to disclose.
+    member = next(
+        (
+            item for item in get_team_members(requester_membership.team, visibility="full")
+            if item["mssv"] == target_mssv
+        ),
+        None,
+    )
+    if member is None:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    participant = target_membership.participant
+    payload = {
+        "member": {
+            "full_name": member.get("full_name"),
+            "mssv": member.get("mssv"),
+            "school": member.get("school"),
+            "faculty": member.get("faculty"),
+            "facebook": member.get("facebook"),
+            "phone": member.get("phone"),
+            "is_captain": bool(target_membership.is_captain),
+        },
+        "accounts": {
+            "discord": {
+                "connected": bool(member.get("discord_id")),
+                "username": participant.discord_username or None,
+            },
+            "web": {
+                "connected": bool(member.get("has_account")),
+            },
+        },
+    }
+    encrypted = encrypt_account_details(payload, public_key, username=target_mssv)
+    record_audit(
+        actor=acc,
+        action="team.member_details_viewed",
+        summary="Viewed encrypted teammate details",
+        target_type="participant",
+        target_id=participant.pk,
+    )
+    response = JsonResponse(encrypted)
+    response["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 def my_team_qr_view(request: HttpRequest):

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { fetchEncryptedAccountDetails, saveEncryptedAccountDetails } from '../src/accountDetailsCrypto.js'
+import {
+  fetchEncryptedAccountDetails,
+  fetchEncryptedTeamMemberDetails,
+  saveEncryptedAccountDetails,
+} from '../src/accountDetailsCrypto.js'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const python = process.env.TEST_PYTHON || fileURLToPath(new URL('../../backend/.venv/Scripts/python.exe', import.meta.url))
@@ -30,6 +34,21 @@ test('Web Crypto decrypts a real Python backend response using a fresh key per r
   assert.deepEqual(await fetchEncryptedAccountDetails(username, request), payload)
   assert.deepEqual(await fetchEncryptedAccountDetails(username, request), payload)
   assert.notEqual(publicKeys[0], publicKeys[1])
+})
+
+test('team member details use the same authenticated encryption on the team-scoped endpoint', async () => {
+  const mssv = 'SV002'
+  const memberPayload = {
+    member: { mssv, full_name: 'Tran Target', phone: '0901234567' },
+    accounts: { discord: { connected: true }, web: { connected: true } },
+  }
+  const result = await fetchEncryptedTeamMemberDetails(mssv, async (path, options) => {
+    assert.equal(path, `/my-team/members/${mssv}/details`)
+    assert.equal(options.method, 'POST')
+    assert.equal(options.cache, 'no-store')
+    return encryptWithBackend({ ...options.body, username: mssv, payload: memberPayload })
+  })
+  assert.deepEqual(result, memberPayload)
 })
 
 test('rejects plaintext, corrupted ciphertext, wrong account and replay to another key', async () => {
