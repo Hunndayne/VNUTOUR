@@ -10,7 +10,7 @@ function decodeBase64Url(value) {
   return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0))
 }
 
-export async function fetchEncryptedAccountDetails(username, request, { signal } = {}) {
+async function fetchEncryptedDetails(subject, path, request, { signal } = {}) {
   if (!globalThis.crypto?.subtle) throw new Error('secure_browser_required')
   const keys = await crypto.subtle.generateKey({
     name: 'RSA-OAEP', modulusLength: 2048,
@@ -18,7 +18,7 @@ export async function fetchEncryptedAccountDetails(username, request, { signal }
   }, false, ['wrapKey', 'unwrapKey'])
   checkAborted(signal)
   const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keys.publicKey))
-  const envelope = await request(`/admin/accounts/${encodeURIComponent(username)}/details`, {
+  const envelope = await request(path, {
     method: 'POST', cache: 'no-store', signal,
     body: { public_key: btoa(String.fromCharCode(...spki)) },
   })
@@ -30,7 +30,7 @@ export async function fetchEncryptedAccountDetails(username, request, { signal }
     const [protectedHeader, wrappedKey, iv, ciphertext, tag] = parts
     const header = JSON.parse(new TextDecoder().decode(decodeBase64Url(protectedHeader)))
     if (header.alg !== 'RSA-OAEP-256' || header.enc !== 'A256GCM'
-        || header.typ !== TYPE || header.account !== username || header.crit) throw new Error()
+        || header.typ !== TYPE || header.account !== subject || header.crit) throw new Error()
     const nonce = decodeBase64Url(iv)
     const authTag = decodeBase64Url(tag)
     if (nonce.length !== 12 || authTag.length !== 16) throw new Error()
@@ -55,6 +55,24 @@ export async function fetchEncryptedAccountDetails(username, request, { signal }
   } catch {
     throw new Error('invalid_encrypted_response')
   }
+}
+
+export function fetchEncryptedAccountDetails(username, request, options = {}) {
+  return fetchEncryptedDetails(
+    username,
+    `/admin/accounts/${encodeURIComponent(username)}/details`,
+    request,
+    options,
+  )
+}
+
+export function fetchEncryptedTeamMemberDetails(mssv, request, options = {}) {
+  return fetchEncryptedDetails(
+    mssv,
+    `/my-team/members/${encodeURIComponent(mssv)}/details`,
+    request,
+    options,
+  )
 }
 
 function encodeBase64Url(value) {
