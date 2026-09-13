@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,11 +18,20 @@ WORKDIR /app
 # We intentionally track the distro's current ffmpeg/libopus0; pinning apt
 # versions breaks the build on every base-image refresh (Debian drops old
 # versions from the mirror) for no security gain here.
+# Explicitly refresh the base/runtime packages flagged by the image scan.
+# Installing ffmpeg alone can leave already-installed vulnerable versions in
+# place, blocking backend deployment while the frontend has already rolled out.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ffmpeg \
        libopus0 \
+       gzip \
+       perl-base \
+       libsqlite3-0 \
+       libpcre2-8-0 \
+       libmbedcrypto16 \
+       libglib2.0-0t64 \
     && rm -rf /var/lib/apt/lists/* \
     && addgroup --system app \
     && adduser --system --ingroup app app
