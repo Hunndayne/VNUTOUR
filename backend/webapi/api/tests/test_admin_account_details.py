@@ -105,7 +105,11 @@ class AdminAccountDetailsTests(TestCase):
         self.assertEqual(self.request().status_code, 401)
 
     def test_malformed_weak_and_non_rsa_keys_fail_closed(self):
-        weak = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        # This deliberately weak key verifies that production validation rejects it.
+        weak = rsa.generate_private_key(  # nosec B505
+            public_exponent=65537,
+            key_size=1024,
+        )
         elliptic = ec.generate_private_key(ec.SECP256R1())
         for key in (None, '', 'not-base64', 'a' * 3000, 123, self.encode_key(weak.public_key()), self.encode_key(elliptic.public_key())):
             with self.subTest(key_type=type(key).__name__):
