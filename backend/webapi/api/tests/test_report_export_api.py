@@ -25,6 +25,9 @@ class ReportExportApiTests(TestCase):
             full_name="Nguyen Van A",
             school="UIT",
             cccd="012345678901",
+            email="a@example.com",
+            phone="0900000000",
+            faculty="KHMT",
         )
         TeamMembership.objects.create(
             team=team,
@@ -33,7 +36,7 @@ class ReportExportApiTests(TestCase):
         )
         self.token = generate_session(self.admin)
 
-    def test_admin_can_export_valid_xlsx_without_private_identity_fields(self):
+    def test_admin_can_export_valid_xlsx_with_full_member_identity(self):
         response = self.client.get(
             "/api/admin/reports/export.xlsx",
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
@@ -51,4 +54,9 @@ class ReportExportApiTests(TestCase):
             self.assertIn("SV001", teams_xml)
             self.assertIn("Nguyen Van A", teams_xml)
             self.assertIn("UIT", teams_xml)
-            self.assertNotIn("012345678901", teams_xml)
+            # Full personal info is exported, including sensitive identity
+            # fields the organisers asked to include.
+            self.assertIn("012345678901", teams_xml)
+            self.assertIn("a@example.com", teams_xml)
+            self.assertIn("0900000000", teams_xml)
+            self.assertIn("KHMT", teams_xml)

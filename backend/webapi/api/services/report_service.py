@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from defusedxml import ElementTree as DefusedET
 from django.conf import settings
 from django.utils import timezone
 
@@ -76,7 +77,7 @@ def _set_cell_value(cell: ET.Element, value) -> None:
 
 
 def _populate_data_sheet(xml_bytes: bytes, rows: list[list]) -> bytes:
-    root = ET.fromstring(xml_bytes)
+    root = DefusedET.fromstring(xml_bytes)
     sheet_data = root.find(Q("sheetData"))
     template_rows = list(sheet_data)
     header = copy.deepcopy(template_rows[0])
@@ -128,7 +129,7 @@ def _populate_data_sheet(xml_bytes: bytes, rows: list[list]) -> bytes:
 
 
 def _populate_summary(xml_bytes: bytes, values: dict[str, object]) -> bytes:
-    root = ET.fromstring(xml_bytes)
+    root = DefusedET.fromstring(xml_bytes)
     cells = {
         cell.get("r"): cell
         for cell in root.findall(f".//{Q('c')}")
@@ -146,31 +147,34 @@ def build_operations_report(*, phase_key: str | None = None) -> bytes:
         "memberships__participant",
     ).order_by("code")
     team_rows = []
+    empty_member = ["", "", "", "", "", "", "", "", "", ""]
     for team in teams:
         memberships = list(team.memberships.all())
+        team_columns = [
+            team.code,
+            team.name,
+            team.approval_status,
+            team.is_late_registration,
+        ]
         if not memberships:
-            team_rows.append([
-                team.code,
-                team.name,
-                team.approval_status,
-                team.is_late_registration,
-                "",
-                "",
-                "",
-                False,
-            ])
+            team_rows.append([*team_columns, False, *empty_member])
             continue
         for membership in memberships:
             participant = membership.participant
+            dob = participant.date_of_birth
             team_rows.append([
-                team.code,
-                team.name,
-                team.approval_status,
-                team.is_late_registration,
+                *team_columns,
+                membership.is_captain,
                 participant.mssv,
                 participant.full_name,
+                dob.strftime("%d/%m/%Y") if dob else "",
+                participant.email or "",
+                participant.phone or "",
+                participant.cccd or "",
                 participant.school or "",
-                membership.is_captain,
+                participant.faculty or "",
+                participant.facebook or "",
+                participant.discord_username or "",
             ])
 
     checkins = EventCheckIn.objects.select_related(
