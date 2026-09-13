@@ -12,7 +12,7 @@ from django.db import IntegrityError, transaction
 
 from api.models import (
     Account, Participant, Team, TeamMembership, ProgramPhase, PhaseRoster, SystemSetting,
-    MssvLinkAudit, PendingDeprovision,
+    MssvLinkAudit, PendingDeprovision, CaptainVote,
 )
 from api.services import registration_emails
 
@@ -598,16 +598,55 @@ def update_member(
     return p, None
 
 
+def _open_captain_election(team: Team) -> None:
+    """Reset a team to the leaderless, ballot-open state a fresh merge leaves.
+
+    Mirrors ``team_merge_service`` post-merge reset (minus the roster move and
+    Discord rebuild): every remaining membership loses its captain flag, any
+    half-finished ballot is cleared, and the team drops the captain-only name
+    and owner so the members re-elect a leader. The ballot re-opens on its own
+    once a team has no captain and more than one member (see
+    ``my_team_captain_vote_view``). The payment roster lock described the old
+    shape and is released too.
+    """
+    TeamMembership.objects.filter(team=team).update(is_captain=False)
+    CaptainVote.objects.filter(team=team).delete()
+
+    updates = []
+    if team.name != team.code:
+        team.name = team.code
+        updates.append("name")
+    if team.owner_account_id is not None:
+        team.owner_account = None
+        updates.append("owner_account")
+    if team.roster_locked_at is not None:
+        team.roster_locked_at = None
+        updates.append("roster_locked_at")
+    if updates:
+        team.save(update_fields=updates + ["updated_at"])
+
+
 def remove_member(team: Team, mssv: str) -> Tuple[bool, Optional[str]]:
-    """Remove a participant from a team. Returns (success, error_code)."""
+    """Remove a participant from a team. Returns (success, error_code).
+
+    Removing the captain reshapes the team, so it is reset to the same
+    leaderless, ballot-open state a fresh merge produces — the team drops its
+    captain-chosen name and owner and re-opens the captain election. See
+    ``_open_captain_election``.
+    """
     mssv = (mssv or "").strip().upper()
     try:
-        deleted, _ = TeamMembership.objects.filter(
-            team=team, participant__mssv=mssv,
-        ).delete()
-        if deleted:
-            return True, None
-        return False, "not_found"
+        with transaction.atomic():
+            membership = TeamMembership.objects.filter(
+                team=team, participant__mssv=mssv,
+            ).first()
+            if not membership:
+                return False, "not_found"
+            was_captain = membership.is_captain
+            membership.delete()
+            if was_captain:
+                _open_captain_election(team)
+        return True, None
     except Exception as e:
         return False, str(e)
 

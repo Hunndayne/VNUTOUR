@@ -269,6 +269,9 @@ function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) 
                 <p className="text-[11px] leading-relaxed text-ink/55">
                   Xóa <span className="font-semibold text-ink">{member.full_name || member.mssv}</span>
                   {member.is_captain && <span className="text-clay"> (đội trưởng)</span>} khỏi đội? Điểm và lượt điểm danh gắn với đội vẫn giữ nguyên.
+                  {member.is_captain && (
+                    <> Đội sẽ về trạng thái như mới ghép: tên đội trở lại mã đội, mở lại bầu đội trưởng cho các thành viên còn lại.</>
+                  )}
                 </p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button

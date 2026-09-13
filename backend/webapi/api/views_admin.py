@@ -483,11 +483,15 @@ def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
         return JsonResponse({"error": "not_found"}, status=404)
 
     participant = membership.participant
+    was_captain = membership.is_captain
+    # Capture the name before removal: dropping the captain resets the team name
+    # back to its code (leaderless teams keep their code as their name).
+    team_name_before = team.name
     before_data = {
         "mssv": participant.mssv,
         "full_name": participant.full_name,
         "email": participant.email,
-        "is_captain": membership.is_captain,
+        "is_captain": was_captain,
     }
 
     success, remove_err = remove_member(team, normalized_mssv)
@@ -500,7 +504,8 @@ def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
         action="team.member.remove",
         summary=(
             f"Xóa thành viên {before_data['full_name'] or normalized_mssv} "
-            f"({normalized_mssv}) khỏi đội {team.code} - {team.name}"
+            f"({normalized_mssv}) khỏi đội {team.code} - {team_name_before}"
+            + (" (đội trưởng — mở lại bầu đội trưởng)" if was_captain else "")
         ),
         target_type="Team",
         target_id=team.id,
@@ -508,7 +513,11 @@ def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
         after_data=None,
         reversible=False,
     )
-    return JsonResponse({"status": "removed", "mssv": normalized_mssv})
+    return JsonResponse({
+        "status": "removed",
+        "mssv": normalized_mssv,
+        "captain_removed": was_captain,
+    })
 
 
 # =====================================================================

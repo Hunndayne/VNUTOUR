@@ -3,6 +3,7 @@ from django.test import TestCase
 from api.models import (
     Account,
     AuditLog,
+    CaptainVote,
     Participant,
     Team,
     TeamMembership,
@@ -110,17 +111,71 @@ class AdminRemoveMemberApiTests(TestCase):
         self.assertEqual(log.before_data["full_name"], "Member P")
         self.assertFalse(log.before_data["is_captain"])
 
-    def test_remove_captain_allowed(self):
-        team = self._team_with_two_members(code="T2003")
+    def test_remove_captain_reopens_election(self):
+        # A named, owned, roster-locked approved team with a captain + 2 members.
+        team = Team.objects.create(
+            code="T2003", name="Nhóm Bão Táp", approval_status=Team.APPROVAL_APPROVED
+        )
+        cap_acc = Account.objects.create(
+            username="cap_acc", email="cap@example.com", password_hash="x",
+            role=Account.ROLE_PARTICIPANT, mssv="SV0002",
+        )
+        team.owner_account = cap_acc
+        from django.utils import timezone
+        team.roster_locked_at = timezone.now()
+        team.save()
+        captain = Participant.objects.create(
+            mssv="SV0002", full_name="Captain P", email="cap@example.com", account=cap_acc
+        )
+        m2 = Participant.objects.create(mssv="SV0003", full_name="Member Two", email="m2@example.com")
+        m3 = Participant.objects.create(mssv="SV0004", full_name="Member Three", email="m3@example.com")
+        TeamMembership.objects.create(team=team, participant=captain, is_captain=True)
+        TeamMembership.objects.create(team=team, participant=m2, is_captain=False)
+        TeamMembership.objects.create(team=team, participant=m3, is_captain=False)
+        # A stale ballot from before must be wiped so a fresh election opens.
+        CaptainVote.objects.create(team=team, voter=m2, candidate=captain)
 
         resp = self.client.delete(
             f"/api/teams/{team.code}/members/SV0002", **self._auth(self.admin_token)
         )
         self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["captain_removed"])
+
+        # Captain gone; team is now leaderless.
         self.assertFalse(
-            TeamMembership.objects.filter(
-                team=team, participant__mssv="SV0002"
-            ).exists()
+            TeamMembership.objects.filter(team=team, participant__mssv="SV0002").exists()
+        )
+        self.assertFalse(TeamMembership.objects.filter(team=team, is_captain=True).exists())
+
+        # Reset to the freshly-merged state: name -> code, no owner, no roster lock,
+        # ballot cleared. Remaining members stay.
+        team.refresh_from_db()
+        self.assertEqual(team.name, team.code)
+        self.assertIsNone(team.owner_account_id)
+        self.assertIsNone(team.roster_locked_at)
+        self.assertEqual(CaptainVote.objects.filter(team=team).count(), 0)
+        self.assertEqual(TeamMembership.objects.filter(team=team).count(), 2)
+
+    def test_remove_non_captain_does_not_reset_team(self):
+        team = Team.objects.create(
+            code="T2009", name="Giữ Nguyên Tên", approval_status=Team.APPROVAL_APPROVED
+        )
+        captain = Participant.objects.create(mssv="SV0002", full_name="Captain P", email="cap@example.com")
+        member = Participant.objects.create(mssv="SV0003", full_name="Member P", email="member@example.com")
+        TeamMembership.objects.create(team=team, participant=captain, is_captain=True)
+        TeamMembership.objects.create(team=team, participant=member, is_captain=False)
+
+        resp = self.client.delete(
+            f"/api/teams/{team.code}/members/SV0003", **self._auth(self.admin_token)
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["captain_removed"])
+
+        team.refresh_from_db()
+        # Name and captaincy untouched when a non-captain is removed.
+        self.assertEqual(team.name, "Giữ Nguyên Tên")
+        self.assertTrue(
+            TeamMembership.objects.filter(team=team, participant__mssv="SV0002", is_captain=True).exists()
         )
 
     def test_remove_member_not_on_team(self):
