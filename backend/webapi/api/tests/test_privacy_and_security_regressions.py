@@ -114,7 +114,7 @@ class TeamPrivacyTests(TestCase):
         self.assertEqual(member["email"], "member@example.com")
         self.assertEqual(member["cccd"], "012345678901")
 
-    def test_own_team_only_exposes_full_profile_for_current_account(self):
+    def test_own_team_exposes_full_roster_to_captain(self):
         response = self.client.get("/api/my-team", **self._auth(self.member_account))
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -122,15 +122,37 @@ class TeamPrivacyTests(TestCase):
 
         members = {item["mssv"]: item for item in body["members"]}
         self.assertEqual(members["SV001"]["email"], "member@example.com")
-        self.assertEqual(set(members["SV002"]), {"mssv", "full_name", "school"})
+        self.assertEqual(members["SV002"]["email"], "teammate@example.com")
+        self.assertEqual(members["SV002"]["cccd"], "109876543210")
 
-    def test_captain_cannot_edit_profile_owned_by_another_account(self):
+    def test_non_captain_still_sees_only_their_own_full_profile(self):
         teammate_account = Account.objects.create(
             username="teammate",
             email="teammate@example.com",
             password_hash="x",
             role=Account.ROLE_PARTICIPANT,
             mssv="SV002",
+        )
+        self.teammate.account = teammate_account
+        self.teammate.save(update_fields=["account", "updated_at"])
+
+        response = self.client.get("/api/my-team", **self._auth(teammate_account))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["team"]["captain_mssv"], "SV001")
+        members = {item["mssv"]: item for item in payload["members"]}
+        self.assertEqual(members["SV002"]["email"], "teammate@example.com")
+        self.assertEqual(set(members["SV001"]), {"mssv", "full_name", "school"})
+
+    def test_captain_can_edit_profile_owned_by_another_account(self):
+        teammate_account = Account.objects.create(
+            username="teammate",
+            email="teammate@example.com",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="SV002",
+            full_name="Account Name",
         )
         self.teammate.account = teammate_account
         self.teammate.save(update_fields=["account", "updated_at"])
@@ -147,15 +169,66 @@ class TeamPrivacyTests(TestCase):
                 "mssv": "SV002",
                 "email": "teammate@example.com",
                 "full_name": "Changed",
+                "gender": "female",
+                "school": "US",
+                "faculty": "Toan",
+                "phone": "0911111111",
+                "cccd": "109876543210",
+                "date_of_birth": "2005-01-02",
+                "facebook": "https://example.com/teammate",
             }),
             content_type="application/json",
             **self._auth(self.member_account),
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"], "member_profile_owned")
+        self.assertEqual(response.status_code, 200)
+        self.teammate.refresh_from_db()
+        teammate_account.refresh_from_db()
+        self.assertEqual(self.teammate.full_name, "Changed")
+        self.assertEqual(self.teammate.extra["gender"], "female")
+        self.assertEqual(teammate_account.full_name, "Changed")
 
-    def test_captain_cannot_overwrite_owned_profile_by_removing_and_re_adding(self):
-        """The `member_profile_owned` guard must not be bypassable via DELETE + POST."""
+    def test_adding_account_owned_member_without_gender_is_rejected(self):
+        teammate_account = Account.objects.create(
+            username="teammate",
+            email="teammate@example.com",
+            password_hash="x",
+            role=Account.ROLE_PARTICIPANT,
+            mssv="SV002",
+        )
+        self.teammate.account = teammate_account
+        self.teammate.save(update_fields=["account", "updated_at"])
+        self.team.approval_status = Team.APPROVAL_DRAFT
+        self.team.save(update_fields=["approval_status", "updated_at"])
+        SystemSetting.objects.update_or_create(
+            key="registration_open",
+            defaults={"value": True},
+        )
+        TeamMembership.objects.filter(participant=self.teammate).delete()
+
+        response = self.client.post(
+            "/api/my-team/members",
+            data=json.dumps({
+                "mssv": "SV002",
+                "email": "teammate@example.com",
+                "full_name": "Tran Van B",
+                "school": "US",
+                "faculty": "Toan",
+                "phone": "0911111111",
+                "cccd": "109876543210",
+                "date_of_birth": "2001-01-01",
+                "facebook": "https://example.com/teammate",
+            }),
+            content_type="application/json",
+            **self._auth(self.member_account),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "missing:member:gender")
+        self.assertFalse(
+            TeamMembership.objects.filter(team=self.team, participant=self.teammate).exists()
+        )
+
+    def test_readding_account_owned_profile_fills_only_missing_registration_fields(self):
         teammate_account = Account.objects.create(
             username="teammate",
             email="teammate@example.com",
@@ -202,7 +275,8 @@ class TeamPrivacyTests(TestCase):
         self.assertEqual(self.teammate.cccd, "109876543210")
         self.assertEqual(self.teammate.facebook, "https://example.com/teammate")
         self.assertEqual(self.teammate.phone, "0911111111")
-        self.assertIsNone(self.teammate.date_of_birth)
+        self.assertEqual(str(self.teammate.date_of_birth), "2001-01-01")
+        self.assertEqual(self.teammate.extra["gender"], "male")
         self.assertTrue(
             TeamMembership.objects.filter(team=self.team, participant=self.teammate).exists()
         )

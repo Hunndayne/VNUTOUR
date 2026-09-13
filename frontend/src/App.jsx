@@ -3,11 +3,16 @@ import LandingPage from './LandingPage.jsx'
 import LoginPage from './LoginPage.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import ParticipantDashboard from './ParticipantDashboard.jsx'
+import TeamDetailsPage from './TeamDetailsPage.jsx'
 import FormResponses from './FormResponses.jsx'
 import CoopDashboard from './CoopDashboard.jsx'
 import FramePage from './FramePage.jsx'
 import StationRunPage from './StationRunPage.jsx'
+import FeedPage from './FeedPage.jsx'
 import TaiTro from './tai-tro.jsx'
+import ForgotPasswordPage from './ForgotPasswordPage.jsx'
+import ResetPasswordPage from './ResetPasswordPage.jsx'
+import JoinTeamPage from './JoinTeamPage.jsx'
 import { getStoredAuthToken, getStoredUser, isAdminRole, roleHomePath } from './api.js'
 import { navigate, useLocation } from './router.js'
 
@@ -17,10 +22,14 @@ import { navigate, useLocation } from './router.js'
 // bookmarked. Each screen owns a path now.
 const ROUTES = {
   '/admin': { render: () => <AdminDashboard />, allows: isAdminRole },
-  '/coop': { render: () => <CoopDashboard />, allows: (role) => role === 'collab' },
-  '/participant': { render: () => <ParticipantDashboard />, allows: (role) => role === 'participant' },
+  '/coop': { render: () => <CoopDashboard />, allows: (role) => role === 'collab' || isAdminRole(role) },
+  '/participant': {
+    render: (location) => location.path === '/participant/team' ? <TeamDetailsPage /> : <ParticipantDashboard />,
+    allows: (role) => role === 'participant',
+  },
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
   '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
+  '/feed': { render: () => <FeedPage />, allows: (role) => role === 'participant' },
 }
 
 // Paths that used to exist, kept alive so old links and bookmarks still land
@@ -42,6 +51,9 @@ const LEGACY_PATHS = {
 const PUBLIC_ROUTES = {
   '/frame': FramePage,
   '/tai-tro': TaiTro,
+  '/forgot-password': ForgotPasswordPage,
+  '/reset-password': ResetPasswordPage,
+  '/join-team': JoinTeamPage,
 }
 const PUBLIC_PATHS = new Set(Object.keys(PUBLIC_ROUTES))
 
@@ -164,7 +176,7 @@ function App() {
       page = <PublicRoute />
     } else {
       const route = ROUTES[routeRoot(location.path)]
-      page = route ? route.render() : <LandingPage />
+      page = route ? route.render(location) : <LandingPage />
     }
   }
 

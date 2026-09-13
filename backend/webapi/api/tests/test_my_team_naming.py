@@ -121,6 +121,36 @@ class MyTeamRenameTests(MyTeamNamingTestBase):
         self.team.refresh_from_db()
         self.assertEqual(self.team.name, "Đội Buôn Ký")
 
+    def test_captain_cannot_use_another_teams_name(self):
+        self._fill_to_full()
+        Team.objects.create(code="T0002", name="Đội  Trường Sơn")
+
+        response = self.client.patch(
+            "/api/my-team",
+            data={"team_name": "  ĐỘI TRƯỜNG SƠN "},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "duplicate_team_name")
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.name, "Pending team SV001")
+
+    def test_resending_current_name_is_not_treated_as_duplicate(self):
+        self._fill_to_full()
+        self.team.name = "Đội Trường Sơn"
+        self.team.save(update_fields=["name"])
+
+        response = self.client.patch(
+            "/api/my-team",
+            data={"team_name": "Đội Trường Sơn"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
     def test_rename_refuses_a_solo_team(self):
         # A one-person entry keeps the server placeholder — it cannot be named.
         response = self.client.patch(

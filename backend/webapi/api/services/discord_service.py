@@ -16,6 +16,7 @@ from api.models import (
     Account,
     DiscordBroadcast,
     Participant,
+    PendingDeprovision,
     Station,
     StationSession,
     SystemSetting,
@@ -192,8 +193,15 @@ def get_pending_team_payloads(limit: int = 50) -> list[dict]:
         .prefetch_related("memberships__participant")
         .order_by("created_at")[:limit]
     )
+    # Roles the bot is allowed to take off a member. Teams queued for cleanup
+    # are included because their rows are already gone from `Team`: without
+    # them, a member who moved across in a merge would keep the old team's role
+    # for as long as the deletion is pending, and forever if it never lands.
     managed_role_ids = list(
         Team.objects.exclude(discord_role_id__isnull=True)
+        .values_list("discord_role_id", flat=True)
+    ) + list(
+        PendingDeprovision.objects.exclude(discord_role_id__isnull=True)
         .values_list("discord_role_id", flat=True)
     )
     payloads = []
@@ -218,6 +226,49 @@ def get_pending_team_payloads(limit: int = 50) -> list[dict]:
             "members": members,
         })
     return payloads
+
+
+def get_team_resource_inventory() -> dict:
+    """The authoritative picture of which Discord resources belong to a team.
+
+    Used by the orphan sweep to decide what in the team categories is no longer
+    backed by a row in `Team`. It deliberately reports more than the recorded
+    ids:
+
+    * `pending_*` are resources already queued for deletion — the deprovision
+      loop owns those, so the sweep must not race it for them.
+    * `expected_names` covers the window where a channel or role exists in the
+      guild but its id has not been written back yet. `provision_team` finds
+      those by name before creating anything, so a name match means "a live
+      team is about to claim this", not "orphan". Without it the sweep would
+      delete a team's channels out from under an in-flight provision.
+    """
+    teams = list(
+        Team.objects.values("code", "name", "discord_role_id",
+                            "text_channel_id", "voice_channel_id")
+    )
+    pending = list(
+        PendingDeprovision.objects.values(
+            "discord_role_id", "text_channel_id", "voice_channel_id"
+        )
+    )
+
+    def ids(rows, *keys):
+        return [row[key] for row in rows for key in keys if row[key]]
+
+    expected_names = set()
+    for team in teams:
+        for label in (team["name"], team["code"]):
+            if label:
+                expected_names.add(str(label).strip().lower())
+
+    return {
+        "role_ids": ids(teams, "discord_role_id"),
+        "channel_ids": ids(teams, "text_channel_id", "voice_channel_id"),
+        "pending_role_ids": ids(pending, "discord_role_id"),
+        "pending_channel_ids": ids(pending, "text_channel_id", "voice_channel_id"),
+        "expected_names": sorted(expected_names),
+    }
 
 
 def queue_all_approved_teams() -> int:
@@ -355,7 +406,28 @@ def sync_member(mssv: str) -> Tuple[Optional[Participant], Optional[str]]:
     return participant, None
 
 
+def get_discord_channels() -> list[dict]:
+    """Return the text-channel catalogue last reported by the Discord bot."""
+    setting = SystemSetting.objects.filter(key=BOT_HEARTBEAT_KEY).first()
+    value = setting.value if setting and isinstance(setting.value, dict) else {}
+    channels = value.get("channels") if isinstance(value.get("channels"), list) else []
+    return [
+        {
+            "id": str(item["id"]),
+            "name": str(item.get("name") or item["id"]),
+            "category": str(item.get("category") or ""),
+        }
+        for item in channels
+        if isinstance(item, dict) and item.get("id")
+    ]
+
+
 def _broadcast_channel_ids(broadcast: DiscordBroadcast) -> list[int]:
+    if broadcast.target == DiscordBroadcast.TARGET_CHANNELS:
+        payload = broadcast.target_payload if isinstance(broadcast.target_payload, dict) else {}
+        channel_ids = payload.get("channel_ids") if isinstance(payload.get("channel_ids"), list) else []
+        return sorted(set(int(channel_id) for channel_id in channel_ids))
+
     teams = Team.objects.exclude(text_channel_id__isnull=True)
     if broadcast.target == DiscordBroadcast.TARGET_APPROVED:
         teams = teams.filter(approval_status=Team.APPROVAL_APPROVED)
@@ -410,7 +482,12 @@ def mark_broadcast_failed(broadcast_id: int, error: str) -> None:
     )
 
 
-def record_bot_heartbeat(user: str, guild_ids: list[int], latency_ms: float) -> None:
+def record_bot_heartbeat(
+    user: str,
+    guild_ids: list[int],
+    latency_ms: float,
+    channels: list[dict] | None = None,
+) -> None:
     SystemSetting.objects.update_or_create(
         key=BOT_HEARTBEAT_KEY,
         defaults={"value": {
@@ -418,6 +495,7 @@ def record_bot_heartbeat(user: str, guild_ids: list[int], latency_ms: float) -> 
             "guild_ids": [int(guild_id) for guild_id in guild_ids],
             "latency_ms": round(float(latency_ms), 1),
             "timestamp": django_timezone.now().isoformat(),
+            "channels": channels or [],
         }},
     )
 
@@ -554,6 +632,18 @@ def create_broadcast(
         team_codes = normalized_payload.get("team_codes") if normalized_payload else None
         if not isinstance(team_codes, list) or not any(str(code).strip() for code in team_codes):
             raise ValueError("missing_team_codes")
+    elif target == DiscordBroadcast.TARGET_CHANNELS:
+        channel_ids = normalized_payload.get("channel_ids") if normalized_payload else None
+        if not isinstance(channel_ids, list) or not channel_ids:
+            raise ValueError("missing_channel_ids")
+        try:
+            normalized_ids = sorted(set(str(int(channel_id)) for channel_id in channel_ids))
+        except (TypeError, ValueError):
+            raise ValueError("invalid_channel_ids")
+        available_ids = {item["id"] for item in get_discord_channels()}
+        if not set(normalized_ids).issubset(available_ids):
+            raise ValueError("invalid_channel_ids")
+        normalized_payload = {"channel_ids": normalized_ids}
 
     broadcast = DiscordBroadcast.objects.create(
         title=title,

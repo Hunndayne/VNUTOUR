@@ -1,0 +1,104 @@
+# The site-activator control loop. Keys the whole site off the Patroni DB leader:
+# whichever cluster holds the leader runs the singleton workloads (bot,
+# email-worker) and owns the Cloudflare DNS record; the other cluster keeps them
+# scaled to 0 and never touches DNS. This reuses the etcd quorum Patroni already
+# runs on, so there is no separate split-brain logic.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-activator-script
+data:
+  run.sh: |
+    #!/bin/sh
+    # POSIX sh. Needs: kubectl, curl, jq (image alpine/k8s).
+    set -u
+    NS="${NS:-vnutour}"
+    INTERVAL="${INTERVAL:-10}"
+    PATRONI="${PATRONI_URL:-http://postgres-ha:8008}"
+    SCALE_DEPLOYS="${SCALE_DEPLOYS:-bot email-worker}"
+    SITE="${SITE:-unknown}"
+    MEMBER_NAME="${MEMBER_NAME:-}"
+    FAILBACK_STABILIZE="${FAILBACK_STABILIZE:-300}"
+    PATRONI_POD="${PATRONI_POD:-postgres-ha-0}"
+    DNS_TARGET_TYPE="${DNS_TARGET_TYPE:-}"
+    DNS_TARGET_CONTENT="${DNS_TARGET_CONTENT:-}"
+    stable=0
+    log() { echo "$(date -u +%H:%M:%S) [$SITE] $*"; }
+
+    # Declared-target DNS model: each site declares what ddns.hunn.io.vn
+    # SHOULD point to when IT is the leader (homelab -> CNAME vpn.hunn.io.vn,
+    # linode -> A 172.104.186.118). Never "my own IP" -- homelab's dynamic IP
+    # is tracked by a separate DDNS record (vpn.hunn.io.vn) this controller
+    # never touches.
+    cf_record_lookup() {
+      # Search by name only (not type) so we find the record whether it is
+      # currently an A or a CNAME.
+      curl -fsS --max-time 10 -H "Authorization: Bearer $CF_API_TOKEN" \
+        "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?name=$CF_RECORD_NAME" \
+        2>/dev/null
+    }
+
+    cf_set() {
+      { [ -z "$DNS_TARGET_TYPE" ] || [ -z "$DNS_TARGET_CONTENT" ]; } && { log "DNS_TARGET_TYPE/CONTENT unset, skip DNS"; return; }
+      rec="$(cf_record_lookup)"
+      rid="$(echo "$rec" | jq -r '.result[0].id')"
+      { [ -z "$rid" ] || [ "$rid" = "null" ]; } && { log "no CF record id for $CF_RECORD_NAME"; return; }
+      cur_type="$(echo "$rec" | jq -r '.result[0].type')"
+      cur_content="$(echo "$rec" | jq -r '.result[0].content')"
+      [ "$cur_type" = "$DNS_TARGET_TYPE" ] && [ "$cur_content" = "$DNS_TARGET_CONTENT" ] && return   # already correct, no churn
+      log "DNS $CF_RECORD_NAME -> $DNS_TARGET_TYPE $DNS_TARGET_CONTENT (was $cur_type $cur_content)"
+      # PUT (full record replace, not PATCH) so the record TYPE can change
+      # between A and CNAME across a failover.
+      # proxied MUST be false (DNS-only): vnutour.suctremmt.com is a proxied
+      # CNAME to this record, and suctremmt.com + hunn.io.vn are different
+      # Cloudflare accounts. Proxying this record too makes a cross-account
+      # proxied CNAME chain -> Cloudflare error 1014 -> the site 403s. The
+      # proxy/WAF/TLS all live on the suctremmt.com hop; this record only needs
+      # to resolve to the active origin IP.
+      curl -fsS --max-time 10 -X PUT -H "Authorization: Bearer $CF_API_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records/$rid" \
+        --data "{\"type\":\"$DNS_TARGET_TYPE\",\"name\":\"$CF_RECORD_NAME\",\"content\":\"$DNS_TARGET_CONTENT\",\"ttl\":60,\"proxied\":false}" \
+        >/dev/null 2>&1 || log "CF PUT failed"
+    }
+
+    scale() { for d in $SCALE_DEPLOYS; do
+      kubectl -n "$NS" scale deploy "$d" --replicas="$1" >/dev/null 2>&1 || true
+    done; }
+
+    cluster_json() { curl -fsS --max-time 5 "$PATRONI/cluster" 2>/dev/null; }
+
+    while true; do
+      if curl -fsS --max-time 5 "$PATRONI/primary" >/dev/null 2>&1; then
+        # ---- THIS cluster holds the leader: activate ----
+        scale 1
+        cf_set
+        stable=0
+      else
+        # ---- not the leader: stand down ----
+        scale 0
+        # Auto-failback: only the homelab site reclaims leadership once it has
+        # been a healthy replica long enough (hysteresis against flapping).
+        if [ "$SITE" = "homelab" ] && [ -n "$MEMBER_NAME" ]; then
+          cj="$(cluster_json)"
+          st="$(echo "$cj" | jq -r --arg m "$MEMBER_NAME" '.members[]|select(.name==$m)|.state' 2>/dev/null)"
+          if [ "$st" = "running" ] || [ "$st" = "streaming" ]; then
+            stable=$((stable + INTERVAL))
+          else
+            stable=0
+          fi
+          if [ "$stable" -ge "$FAILBACK_STABILIZE" ]; then
+            lname="$(echo "$cj" | jq -r '.members[]|select(.role=="leader")|.name' 2>/dev/null)"
+            # Promote via patronictl inside the LOCAL Patroni pod, which talks to
+            # the shared etcd -- NOT a cross-cluster REST POST to the remote
+            # leader's Patroni API: the controller pod cannot route to the other
+            # cluster's node-level WireGuard mesh IP, so that POST always failed.
+            # patronictl over etcd can promote any member from either side.
+            log "failback: switchover $lname -> $MEMBER_NAME (via $PATRONI_POD)"
+            kubectl -n "$NS" exec "$PATRONI_POD" -- patronictl switchover --candidate "$MEMBER_NAME" --force >/dev/null 2>&1 || log "switchover failed"
+            stable=0
+          fi
+        fi
+      fi
+      sleep "$INTERVAL"
+    done

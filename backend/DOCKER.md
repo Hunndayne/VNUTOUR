@@ -37,6 +37,12 @@ docker compose --env-file .env.docker ps
 The `migrate` service must finish successfully before `backend` starts. Nginx
 waits for the backend healthcheck before accepting traffic.
 
+Python dependencies are installed and checked during the image build. The final
+image removes `pip`, `wheel`, and `ensurepip` to avoid shipping their bundled
+dependencies (including the vulnerable copies in pip's vendor directory).
+To change dependencies, edit `requirements.txt` and rebuild the image; installing
+packages inside a running container is not supported.
+
 Useful commands
 ---------------
 

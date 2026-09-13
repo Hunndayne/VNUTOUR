@@ -1,10 +1,12 @@
 """Admin teams & accounts routes — §9.3"""
 
 from django.urls import path
+from api.views_account_details import admin_account_details_edit_view, admin_account_details_view
 from api.views_admin import (
-    teams_collection_view, team_item_view,
+    teams_collection_view, team_item_view, team_member_item_view,
     team_approve_view, team_reject_view,
     admin_accounts_view, admin_account_detail_view, team_merge_view,
+    admin_fix_participant_identity_view,
     admin_team_payment_proof_view, admin_payment_config_view,
     admin_site_config_view, admin_registration_schema_view,
     admin_timo_pot_config_view,
@@ -17,6 +19,8 @@ urlpatterns = [
     path("teams/<str:team_key>/", team_item_view),
     path("teams/<str:team_key>/approve", team_approve_view),
     path("teams/<str:team_key>/reject", team_reject_view),
+    path("teams/<str:team_key>/members/<str:mssv>", team_member_item_view),
+    path("teams/<str:team_key>/members/<str:mssv>/", team_member_item_view),
     path("admin/teams/merge", team_merge_view),
     path("admin/teams/<int:team_id>/payment-proof", admin_team_payment_proof_view),
     path("admin/teams/<int:team_id>/payment-proof/", admin_team_payment_proof_view),
@@ -30,4 +34,8 @@ urlpatterns = [
     path("admin/registration-schema/", admin_registration_schema_view),
     path("admin/accounts", admin_accounts_view),
     path("admin/accounts/<str:username>", admin_account_detail_view),
+    path("admin/accounts/<str:username>/details", admin_account_details_view),
+    path("admin/accounts/<str:username>/details/edit", admin_account_details_edit_view),
+    path("admin/participants/fix-identity", admin_fix_participant_identity_view),
+    path("admin/participants/fix-identity/", admin_fix_participant_identity_view),
 ]

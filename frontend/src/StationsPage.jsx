@@ -4,6 +4,7 @@ import { Icon, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, API_BASE_URL } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+import { exportToJson, exportQuizToExcel, importFromFile, downloadSampleExcel, downloadSampleJson } from './importExportUtils.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 
@@ -201,6 +202,9 @@ function createSubmissionLimits(limits = {}) {
     maxSubmissions: Math.max(0, Number(limits.maxSubmissions) || 0),
     closeOnCorrect: limits.closeOnCorrect ?? false,
     manualClosed: limits.manualClosed ?? false,
+    opensAt: limits.opensAt ?? '',
+    closesAt: limits.closesAt ?? '',
+    durationMinutes: Math.max(0, Number(limits.durationMinutes) || 0),
   }
 }
 
@@ -223,12 +227,19 @@ function createSubmissionConfig(submission = {}) {
   }
 
   return {
+    antiCheat: submission.antiCheat ?? true,
     brief: submission.brief ?? '',
     items,
     quiz: {
       autoScore: submission.quiz?.autoScore ?? false,
       // 0 = phát hết bộ đề; N > 0 = mỗi đội nhận N câu bốc ngẫu nhiên (cố định theo đội).
       randomCount: Math.max(0, Math.trunc(Number(submission.quiz?.randomCount)) || 0),
+      randomizeOptions: submission.quiz?.randomizeOptions ?? false,
+    },
+    bank: {
+      itemIds: submission.bank?.itemIds ?? [],
+      useAll: submission.bank?.useAll ?? false,
+      mixStationQuiz: submission.bank?.mixStationQuiz ?? false,
     },
     limits: createSubmissionLimits(submission.limits),
     flow: {
@@ -272,10 +283,10 @@ function createStation(station = {}) {
       score: Number.isFinite(Number(team.score)) ? Number(team.score) : Math.max(5, 25 - index * 5),
     }))
     : []
-  next.checkinPolicy = Object.hasOwn(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
+  next.checkinPolicy = Object.prototype.hasOwnProperty.call(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
   next.capacityMode = station.capacityMode === 'limited' ? 'limited' : 'unlimited'
   next.maxConcurrentTeams = Math.max(1, Number(station.maxConcurrentTeams) || 2)
-  next.scoringMode = Object.hasOwn(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
+  next.scoringMode = Object.prototype.hasOwnProperty.call(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
   const rawThreshold = Number(station.passThreshold)
   next.passThreshold = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? Math.round(rawThreshold) : 0
   const rawPoints = Number(station.passPoints)
@@ -1640,7 +1651,7 @@ function InitialAssignmentFields({ value, onChange, compact = false }) {
   )
 }
 
-function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false, draftKey }) {
+function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false, draftKey, eventId }) {
   // Soạn trạm (quiz, markdown, giới hạn nộp...) có thể mất cả chục phút — bọc cả
   // `form` lẫn `initialAssignment` trong một bản nháp duy nhất, khoá theo trạm
   // (hoặc theo phase/event khi đang tạo mới, do trạm mới chưa có id riêng).
@@ -1664,6 +1675,65 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   // hiện tại — không có ý nghĩa gì để khôi phục sau reload nên không đưa vào draft.
   const [dragIndex, setDragIndex] = useState(null)
   const [dropIndex, setDropIndex] = useState(null)
+
+  const [bankItems, setBankItems] = useState([])
+  useEffect(() => {
+    if (!eventId) return
+    let active = true
+    apiRequest(`/program/sub-events/${eventId}/question-bank`)
+      .then(res => {
+        if (active) setBankItems(res.items || [])
+      })
+      .catch(console.error)
+    return () => { active = false }
+  }, [eventId])
+
+  const fileInputRef = useRef(null)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState(null)
+
+  const handleFileImport = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      setImportError(null)
+      const parsed = await importFromFile(file)
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Không tìm thấy câu hỏi hợp lệ trong file")
+      }
+      
+      const newItems = parsed.map(item => ({
+        id: `quiz-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        type: 'quiz',
+        question: item.question,
+        options: item.options,
+        correctOption: item.correctOption,
+        points: item.points,
+        required: true,
+      }))
+      
+      updateSubmission(submission => ({
+        ...submission,
+        items: [...submission.items, ...newItems],
+      }))
+      
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    } catch (err) {
+      setImportError(err.message || 'Lỗi nhập dữ liệu')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleExportJSON = () => {
+    const quizItems = form.submission.items.filter(i => i.type === 'quiz')
+    exportToJson(quizItems, `station_${form.code || 'draft'}_quiz.json`)
+  }
+
+  const handleExportExcel = () => {
+    const quizItems = form.submission.items.filter(i => i.type === 'quiz')
+    exportQuizToExcel(quizItems, `station_${form.code || 'draft'}_quiz.xlsx`)
+  }
 
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
   const updateSubmission = (updater) => {
@@ -1728,11 +1798,16 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     setDropIndex(null)
   }
 
-  const quizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
+  const inlineQuizItemCount = form.submission.items.filter(item => item.type === 'quiz').length
+  const bankUseAll = form.submission.bank?.useAll ?? false
+  const bankItemCount = bankUseAll
+    ? bankItems.length
+    : (form.submission.bank?.itemIds?.length || 0)
+  const quizItemCount = inlineQuizItemCount + bankItemCount
   const hasQuizItem = quizItemCount > 0
   const hasAttachmentItem = form.submission.items.some(item => item.type === 'attachment')
   // Chỉ có form thì mới có chuyện "nộp xong rồi sao nữa".
-  const hasSubmissionItem = form.submission.items.length > 0
+  const hasSubmissionItem = form.submission.items.length > 0 || bankItemCount > 0
   const quizRandomCount = form.submission.quiz.randomCount ?? 0
 
 
@@ -1965,6 +2040,80 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           )}
         />
 
+        <div className="flex gap-2 flex-wrap items-center">
+          <button
+            type="button"
+            onClick={() => setImporting(!importing)}
+            className="rounded-lg bg-paper px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-stone/50"
+          >
+            {importing ? 'Đóng' : 'Nhập file Excel/JSON'}
+          </button>
+          {form.submission.items.some(i => i.type === 'quiz') && (
+            <>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-paper"
+              >
+                Xuất Excel
+              </button>
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-paper"
+              >
+                Xuất JSON
+              </button>
+            </>
+          )}
+        </div>
+
+        {importing && (
+          <div className="border-b border-stone p-4 bg-paper/50 rounded-xl mt-2 border">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-ink">Nhập từ file Excel/JSON</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={downloadSampleExcel} className="text-xs text-trail hover:underline font-medium">Mẫu Excel</button>
+                <button type="button" onClick={downloadSampleJson} className="text-xs text-trail hover:underline font-medium">Mẫu JSON</button>
+              </div>
+            </div>
+            <p className="text-xs text-ink/60 mb-3">
+              Hỗ trợ file <code>.xlsx</code> hoặc <code>.json</code>. Các câu hỏi sẽ được nối thêm vào danh sách trắc nghiệm.
+            </p>
+            <input
+              type="file"
+              accept=".json,.xlsx,.xls,.csv"
+              ref={fileInputRef}
+              onChange={handleFileImport}
+              className="block w-full text-xs text-ink/70 file:mr-4 file:rounded-lg file:border-0 file:bg-ink file:px-4 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-ink/90 cursor-pointer"
+            />
+            {importError && <p className="text-xs text-clay mt-2">{importError}</p>}
+          </div>
+        )}
+
+        {bankItems.length > 0 && (
+          <div className={`${CARD} p-4 mb-4`}>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={bankUseAll}
+                onChange={(e) => updateSubmission(sub => ({
+                  ...sub,
+                  bank: { ...sub.bank, useAll: e.target.checked },
+                }))}
+                className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              />
+              <div className="flex-1">
+                <p className="font-semibold text-sm text-ink">Lấy câu hỏi từ ngân hàng dùng chung</p>
+                <p className="text-xs text-ink/60 mt-1">
+                  Dùng toàn bộ {bankItems.length} câu của sự kiện (thêm câu vào ngân hàng thì trạm tự có thêm).
+                  Số câu mỗi đội làm đặt ở ô “Số câu phát ngẫu nhiên” bên dưới.
+                </p>
+              </div>
+            </label>
+          </div>
+        )}
+
         {form.submission.items.length === 0 ? (
           <div className={`${CARD} px-4 py-6 text-center text-sm italic text-ink/35`}>
             Chưa có mục nào. Thêm câu tự luận, câu trắc nghiệm hoặc ô nộp tệp — thứ tự bạn xếp ở đây
@@ -2005,6 +2154,18 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
               />
               Tự cộng điểm quiz vào điểm đội trong phase (leaderboard)
             </label>
+            <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
+              <input
+                type="checkbox"
+                checked={form.submission.quiz.randomizeOptions}
+                onChange={event => updateSubmission(submission => ({
+                  ...submission,
+                  quiz: { ...submission.quiz, randomizeOptions: event.target.checked },
+                }))}
+                className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+              />
+              Đảo ngẫu nhiên thứ tự các đáp án
+            </label>
             <p className="mt-1 text-xs leading-5 text-ink/45">
               Tắt: điểm quiz chỉ hiển thị ở bài nộp để tham khảo khi chấm. Bật: mỗi lần đội nộp bài,
               tổng điểm các câu đúng tự ghi vào bảng điểm.
@@ -2029,14 +2190,35 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
                 className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
               />
               <p className="mt-1 text-xs leading-5 text-ink/45">
-                Bộ đề đang có {quizItemCount} câu. Mỗi đội nhận một bộ cố định, mọi thành viên trong
-                đội thấy cùng bộ câu.
+                Bộ đề đang có {quizItemCount} câu (gồm {inlineQuizItemCount} câu tự soạn, {bankItemCount} câu từ bộ chung). 
+                Mỗi đội nhận một bộ cố định, mọi thành viên trong đội thấy cùng bộ câu.
               </p>
+              
+              {bankItemCount > 0 && quizRandomCount > 0 && (
+                <label className="mt-3 inline-flex items-center gap-2 text-sm text-ink/60">
+                  <input
+                    type="checkbox"
+                    checked={form.submission.bank?.mixStationQuiz ?? false}
+                    onChange={event => updateSubmission(submission => ({
+                      ...submission,
+                      bank: { ...submission.bank, mixStationQuiz: event.target.checked },
+                    }))}
+                    className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+                  />
+                  Ưu tiên lấy câu mới từ ngân hàng chung chưa thi ở trạm khác (mixStationQuiz)
+                </label>
+              )}
+
               {quizRandomCount > 0 && (
                 <p className="mt-1 text-xs leading-5 text-ink/45">
                   {quizRandomCount < quizItemCount
                     ? `Mỗi đội sẽ làm ${quizRandomCount}/${quizItemCount} câu.`
                     : `Số câu đặt ra lớn hơn hoặc bằng ${quizItemCount} câu hiện có — mỗi đội sẽ làm hết bộ đề.`}
+                </p>
+              )}
+              {form.submission.bank?.mixStationQuiz && quizRandomCount > bankItems.length && (
+                <p className="mt-2 text-xs font-semibold text-clay bg-clay/10 p-2 rounded">
+                  Lưu ý: N (các trạm) &gt; tổng số câu ngân hàng hiện có ({bankItems.length}). Trạm này có thể sẽ phải trộn lại các câu cũ nếu hết ngân hàng.
                 </p>
               )}
             </div>
@@ -2048,6 +2230,40 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
         <SectionTitle title="Giới hạn nộp bài" />
         <div className="grid gap-3">
           <div>
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Thời gian mở form (Tùy chọn)
+            </label>
+            <input
+              type="datetime-local"
+              value={form.submission.limits.opensAt}
+              onChange={event => updateLimits('opensAt', event.target.value)}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-3"
+            />
+            
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Thời gian đóng form (Tùy chọn)
+            </label>
+            <input
+              type="datetime-local"
+              value={form.submission.limits.closesAt}
+              onChange={event => updateLimits('closesAt', event.target.value)}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
+            />
+
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+              Thời gian làm bài (Phút, 0 = Không giới hạn)
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={form.submission.limits.durationMinutes || 0}
+              onChange={event => updateLimits('durationMinutes', Math.max(0, Number(event.target.value) || 0))}
+              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
+            />
+            <p className="mt-1 mb-4 text-xs leading-5 text-ink/45">
+              Thời gian đếm ngược sẽ tính từ lúc đội check-in quét QR mã trạm.
+            </p>
+
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
               Số đội nộp tối đa (0 = không giới hạn)
             </label>
@@ -2082,6 +2298,29 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </label>
         </div>
       </div>
+
+      {hasSubmissionItem && (
+        <div className={`${CARD} p-4`}>
+          <SectionTitle title="Chống gian lận" />
+          <label className="mt-2 inline-flex items-start gap-3 text-sm text-ink/60 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.submission.antiCheat ?? true}
+              onChange={event => updateSubmission(submission => ({
+                ...submission,
+                antiCheat: event.target.checked,
+              }))}
+              className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            <div className="flex-1">
+              <span className="font-semibold text-ink">Bật hệ thống chống gian lận cho trạm này</span>
+              <p className="mt-1 text-xs leading-5 text-ink/45">
+                Chặn copy, vô hiệu hóa phím tắt (F12, In, DevTools), tự làm mờ màn hình khi rời tab, và chèn bẫy AI/OCR vào trang. Tắt khi dùng thiết bị lạ hoặc khi tính tương thích được ưu tiên.
+              </p>
+            </div>
+          </label>
+        </div>
+      )}
 
       {hasSubmissionItem && (
         <div className={`${CARD} p-4`}>
@@ -2618,7 +2857,7 @@ function StationEditView({
           <div className="border-b border-stone px-5 py-3">
             <p className="font-display font-semibold text-ink">Cấu hình trạm</p>
           </div>
-          <StationForm initial={station} onSave={handleSave} onCancel={onBack} />
+          <StationForm initial={station} onSave={handleSave} onCancel={onBack} eventId={selectedEvent.id} />
         </div>
 
         <StationOpsColumn station={station} phase={phase} selectedEvent={selectedEvent} />
@@ -2653,6 +2892,7 @@ function StationCreateView({ phaseInfo, phaseMeta, selectedEvent, error, draftKe
           onCancel={onBack}
           allowInitialAssignment
           draftKey={draftKey}
+          eventId={selectedEvent.id}
         />
       </div>
     </div>

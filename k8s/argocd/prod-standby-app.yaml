@@ -1,0 +1,50 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vnutour-prod-standby
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # Zone 2 warm standby. Runs on the SAME cluster ArgoCD lives in (Linode), so
+  # it needs no external cluster registration or WireGuard — safe to apply now.
+  source:
+    repoURL: https://github.com/Hunndayne/VNUTOUR.git
+    targetRevision: main
+    path: k8s/kustomize/overlays/prod-standby
+
+  destination:
+    server: https://kubernetes.default.svc   # the Linode cluster itself
+    namespace: vnutour
+
+  # postgres-ha's volumeClaimTemplates get server-defaulted fields ArgoCD does
+  # not normalize, leaving it permanently OutOfSync though `kubectl diff` is
+  # clean. Ignore that subtree (VCTs are immutable anyway).
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: postgres-ha
+      jsonPointers:
+        - /spec/volumeClaimTemplates
+    # bot / email-worker are singletons scaled 0<->1 by the site-activator
+    # controller off the DB leader; ArgoCD must not fight it via selfHeal.
+    - group: apps
+      kind: Deployment
+      name: bot
+      jsonPointers:
+        - /spec/replicas
+    - group: apps
+      kind: Deployment
+      name: email-worker
+      jsonPointers:
+        - /spec/replicas
+
+  syncPolicy:
+    automated:
+      prune: true      # standby is disposable; PVCs are opted out via Prune=false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -5,7 +5,11 @@ Public views — unauthenticated config the FE needs before anyone signs in.
 from django.http import JsonResponse, HttpRequest
 
 from api.services.antibot_service import antibot_config
-from api.services.team_service import registration_is_open
+from api.services.team_service import (
+    registration_capacity_remaining,
+    registration_is_full,
+    registration_is_open,
+)
 
 
 def site_config_view(request: HttpRequest):
@@ -15,6 +19,8 @@ def site_config_view(request: HttpRequest):
     antibot = antibot_config()
     return JsonResponse({
         "allow_signup": registration_is_open(),
+        "registration_full": registration_is_full(),
+        "registration_slots_remaining": registration_capacity_remaining(),
         # Frontend đọc site key từ đây để render Turnstile — không cần rebuild
         # mỗi lần đổi key; secret thì không bao giờ rời server.
         "antibot": {

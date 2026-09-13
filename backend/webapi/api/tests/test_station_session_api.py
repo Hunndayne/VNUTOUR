@@ -87,14 +87,18 @@ class StationSessionApiTests(TestCase):
             station=self.station1, team=self.team1, status=StationSession.STATUS_ACTIVE,
         ).exists())
 
-    def test_qr_token_cannot_enter_station_while_qr_is_disabled(self):
+    def test_qr_token_enters_station_without_any_global_toggle(self):
+        # The per-station model has no BTC master switch: a QR token enters on a
+        # running sub-event alone, with the legacy `checkin_qr` flag left off.
         response = self._enter(
             self.collab,
             f"t:{self.team1.qr_token}",
             self.station1.id,
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"], "checkin_qr_disabled")
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(StationSession.objects.filter(
+            station=self.station1, team=self.team1, status=StationSession.STATUS_ACTIVE,
+        ).exists())
 
     def test_enabled_qr_token_can_enter_station(self):
         set_checkin_qr(True)

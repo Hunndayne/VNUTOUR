@@ -5,6 +5,7 @@ from api.views_discord import (
     discord_status_view, provisioning_queue_view,
     retry_provision_view, broadcast_create_view,
     members_view, member_sync_view,
+    channels_view,
 )
 
 urlpatterns = [
@@ -12,6 +13,8 @@ urlpatterns = [
     path("discord/status/", discord_status_view),
     path("discord/provisioning-queue", provisioning_queue_view),
     path("discord/provisioning-queue/", provisioning_queue_view),
+    path("discord/channels", channels_view),
+    path("discord/channels/", channels_view),
     path("discord/teams/<str:team_code>/provision", retry_provision_view),
     path("discord/teams/<str:team_code>/provision/", retry_provision_view),
     path("discord/members", members_view),

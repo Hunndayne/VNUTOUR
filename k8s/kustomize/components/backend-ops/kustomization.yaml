@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Split-tier scaling (Design 2), prod + prod-standby only.
+#
+# Adds a dedicated pinned `backend-ops` pod that owns the node-local volumes,
+# repoints the base backend-ops Service at it, and frees the serving `backend`
+# Deployment to scale horizontally across workers (media/backups mounts dropped,
+# nodeSelector removed, Recreate -> RollingUpdate).
+#
+# Include AFTER components/prod-config (which sizes backend resources) — these
+# patches touch disjoint fields (volumes/strategy/nodeSelector), so order only
+# needs to keep both applying cleanly on top of the base.
+resources:
+  - deployment.yaml
+  - storage.yaml
+
+patches:
+  # Point the ops Service at the dedicated pod instead of aliasing `backend`.
+  - target:
+      kind: Service
+      name: backend-ops
+    patch: |-
+      - op: replace
+        path: /spec/selector/app
+        value: backend-ops
+
+  # Unpin the serving backend: it no longer mounts the node-local volumes, so it
+  # can schedule on any worker and roll without volume contention.
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts
+      - op: remove
+        path: /spec/template/spec/volumes
+      - op: remove
+        path: /spec/template/spec/nodeSelector
+      - op: replace
+        path: /spec/strategy/type
+        value: RollingUpdate

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import oceanWavesBg from './assets/ocean-waves-bg.svg'
-import logoImage from './assets/vnutour-logo.webp'
 import universityLogo from './assets/organizer-university.webp'
 import youthUnionLogo from './assets/organizer-youth-union.webp'
 import facultyLogo from './assets/organizer-faculty.webp'
-import SiteHeader, { NavLinks } from './SiteHeader.jsx'
+import SiteHeader from './SiteHeader.jsx'
+import SiteFooter from './SiteFooter.jsx'
 import VNUTourJourneyMap from './VNUTourJourneyMap.jsx'
 import { useLocation } from './router.js'
 import dolLogo from './assets/SAT&JUNIOR-1.png'
@@ -194,8 +194,8 @@ function LandingPage() {
   ]
 
   return (
-    <main className="landing-page min-h-[100dvh] bg-white font-display text-[#0c1d33]">
-      <section id="home" className="landing-flow-hero relative min-h-[100dvh] overflow-hidden">
+    <main className="landing-page min-h-screen min-h-[100dvh] bg-white font-display text-[#0c1d33]">
+      <section id="home" className="landing-flow-hero relative min-h-screen min-h-[100dvh] overflow-hidden">
         <div
           aria-hidden="true"
           className="landing-color-strip absolute inset-x-0 top-0 z-30 h-1"
@@ -209,7 +209,7 @@ function LandingPage() {
 
 <SiteHeader />
 
-<div className="relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] w-full max-w-[1400px] content-start items-start gap-2 px-5 pb-12 pt-4 md:px-8 lg:grid-cols-[minmax(240px,1fr)_minmax(0,880px)] lg:content-normal lg:items-center lg:gap-12 lg:pb-16 lg:pt-8 xl:px-0">
+<div className="relative z-10 mx-auto grid min-h-[calc(100vh-5rem)] min-h-[calc(100dvh-5rem)] w-full max-w-[1400px] content-start items-start gap-2 px-5 pb-12 pt-4 md:px-8 lg:grid-cols-[minmax(240px,1fr)_minmax(0,880px)] lg:content-normal lg:items-center lg:gap-12 lg:pb-16 lg:pt-8 xl:px-0">
 
   {/* VNU TOUR LOGO */}
   <Reveal className="order-1 flex w-full justify-center lg:border-r lg:border-[#1478D4]/20 lg:pr-12">
@@ -396,6 +396,9 @@ function LandingPage() {
                   </div>
                 ))}
               </div>
+              <p className="mt-1.5 text-[10px] font-medium leading-4 text-[#0c1d33]/60">
+                Đơn đăng ký có thể đóng sớm do đủ số lượng
+              </p>
             </>
           ) : (
             <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#1478D4]">Đã hết hạn đăng ký</p>
@@ -754,19 +757,7 @@ function LandingPage() {
   </Reveal>
 </section>
 
-      <footer className="landing-footer landing-border-faint border-t bg-[#062A3B]">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-10 px-5 py-12 md:px-8 lg:flex-row lg:items-end lg:justify-between xl:px-0">
-          <div className="space-y-8">
-            <img src={logoImage} alt="VNUTour" className="h-20 w-20 object-contain drop-shadow-[0_0_16px_rgba(57,213,244,0.32)]" />
-            <NavLinks className="flex flex-wrap" />
-          </div>
-          <p className="text-xs uppercase leading-6 tracking-[0.08em] text-white/75">
-            Copyright © VNUTour
-            <br />
-            All rights reserved
-          </p>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   )
 }

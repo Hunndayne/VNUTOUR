@@ -24,7 +24,7 @@ function cloneSubEvent(subEvent = {}) {
   return {
     id: subEvent.id || makeId('sub'),
     name: subEvent.name || 'Event mới',
-    type: Object.hasOwn(SUB_EVENT_TYPE_META, subEvent.type) ? subEvent.type : 'custom',
+    type: Object.prototype.hasOwnProperty.call(SUB_EVENT_TYPE_META, subEvent.type) ? subEvent.type : 'custom',
     startDate: subEvent.startDate || '',
     endDate: subEvent.endDate || '',
     usesStations: Boolean(subEvent.usesStations),

@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon, CARD, APPROVAL, PROVISION, Badge } from './ui.jsx'
-import { apiRequest, apiDownload, formatDateTime, logoutAndRedirect } from './api.js'
+import { apiRequest, apiDownload, formatDateTime, logoutAndRedirect, getStoredUser, isAdminRole } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+
+const SECONDARY_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40'
+const DANGER_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-clay/30 bg-white px-3 py-2 text-sm font-semibold text-clay transition hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40'
+const DANGER_SOLID_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-clay px-4 py-2 text-sm font-semibold text-white transition hover:brightness-[0.96] disabled:cursor-not-allowed disabled:opacity-40'
 
 const FILTERS = [
   { key: 'all', label: 'Tất cả' },
@@ -21,6 +25,20 @@ const GENDER_META = {
   unknown: { short: 'Chưa rõ', cls: 'bg-ink/[0.06] text-ink/45' },
 }
 
+function normalizeCaptain(team) {
+  const captainName = String(team.captain_name || '').trim()
+  const captainMssv = String(team.captain_mssv || '').trim()
+  const legacyOwner = String(team.owner_username || '').trim()
+
+  return {
+    captainName,
+    captainMssv,
+    owner: captainName && captainMssv
+      ? `${captainName} · ${captainMssv}`
+      : captainName || captainMssv || legacyOwner,
+  }
+}
+
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   if (code?.startsWith('merge_would_exceed_max')) {
@@ -35,11 +53,19 @@ function explainApiError(error) {
     const teamCode = code.split(':')[1]
     return `Đội ${teamCode || 'này'} chưa được duyệt nên chưa thể ghép.`
   }
+  if (code?.startsWith('mssv_conflict_roster')) {
+    const teamCode = code.split(':')[1]
+    return `MSSV đúng này đã thuộc một thí sinh khác đang ở đội ${teamCode || 'khác'}. Cần xử lý thủ công, không thể tự sửa.`
+  }
   const map = {
+    participant_not_found: 'Không tìm thấy thí sinh với MSSV hiện tại.',
+    account_link_conflict: 'Thí sinh này đã gắn với một tài khoản khác. Gỡ liên kết cũ trước khi sửa.',
+    missing_fields: 'Thiếu MSSV hiện tại hoặc MSSV đúng.',
     owner_not_found: 'Không tìm thấy tài khoản đội trưởng.',
     invalid_owner_role: 'Tài khoản này không phải participant.',
     owner_profile_incomplete: 'Đội trưởng cần có MSSV trước khi tạo đội từ admin.',
     owner_already_has_team: 'Tài khoản đội trưởng đã thuộc một đội khác.',
+    duplicate_team_name: 'Tên đội này đã được một đội khác sử dụng. Vui lòng chọn tên khác.',
     conflict: 'Dữ liệu đội bị trùng hoặc đang xung đột.',
     not_found: 'Không tìm thấy đội cần thao tác.',
     merge_same_team: 'Không thể ghép một đội với chính nó.',
@@ -48,6 +74,9 @@ function explainApiError(error) {
     merge_duplicate_team_codes: 'Danh sách ghép đang chứa đội bị chọn trùng.',
     registration_phase_closed: 'Chỉ có thể ghép đội trong phase đăng ký.',
     team_not_submitted: 'Chỉ có thể duyệt hoặc từ chối đội đã gửi đăng ký.',
+    registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này.',
+    forbidden: 'Bạn không có quyền thực hiện thao tác này.',
+    remove_failed: 'Không xóa được thành viên. Vui lòng thử lại.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu đội.'
 }
@@ -56,8 +85,9 @@ function normalizeTeamSummary(team) {
   const genderCounts = team.gender_counts || {}
   return {
     id: team.code,
+    code: team.code,
     name: team.name || '',
-    owner: team.owner_username || '',
+    ...normalizeCaptain(team),
     status: team.approval_status || 'draft',
     provision: team.provision_state || 'none',
     memberCount: team.member_count || 0,
@@ -78,6 +108,24 @@ function normalizeTeamSummary(team) {
   }
 }
 
+function mapTeamDetail(detail) {
+  return {
+    id: detail.code,
+    code: detail.code,
+    teamId: detail.id ?? null,
+    name: detail.name,
+    ...normalizeCaptain(detail),
+    status: detail.approval_status,
+    provision: detail.provision_state || 'none',
+    submittedAt: detail.submitted_at,
+    note: detail.approval_note || '',
+    paymentProof: detail.payment_proof || '',
+    hasPaymentProof: Boolean(detail.has_payment_proof_file),
+    isLateRegistration: Boolean(detail.is_late_registration),
+    members: detail.members || [],
+  }
+}
+
 function memberStripCls(member) {
   if (member.has_account && member.discord_id) return 'bg-trail'
   if (member.has_account) return 'bg-[#3E7CA8]'
@@ -85,8 +133,54 @@ function memberStripCls(member) {
   return 'bg-stone'
 }
 
-function MemberCard({ member }) {
+function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) {
   const strip = memberStripCls(member)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(member.mssv || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState('')
+
+  const startEdit = () => {
+    setValue(member.mssv || '')
+    setError('')
+    setEditing(true)
+  }
+  const cancel = () => {
+    setEditing(false)
+    setSaving(false)
+    setError('')
+  }
+  const confirmRemove = async () => {
+    try {
+      setRemoving(true)
+      setRemoveError('')
+      // On success the drawer reloads and this card unmounts.
+      await onRemoveMember(member.mssv)
+    } catch (err) {
+      setRemoveError(explainApiError(err) || 'Không xóa được thành viên.')
+      setRemoving(false)
+    }
+  }
+  const submit = async () => {
+    const next = value.trim().toUpperCase()
+    if (!next || next === (member.mssv || '').toUpperCase()) {
+      setError('Nhập MSSV đúng, khác MSSV hiện tại.')
+      return
+    }
+    try {
+      setSaving(true)
+      setError('')
+      // On success the drawer reloads and this card re-renders with new data.
+      await onFixIdentity(member.mssv, next)
+    } catch (err) {
+      setError(explainApiError(err) || 'Không sửa được định danh.')
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="flex">
       <div className={`w-[3px] shrink-0 ${strip}`} />
@@ -146,6 +240,95 @@ function MemberCard({ member }) {
             </span>
           </div>
         </div>
+
+        {isAdmin && (onFixIdentity || onRemoveMember) && (
+          <div className="mt-2 border-t border-stone/40 pt-2">
+            {!editing && !confirmingRemove ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                {onFixIdentity && (
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    className="text-[11px] font-medium text-trail/80 underline underline-offset-2 transition hover:text-trail"
+                  >
+                    Sửa MSSV / nối tài khoản
+                  </button>
+                )}
+                {onRemoveMember && (
+                  <button
+                    type="button"
+                    onClick={() => { setRemoveError(''); setConfirmingRemove(true) }}
+                    className="text-[11px] font-medium text-clay/80 underline underline-offset-2 transition hover:text-clay"
+                  >
+                    Xóa khỏi đội
+                  </button>
+                )}
+              </div>
+            ) : confirmingRemove ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] leading-relaxed text-ink/55">
+                  Xóa <span className="font-semibold text-ink">{member.full_name || member.mssv}</span>
+                  {member.is_captain && <span className="text-clay"> (đội trưởng)</span>} khỏi đội? Điểm và lượt điểm danh gắn với đội vẫn giữ nguyên.
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={confirmRemove}
+                    disabled={removing}
+                    className="rounded-md bg-clay px-3 py-1 text-xs font-semibold text-white transition hover:bg-clay/90 disabled:opacity-60"
+                  >
+                    {removing ? 'Đang xóa...' : 'Xóa'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setConfirmingRemove(false); setRemoveError('') }}
+                    disabled={removing}
+                    className="rounded-md border border-stone bg-white px-3 py-1 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60"
+                  >
+                    Huỷ
+                  </button>
+                </div>
+                {removeError && <p className="text-[11px] leading-relaxed text-clay">{removeError}</p>}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-[11px] leading-relaxed text-ink/45">
+                  Sửa MSSV thí sinh về đúng số để nối với tài khoản web. Đội, điểm và điểm danh giữ nguyên.
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    value={value}
+                    onChange={e => setValue(e.target.value)}
+                    disabled={saving}
+                    placeholder="MSSV đúng"
+                    className="w-36 rounded-md border border-stone bg-white px-2 py-1 font-mono text-xs text-ink outline-none focus:border-trail disabled:opacity-60"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') submit()
+                      if (e.key === 'Escape') cancel()
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={saving}
+                    className="rounded-md bg-trail px-3 py-1 text-xs font-semibold text-white transition hover:bg-trail/90 disabled:opacity-60"
+                  >
+                    {saving ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancel}
+                    disabled={saving}
+                    className="rounded-md border border-stone bg-white px-3 py-1 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60"
+                  >
+                    Huỷ
+                  </button>
+                </div>
+                {error && <p className="text-[11px] leading-relaxed text-clay">{error}</p>}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -214,13 +397,102 @@ function ProofImage({ teamId }) {
   )
 }
 
-function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
+function DeleteTeamModal({ team, deleting, error, onClose, onConfirm }) {
+  const [confirmCode, setConfirmCode] = useState('')
+
+  useEffect(() => {
+    setConfirmCode('')
+  }, [team?.id, team?.code])
+
+  if (!team) return null
+
+  const targetCode = team.code || team.id || ''
+  const isMatch = confirmCode.trim() === targetCode
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      onClick={e => {
+        e.stopPropagation()
+        if (e.target === e.currentTarget && !deleting) onClose()
+      }}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-stone bg-white p-6 shadow-2xl space-y-4 animate-[fadeIn_0.15s_ease-out]"
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="font-display text-lg font-bold text-ink">Xác nhận xoá đội</h3>
+        <p className="text-sm text-ink/70 leading-relaxed">
+          Bạn có chắc chắn muốn xoá đội <strong className="font-semibold text-ink">{team.name}</strong> ({targetCode})? Toàn bộ thành viên, điểm số, lịch sử check-in và tài nguyên Discord sẽ bị xoá vĩnh viễn.
+        </p>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-ink/70">
+            Nhập mã đội <span className="font-mono font-bold text-clay">{targetCode}</span> để xác nhận
+          </label>
+          <input
+            type="text"
+            value={confirmCode}
+            onChange={e => setConfirmCode(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && isMatch && !deleting) {
+                e.preventDefault()
+                onConfirm()
+              }
+            }}
+            placeholder={targetCode}
+            disabled={deleting}
+            autoFocus
+            className="w-full rounded-lg border border-stone bg-white px-3 py-2 font-mono text-sm text-ink placeholder:text-ink/25 outline-none transition focus:border-clay/40 focus:ring-2 focus:ring-clay/10 disabled:opacity-50"
+          />
+        </div>
+
+        {error && (
+          <p className="rounded-lg border border-clay/20 bg-clay/10 px-3 py-2 text-xs text-clay">
+            {error}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className={SECONDARY_BTN}
+          >
+            Huỷ
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!isMatch || deleting}
+            className={DANGER_SOLID_BTN}
+          >
+            <Icon name="trash" className="h-4 w-4" />
+            {deleting ? 'Đang xoá...' : 'Xác nhận xoá'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, onFixIdentity, onRemoveMember, isAdmin: isAdminProp }) {
   const [mode, setMode] = useState('idle')
   const [note, setNote] = useState('')
+  const [teamToDelete, setTeamToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
+  const user = getStoredUser()
+  const isAdmin = isAdminProp !== undefined ? isAdminProp : isAdminRole(user?.role)
 
   useEffect(() => {
     setMode('idle')
     setNote('')
+    setTeamToDelete(null)
+    setDeleting(false)
+    setDeleteError('')
   }, [team?.id])
 
   if (!team) return null
@@ -228,6 +500,26 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
   const canAct = team.status === 'pending_approval'
   const withAccount = team.members.filter(member => member.has_account).length
   const withDiscord = team.members.filter(member => member.discord_id).length
+
+  const handleDeleteTeam = async () => {
+    if (!team) return
+    try {
+      setDeleting(true)
+      setDeleteError('')
+      await apiRequest(`/teams/${team.id}`, { method: 'DELETE' })
+      setTeamToDelete(null)
+      onClose?.()
+      onReload?.()
+    } catch (err) {
+      if (err?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setDeleteError(explainApiError(err) || 'Không thể xoá đội.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50">
@@ -310,7 +602,15 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
                 </p>
                 <div className={`${CARD} overflow-hidden divide-y divide-stone/50`}>
                   {team.members.length > 0
-                    ? team.members.map(member => <MemberCard key={member.mssv} member={member} />)
+                    ? team.members.map(member => (
+                        <MemberCard
+                          key={member.mssv}
+                          member={member}
+                          isAdmin={isAdmin}
+                          onFixIdentity={onFixIdentity}
+                          onRemoveMember={onRemoveMember}
+                        />
+                      ))
                     : <p className="px-4 py-5 text-sm italic text-ink/30">Đội chưa có thành viên.</p>}
                 </div>
 
@@ -319,22 +619,37 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
           )}
         </div>
 
-        {canAct && !loading && (
+        {!loading && (canAct || isAdmin) && (
           <div className="border-t border-stone bg-white">
             {mode === 'idle' && (
-              <div className="flex gap-2 px-4 py-4">
-                <button type="button" onClick={() => setMode('rejecting')} className="flex items-center gap-1.5 rounded-lg border border-clay/30 bg-white px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/[0.04]">
-                  <Icon name="xmark" className="h-4 w-4" />
-                  Từ chối
-                </button>
-                <button type="button" onClick={() => setMode('confirming')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-trail px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]">
-                  <Icon name="checkPlain" className="h-4 w-4" />
-                  Duyệt đội
-                </button>
+              <div className="space-y-2 px-4 py-4">
+                {canAct && (
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setMode('rejecting')} className="flex items-center gap-1.5 rounded-lg border border-clay/30 bg-white px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/[0.04]">
+                      <Icon name="xmark" className="h-4 w-4" />
+                      Từ chối
+                    </button>
+                    <button type="button" onClick={() => setMode('confirming')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-trail px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.96]">
+                      <Icon name="checkPlain" className="h-4 w-4" />
+                      Duyệt đội
+                    </button>
+                  </div>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setTeamToDelete(team)}
+                    disabled={busy || deleting}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-clay/30 bg-white px-4 py-2.5 text-sm font-semibold text-clay transition hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Icon name="trash" className="h-4 w-4" />
+                    Xóa đội
+                  </button>
+                )}
               </div>
             )}
 
-            {mode === 'confirming' && (
+            {canAct && mode === 'confirming' && (
               <div className="space-y-3 px-4 py-4">
                 <div className="rounded-lg border border-trail/25 bg-trail/[0.06] px-4 py-3">
                   <p className="text-sm font-semibold text-ink">Xác nhận duyệt đội?</p>
@@ -354,7 +669,7 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
               </div>
             )}
 
-            {mode === 'rejecting' && (
+            {canAct && mode === 'rejecting' && (
               <div className="space-y-3 px-4 py-4">
                 <div>
                   <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
@@ -383,6 +698,22 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject }) {
           </div>
         )}
       </aside>
+
+      {/* Delete Confirmation Modal */}
+      {teamToDelete && (
+        <DeleteTeamModal
+          team={teamToDelete}
+          deleting={deleting}
+          error={deleteError}
+          onClose={() => {
+            if (!deleting) {
+              setTeamToDelete(null)
+              setDeleteError('')
+            }
+          }}
+          onConfirm={handleDeleteTeam}
+        />
+      )}
     </div>
   )
 }
@@ -563,7 +894,7 @@ function MergeTeamsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="merge-teams-title"
-        className="relative flex h-[calc(100dvh-2rem)] max-h-[820px] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-stone bg-paper shadow-2xl sm:h-[calc(100dvh-3rem)]"
+        className="relative flex h-[calc(100vh-2rem)] h-[calc(100dvh-2rem)] max-h-[820px] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-stone bg-paper shadow-2xl sm:h-[calc(100vh-3rem)] sm:h-[calc(100dvh-3rem)]"
       >
         <div className="flex items-start justify-between gap-3 border-b border-stone bg-white px-5 py-4">
           <div>
@@ -736,7 +1067,7 @@ function MergeTeamsModal({
   )
 }
 
-function TeamsPage() {
+function TeamsPage({ isAdmin: isAdminProp } = {}) {
   const [teams, setTeams] = useState([])
   const [statusCounts, setStatusCounts] = useState(null)
   const [filter, setFilter] = useSearchParam('status', 'all')
@@ -756,6 +1087,9 @@ function TeamsPage() {
   const [mergeSelectedIds, setMergeSelectedIds] = useState([])
   const [mergeError, setMergeError] = useState('')
   const [mergeNotice, setMergeNotice] = useState('')
+
+  const currentUser = useMemo(() => getStoredUser() || {}, [])
+  const isAdmin = isAdminProp !== undefined ? isAdminProp : isAdminRole(currentUser?.role)
 
   const loadTeams = useCallback(async () => {
     const params = new URLSearchParams({ limit: '200' })
@@ -814,9 +1148,10 @@ function TeamsPage() {
         if (cancelled) return
         setSelectedTeam({
           id: detail.code,
+          code: detail.code,
           teamId: detail.id ?? null,
           name: detail.name,
-          owner: detail.owner_username || '',
+          ...normalizeCaptain(detail),
           status: detail.approval_status,
           provision: detail.provision_state || 'none',
           submittedAt: detail.submitted_at,
@@ -884,9 +1219,10 @@ function TeamsPage() {
       const detail = await apiRequest(`/teams/${selectedId}`)
       setSelectedTeam({
         id: detail.code,
+        code: detail.code,
         teamId: detail.id ?? null,
         name: detail.name,
-        owner: detail.owner_username || '',
+        ...normalizeCaptain(detail),
         status: detail.approval_status,
         provision: detail.provision_state || 'none',
         submittedAt: detail.submitted_at,
@@ -909,9 +1245,10 @@ function TeamsPage() {
       const detail = await apiRequest(`/teams/${selectedId}`)
       setSelectedTeam({
         id: detail.code,
+        code: detail.code,
         teamId: detail.id ?? null,
         name: detail.name,
-        owner: detail.owner_username || '',
+        ...normalizeCaptain(detail),
         status: detail.approval_status,
         provision: detail.provision_state || 'none',
         submittedAt: detail.submitted_at,
@@ -923,6 +1260,54 @@ function TeamsPage() {
       })
     }
   })
+
+  // Correct a roster participant's mis-typed MSSV and relink the real account.
+  // Not routed through withBusy so the member card can show its own inline
+  // error/spinner; a 401 still bounces to login.
+  const handleFixIdentity = async (currentMssv, correctMssv) => {
+    try {
+      const res = await apiRequest('/admin/participants/fix-identity', {
+        method: 'POST',
+        body: { current_mssv: currentMssv, correct_mssv: correctMssv },
+      })
+      await loadTeams()
+      if (selectedId) {
+        const detail = await apiRequest(`/teams/${selectedId}`)
+        setSelectedTeam(mapTeamDetail(detail))
+      }
+      return res
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      throw error
+    }
+  }
+
+  // Remove a single member from a team. Like handleFixIdentity, this stays
+  // outside withBusy so the member card can show its own inline spinner/error;
+  // a 401 still bounces to login.
+  const handleRemoveMember = async (mssv) => {
+    try {
+      const res = await apiRequest(
+        `/teams/${selectedId}/members/${encodeURIComponent(mssv)}`,
+        { method: 'DELETE' },
+      )
+      await loadTeams()
+      if (selectedId) {
+        const detail = await apiRequest(`/teams/${selectedId}`)
+        setSelectedTeam(mapTeamDetail(detail))
+      }
+      return res
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      throw error
+    }
+  }
 
   const loadMergeCandidates = useCallback(async () => {
     setMergeLoading(true)
@@ -1135,7 +1520,20 @@ function TeamsPage() {
                   >
                     <td className="px-4 py-3.5 font-mono text-sm text-ink/55">{team.id}</td>
                     <td className="px-4 py-3.5 text-sm font-medium text-ink">{team.name}</td>
-                    <td className="px-4 py-3.5 text-sm text-ink/60">{team.owner || '—'}</td>
+                    <td className="px-4 py-3.5 text-sm text-ink/60">
+                      {team.captainName || team.captainMssv ? (
+                        <div className="min-w-[10rem]">
+                          <p className="font-medium text-ink/70">
+                            {team.captainName || '(Chưa điền họ tên)'}
+                          </p>
+                          {team.captainMssv && (
+                            <p className="mt-0.5 font-mono text-xs text-ink/40">{team.captainMssv}</p>
+                          )}
+                        </div>
+                      ) : (
+                        team.owner || '—'
+                      )}
+                    </td>
                     <td className="px-4 py-3.5 text-center font-mono text-sm text-ink/55">{team.memberCount}</td>
                     <td className="px-4 py-3.5">
                       <div className="flex flex-wrap gap-1.5">
@@ -1162,6 +1560,10 @@ function TeamsPage() {
         onClose={() => setSelectedId(null)}
         onApprove={handleApprove}
         onReject={handleReject}
+        onReload={loadTeams}
+        onFixIdentity={handleFixIdentity}
+        onRemoveMember={handleRemoveMember}
+        isAdmin={isAdmin}
       />
 
       <CreateTeamDrawer

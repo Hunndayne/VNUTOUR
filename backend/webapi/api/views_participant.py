@@ -7,44 +7,62 @@ from pathlib import Path
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import never_cache
 from django.db import IntegrityError, transaction
 from django.db.models import Count
 from django.utils import timezone
 
 from api.models import (
-    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamMembership,
+    Account, CaptainVote, Participant, Team, TeamFormDraft, TeamFormSession, TeamMembership,
     PhaseRoster, ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
     MssvLinkAudit,
 )
 from api.services.registration_service import (
-    get_schema, validate_account_mssv_claim, validate_person_submission,
+    UIT_CODE, get_schema, validate_account_mssv_claim, validate_person_submission,
 )
-from api.services.program_service import get_current_sub_event
+from api.services.program_service import get_current_sub_event, get_current_phase
 from api.services.checkin_qr_service import team_qr_visible
 
 from api.services.station_service import set_submission_score, replay_lock_reason
 from api.services.submission_storage_service import (
-    save_submission_files, save_payment_proof, proof_file_response,
+    delete_stored_object, save_submission_files, save_payment_proof, proof_file_response,
 )
 from api.services.payment_service import build_payment_info
+from api.services.account_detail_encryption import encrypt_account_details, load_browser_public_key
+from api.services.audit_service import record_audit
 from api.services.timo_service import confirm_team_payment_via_timo, is_timo_configured
 from api.services.submission_config_service import (
     normalize_config as normalize_submission_config,
     public_config as public_submission_config,
     has_items as has_submission_items,
+    has_form as submission_has_form,
+    references_bank as submission_references_bank,
     attachment_item as submission_attachment_item,
     grade_quiz as grade_submission_quiz,
     checkout_after_submit,
 )
 from api.services.team_form_variant_service import variant_item_ids
 from api.services import team_merge_service
+from api.services.team_invite_service import (
+    accept_team_invite, account_profile_is_complete, inspect_team_invite,
+    issue_team_invite, revoke_team_invite,
+)
 from api.services.team_service import (
     create_team, add_member, update_member, remove_member, submit_team,
+    lock_registration_capacity, team_registration_capacity_error,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
     link_account_profile, ensure_default_phase_roster_for_team, registration_is_open,
-    profile_is_account_owned_by_other,
+    team_name_is_duplicate,
+    draft_membership_move_error,
 )
 from .views_shared import _json_body, _auth_or_401, _require_role
+
+
+class _TeamCreationAborted(Exception):
+    def __init__(self, code: str, status: int = 409):
+        super().__init__(code)
+        self.code = code
+        self.status = status
 
 
 def _registration_mismatch_response(account: Account, mssv: str) -> JsonResponse:
@@ -86,8 +104,8 @@ def _registration_mismatch_response(account: Account, mssv: str) -> JsonResponse
 def _prepare_member_submission(data: dict, who: str):
     """Merge trusted existing profile data before validating a team member form."""
     payload = dict(data or {})
-    mssv = str((payload.get("mssv") or "").strip())
-    email = str((payload.get("email") or "").strip())
+    mssv = str((payload.get("mssv") or "").strip()).upper()
+    email = str((payload.get("email") or "").strip()).lower()
     if not mssv:
         return {}, {}, "missing:%s:mssv" % who
     if not email:
@@ -120,10 +138,10 @@ def _prepare_member_submission(data: dict, who: str):
     return validate_person_submission(payload, who)
 
 
-def _member_resolution(data: dict):
-    payload = dict(data or {})
-    mssv = str((payload.get("mssv") or "").strip())
-    email = str((payload.get("email") or "").strip())
+def _member_resolution(data: dict, team: Team | None = None):
+    data = data or {}
+    mssv = str((data.get("mssv") or "").strip())
+    email = str((data.get("email") or "").strip())
     if not mssv:
         return None, "missing:member:mssv"
     if not email:
@@ -137,44 +155,73 @@ def _member_resolution(data: dict):
     if submitted_member:
         return None, "mssv_in_submitted_team"
 
+    # Mirror add_member's transfer rule so the captain sees the conflict while
+    # typing. Only the participant's auto-created solo draft may be dissolved;
+    # every real roster requires an explicit leave/transfer.
+    b_membership = TeamMembership.objects.filter(
+        participant__mssv=mssv,
+    ).select_related("team", "team__owner_account").first()
+    if b_membership and (team is None or b_membership.team_id != team.id):
+        move_error = draft_membership_move_error(b_membership, mssv)
+        if move_error:
+            return None, move_error
+
     account = Account.objects.filter(mssv=mssv, is_active=True).first()
     participant = Participant.objects.filter(mssv=mssv).first()
     if account:
         if account.email.strip().lower() != email.lower():
             return None, "registration_mismatch"
-        for key in ("full_name", "email", "phone", "school", "faculty"):
-            value = getattr(account, key, None)
-            if value:
-                payload[key] = value
     elif participant:
         registered_email = (participant.email or "").strip().lower()
         if registered_email and registered_email != email.lower():
             return None, "registration_mismatch"
 
+    # Which registration fields this MSSV already has on file. We record only
+    # *presence*, never the values: a captain may fill in a member's missing
+    # fields, but must not be able to view — or overwrite — data that already
+    # belongs to another account (see ``add_member``'s missing-only merge).
+    stored: set[str] = set()
+    if account:
+        for key in ("full_name", "email", "phone", "school", "faculty"):
+            if getattr(account, key, None):
+                stored.add(key)
     if participant:
-        for key in ("full_name", "email", "phone", "school", "faculty", "facebook", "date_of_birth"):
-            value = getattr(participant, key, None)
+        for key in (
+            "full_name", "email", "phone", "school",
+            "faculty", "facebook", "cccd", "date_of_birth",
+        ):
+            if getattr(participant, key, None):
+                stored.add(key)
+        for key, value in (participant.extra or {}).items():
             if value:
-                payload[key] = value.isoformat() if key == "date_of_birth" else value
-        if participant.extra:
-            for key, value in participant.extra.items():
-                if value:
-                    payload[key] = value
+                stored.add(key)
 
-    fields = []
-    for field in get_schema().get("person_fields", []):
-        if not field.get("enabled", True):
-            continue
-        if field.get("key") == "cccd" and participant and participant.cccd:
-            continue
-        fields.append(field)
+    # Match submission validation's school precedence. UIT's CCCD is filled
+    # automatically on save, even when the stored value is still blank. The
+    # school itself stays private, so the client cannot apply this rule alone.
+    registered_school = (
+        (account.school if account else "")
+        or (participant.school if participant else "")
+        or ""
+    ).strip()
+    if registered_school == UIT_CODE:
+        stored.add("cccd")
 
-    safe_profile = {
-        "mssv": payload.get("mssv") or "",
-        "full_name": payload.get("full_name") or "",
-        "school": payload.get("school") or "",
-    }
-    return {"profile": safe_profile, "fields": fields, "has_account": account is not None}, None
+    # Show the identity the captain typed plus only the fields still blank.
+    # A field that already holds a value is hidden entirely (write-only), so no
+    # stored registration data ever leaves this endpoint.
+    fields = [
+        field
+        for field in get_schema().get("person_fields", [])
+        if field.get("enabled", True)
+        and (field.get("key") in ("mssv", "email") or field.get("key") not in stored)
+    ]
+
+    return {
+        "profile": {"mssv": mssv, "email": email},
+        "fields": fields,
+        "has_account": account is not None,
+    }, None
 
 
 def _placeholder_team_name(mssv: str) -> str:
@@ -214,10 +261,13 @@ def _submission_limits(config: dict | None) -> dict:
         "max_submissions": limits["maxSubmissions"],
         "close_on_correct": limits["closeOnCorrect"],
         "manual_closed": limits["manualClosed"],
+        "opens_at": limits.get("opensAt", ""),
+        "closes_at": limits.get("closesAt", ""),
+        "duration_minutes": limits.get("durationMinutes", 0),
     }
 
 
-def _form_closure_state(station: Station) -> dict:
+def _form_closure_state(station: Station, team: Team | None = None) -> dict:
     """Whether the station form stopped accepting submissions, and why."""
     limits = _submission_limits(station.submission_config)
     submitted = StationSubmission.objects.filter(
@@ -227,18 +277,73 @@ def _form_closure_state(station: Station) -> dict:
     submitted_count = submitted.count()
 
     reason = None
+    dynamic_closes_at = None
+    session_started_at = None
+
     if limits["manual_closed"]:
         reason = "manual"
     elif limits["max_submissions"] and submitted_count >= limits["max_submissions"]:
         reason = "limit_reached"
     elif limits["close_on_correct"] and submitted.filter(is_correct=True).exists():
         reason = "correct_answer"
+    else:
+        from django.utils.dateparse import parse_datetime
+        import datetime
+        now = timezone.now()
+        
+        if limits.get("opens_at"):
+            opens_at = parse_datetime(limits["opens_at"])
+            if opens_at:
+                if timezone.is_naive(opens_at):
+                    opens_at = timezone.make_aware(opens_at)
+                if now < opens_at:
+                    reason = "not_opened"
+
+        if limits.get("closes_at") and not reason:
+            closes_at = parse_datetime(limits["closes_at"])
+            if closes_at:
+                if timezone.is_naive(closes_at):
+                    closes_at = timezone.make_aware(closes_at)
+                dynamic_closes_at = closes_at
+                # 15s grace period for auto-submission
+                if now >= closes_at + datetime.timedelta(seconds=15):
+                    reason = "time_closed"
+
+        if limits.get("duration_minutes") and team and not reason:
+            # The countdown starts when the attempt starts. For a scan-gated
+            # station that is the active StationSession's check-in (so a replay,
+            # which opens a new session, gets a fresh clock); for a free-play
+            # station it is the team's explicit TeamFormSession start.
+            if station.checkin_policy != Station.POLICY_FREE_PLAY:
+                active = StationSession.objects.filter(
+                    team=team, station=station, status=StationSession.STATUS_ACTIVE,
+                ).order_by("-entered_at").first()
+                started_at = active.entered_at if active else None
+            else:
+                form_session = TeamFormSession.objects.filter(
+                    team=team, station=station,
+                ).order_by("-started_at").first()
+                started_at = form_session.started_at if form_session else None
+
+            if started_at:
+                session_started_at = started_at
+                session_closes_at = started_at + datetime.timedelta(minutes=limits["duration_minutes"])
+                if dynamic_closes_at is None or session_closes_at < dynamic_closes_at:
+                    dynamic_closes_at = session_closes_at
+                # 15s grace period for auto-submission due to network latency
+                if now >= session_closes_at + datetime.timedelta(seconds=15):
+                    reason = "time_closed"
+            else:
+                reason = "not_started"
 
     return {
         "closed": reason is not None,
         "reason": reason,
         "submitted_count": submitted_count,
         "max_submissions": limits["max_submissions"] or None,
+        "closes_at": dynamic_closes_at.isoformat() if dynamic_closes_at else None,
+        "started_at": session_started_at.isoformat() if session_started_at else None,
+        "duration_minutes": limits.get("duration_minutes", 0),
     }
 
 
@@ -247,12 +352,39 @@ def _is_survey_station(station: Station) -> bool:
     return station.sub_event.type == SubEvent.TYPE_SURVEY
 
 
+def _station_has_form(station: Station, bank_counts: dict | None = None) -> bool:
+    """Whether a station has a form worth showing, shared-bank questions included.
+
+    `has_submission_items` only counts inline items, so a station that draws its
+    whole quiz from the shared bank (via `useAll`/`itemIds`) would look empty and
+    the participant would see "already completed" instead of the quiz. Pass a
+    shared `bank_counts` dict when looping over many stations so the per-sub-event
+    bank count is queried at most once.
+    """
+    config = station.submission_config
+    if has_submission_items(config):
+        return True
+    if not submission_references_bank(config):
+        return False
+    if bank_counts is None:
+        bank_counts = {}
+    sub_event_id = station.sub_event_id
+    if sub_event_id not in bank_counts:
+        from api.models import QuestionBankItem
+        bank_counts[sub_event_id] = QuestionBankItem.objects.filter(
+            sub_event_id=sub_event_id, active=True,
+        ).count()
+    return submission_has_form(config, bank_counts[sub_event_id])
+
+
 def _station_form_payload(station: Station, team: Team | None = None) -> dict:
+    from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
     event = station.sub_event
     # Drawing here (rather than only on submit) is what pins the question set:
     # whichever member opens the form first fixes it for the whole team.
     drawn_items = variant_item_ids(station, team)
+    effective_items = effective_quiz_items(station)
     payload = {
         "station_id": station.id,
         "station_code": station.code,
@@ -262,14 +394,23 @@ def _station_form_payload(station: Station, team: Team | None = None) -> dict:
         "event_name": event.name,
         "phase_key": phase.key,
         "phase_label": phase.label,
-        "submission_config": public_submission_config(station.submission_config, drawn_items),
-        "closure": _form_closure_state(station),
+        "submission_config": public_submission_config(station.submission_config, drawn_items, effective_quiz_items=effective_items),
+        "closure": _form_closure_state(station, team),
         "is_survey": _is_survey_station(station),
     }
     if team is not None:
-        mine = StationSubmission.objects.filter(
-            team=team, station=station,
-        ).order_by("-created_at").first()
+        # Scope to the current attempt: the active session for a scan-gated
+        # station, so a replay (new session) opens a clean form instead of
+        # showing the previous attempt's answers as already submitted.
+        session = StationSession.objects.filter(
+            team=team, station=station, status=StationSession.STATUS_ACTIVE,
+        ).order_by("-entered_at").first()
+        qs = StationSubmission.objects.filter(team=team, station=station)
+        if session:
+            qs = qs.filter(station_session=session)
+        else:
+            qs = qs.filter(station_session__isnull=True)
+        mine = qs.order_by("-created_at").first()
         payload["my_submission"] = {
             "status": mine.status,
             "submitted_at": mine.submitted_at.isoformat() if mine.submitted_at else None,
@@ -287,7 +428,7 @@ def _team_form_station_or_none(team: Team, station_id: int) -> Station | None:
     station = Station.objects.select_related("sub_event__phase").filter(
         id=station_id, active=True,
     ).first()
-    if not station or not has_submission_items(station.submission_config):
+    if not station or not _station_has_form(station):
         return None
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -356,11 +497,11 @@ def me_profile_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
-    if acc.mssv:
-        link_account_profile(acc)
+    participant, link_status = link_account_profile(acc)
+    if link_status in {"identity_review_required", "mssv_claimed_by_other"}:
+        return JsonResponse({"error": "identity_review_required"}, status=409)
 
     if request.method == "GET":
-        participant = Participant.objects.filter(mssv=acc.mssv).first() if acc.mssv else None
         return JsonResponse({
             "profile": {
                 "mssv": participant.mssv,
@@ -378,7 +519,7 @@ def me_profile_view(request: HttpRequest):
             "account_mssv": acc.mssv,
             # FE (esp. the post-Google-signup page) uses this to decide whether
             # to force the supplementary-info form before anything else.
-            "profile_complete": bool(acc.mssv and participant and participant.full_name),
+            "profile_complete": account_profile_is_complete(acc, participant),
         })
 
     if request.method in ("PUT", "PATCH"):
@@ -386,7 +527,7 @@ def me_profile_view(request: HttpRequest):
         if data is None:
             return JsonResponse({"error": "invalid_json"}, status=400)
 
-        mssv = str((data.get("mssv") or acc.mssv or "").strip())
+        mssv = str((data.get("mssv") or acc.mssv or "").strip()).upper()
         if not mssv:
             return JsonResponse({"error": "missing_mssv"}, status=400)
 
@@ -468,12 +609,13 @@ def my_team_view(request: HttpRequest):
         return err
     if acc.role != Account.ROLE_PARTICIPANT:
         return JsonResponse({"error": "forbidden"}, status=403)
-    if acc.mssv:
-        link_account_profile(acc)
+    participant, link_status = link_account_profile(acc)
+    if link_status in {"identity_review_required", "mssv_claimed_by_other"}:
+        return JsonResponse({"error": "identity_review_required"}, status=409)
 
     if request.method == "GET":
         membership = TeamMembership.objects.filter(
-            participant__mssv=acc.mssv,
+            participant=participant,
         ).select_related("team").first()
 
         if not membership:
@@ -482,11 +624,17 @@ def my_team_view(request: HttpRequest):
         team = membership.team
         ensure_default_phase_roster_for_team(team)
         _mc = len(get_team_members(team))
-        _max = int(get_schema().get("team_size_max") or get_schema().get("team_size") or 5)
+        _schema = get_schema()
+        _max = int(_schema.get("team_size_max") or _schema.get("team_size") or 5)
+        _min = int(_schema.get("team_size_min") or 1)
+        _captain_mssv = TeamMembership.objects.filter(
+            team=team, is_captain=True,
+        ).values_list("participant__mssv", flat=True).first()
         return JsonResponse({
             "team": {
                 "code": team.code,
                 "name": team.name,
+                "captain_mssv": _captain_mssv,
                 # The dashboard's team step needs to distinguish a captain's
                 # name from the creation/merge stand-ins.
                 "name_is_placeholder": _team_name_is_placeholder(team),
@@ -502,10 +650,21 @@ def my_team_view(request: HttpRequest):
                 "is_late_registration": team.is_late_registration,
                 "member_count": _mc,
                 "max_members": _max,
-                "roster_size_final": _mc == 1 or _mc == _max,
+                "roster_size_final": _min <= _mc <= _max,
                 "can_name": _mc == _max,
             },
-            "members": get_team_members(team, visibility="self", requester=acc),
+            "members": get_team_members(
+                team,
+                # The standalone participant team page only needs roster
+                # identity. Contact fields are fetched separately through the
+                # encrypted click-to-view endpoint below.
+                visibility=(
+                    "basic" if request.GET.get("view") == "summary"
+                    else "captain" if membership.is_captain
+                    else "self"
+                ),
+                requester=acc,
+            ),
             "editable": team_is_editable(team),
             "naming_allowed": (
                 team.approval_status == Team.APPROVAL_APPROVED
@@ -527,13 +686,6 @@ def my_team_view(request: HttpRequest):
             return JsonResponse({"error": "invalid_json"}, status=400)
 
         name = str((data.get("team_name") or data.get("name") or "").strip())
-        # Check participant doesn't already own a team via membership
-        existing = TeamMembership.objects.filter(
-            participant__mssv=acc.mssv,
-        ).first()
-        if existing:
-            return JsonResponse({"error": "already_has_team", "team_code": existing.team.code}, status=409)
-
         # Creation stays unnamed: the dashboard flow enters members first and
         # names the team on its team step, via the PATCH below.
         if name:
@@ -541,23 +693,53 @@ def my_team_view(request: HttpRequest):
                 {"error": "team_created_unnamed"},
                 status=409,
             )
-        team, err = create_team(_placeholder_team_name(acc.mssv), owner_account=acc)
-        if err:
-            return JsonResponse({"error": err}, status=400)
+        try:
+            with transaction.atomic():
+                lock_registration_capacity()
+                # Serialise duplicate create requests for the same account and
+                # repeat every precondition under that lock. Team creation and
+                # captain attachment either both commit or both roll back.
+                locked_acc = Account.objects.select_for_update().get(pk=acc.pk)
+                existing = TeamMembership.objects.filter(
+                    participant__mssv=locked_acc.mssv,
+                ).select_related("team").first()
+                if existing:
+                    raise _TeamCreationAborted("already_has_team")
+                owned_team = Team.objects.select_for_update().filter(
+                    owner_account=locked_acc,
+                ).first()
+                if owned_team:
+                    raise _TeamCreationAborted("already_has_team")
 
-        # Add creator as member + captain, then link the profile to the account
-        add_member(
-            team,
-            acc.mssv,
-            full_name=acc.full_name,
-            email=acc.email,
-            phone=acc.phone,
-            faculty=acc.faculty,
-            school=acc.school,
-            is_captain=True,
-            actor=acc,
-        )
-        link_account_profile(acc)
+                team, create_error = create_team(
+                    _placeholder_team_name(locked_acc.mssv),
+                    owner_account=locked_acc,
+                )
+                if create_error:
+                    raise _TeamCreationAborted(create_error, status=400)
+
+                participant, attach_error = add_member(
+                    team,
+                    locked_acc.mssv,
+                    full_name=locked_acc.full_name,
+                    email=locked_acc.email,
+                    phone=locked_acc.phone,
+                    faculty=locked_acc.faculty,
+                    school=locked_acc.school,
+                    is_captain=True,
+                    actor=locked_acc,
+                )
+                if attach_error or participant is None:
+                    raise _TeamCreationAborted(attach_error or "captain_attach_failed")
+                link_account_profile(locked_acc)
+        except _TeamCreationAborted as exc:
+            payload = {"error": exc.code}
+            existing = TeamMembership.objects.filter(
+                participant__mssv=acc.mssv,
+            ).select_related("team").first()
+            if existing:
+                payload["team_code"] = existing.team.code
+            return JsonResponse(payload, status=exc.status)
 
         return JsonResponse({
             "code": team.code,
@@ -601,6 +783,7 @@ def my_team_view(request: HttpRequest):
         schema = get_schema()
         members = get_team_members(team)
         max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
+        min_size = int(schema.get("team_size_min") or 1)
 
         if new_name and team.roster_locked_at and new_name != team.name:
             return _roster_locked_response()
@@ -611,14 +794,19 @@ def my_team_view(request: HttpRequest):
                 {"error": f"team_name_requires_full_team:{max_size}"},
                 status=409,
             )
+        if new_name and team_name_is_duplicate(new_name, exclude_team=team):
+            return JsonResponse({"error": "duplicate_team_name"}, status=409)
         if new_name:
             team.name = new_name
 
         if lock_roster and not team.roster_locked_at:
+            capacity_error = team_registration_capacity_error(team)
+            if capacity_error:
+                return JsonResponse({"error": capacity_error}, status=409)
             # A locked roster must be submittable as-is, or the captain is
             # stuck with a team they can neither edit nor send — so the lock
             # only lands after the same checks the submit gate runs.
-            if not (len(members) == 1 or len(members) == max_size):
+            if not (min_size <= len(members) <= max_size):
                 return JsonResponse(
                     {"error": f"team_size_not_final:{max_size}"},
                     status=409,
@@ -654,6 +842,13 @@ def my_team_payment_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    # Read-only preview: NO capacity row lock here. The dashboard polls this
+    # endpoint every few seconds from every captain, so taking
+    # select_for_update on the shared max_registrations row (or on the team)
+    # would serialise all of them and exhaust workers under load. The
+    # capacity check below is a plain read purely to hide the QR when full;
+    # the authoritative gates that actually consume a slot (submit, roster
+    # lock, add-member, invite, admin approval) still lock.
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
@@ -661,10 +856,18 @@ def my_team_payment_view(request: HttpRequest):
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
     team = membership.team
-    payload = build_payment_info(team)
-    payload["roster_locked"] = bool(team.roster_locked_at)
-    payload["payment_confirmed"] = bool(team.payment_confirmed_at)
-    payload["timo_configured"] = is_timo_configured()
+    payment_state = {
+        "has_proof": bool(team.payment_proof_file),
+        "roster_locked": bool(team.roster_locked_at),
+        "payment_confirmed": bool(team.payment_confirmed_at),
+        "timo_configured": is_timo_configured(),
+    }
+    capacity_error = team_registration_capacity_error(team)
+    if capacity_error:
+        # Keep receipts/cancellation accessible, but do not generate or return
+        # QR, bank details, transfer memo or a payment code for an ineligible team.
+        return JsonResponse({"error": capacity_error, **payment_state}, status=409)
+    payload = {**build_payment_info(team), **payment_state}
     return JsonResponse(payload)
 
 
@@ -685,11 +888,13 @@ def my_team_payment_confirm_auto_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    if not team.roster_locked_at:
-        return JsonResponse({"error": "roster_not_locked"}, status=409)
-
-    result = confirm_team_payment_via_timo(team)
+    # Serialize confirmation with cancellation. Both operations query the same
+    # payment source and must not commit opposite outcomes for one roster.
+    with transaction.atomic():
+        team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if not team.roster_locked_at:
+            return JsonResponse({"error": "roster_not_locked"}, status=409)
+        result = confirm_team_payment_via_timo(team)
     return JsonResponse({
         "status": result.status,
         "message": result.message,
@@ -699,8 +904,7 @@ def my_team_payment_confirm_auto_view(request: HttpRequest):
 
 @csrf_exempt
 def my_team_payment_cancel_view(request: HttpRequest):
-    """POST: captain cancels payment — unlocks the roster so members can be
-    added/removed again. Refused once payment is confirmed (final)."""
+    """POST: verify payment once, then cancel only when no transfer is found."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -713,15 +917,50 @@ def my_team_payment_cancel_view(request: HttpRequest):
     if not membership:
         return JsonResponse({"error": "not_team_owner"}, status=403)
 
-    team = membership.team
-    if team.payment_confirmed_at:
-        return JsonResponse({"error": "payment_already_confirmed"}, status=409)
-    if not team.roster_locked_at:
-        return JsonResponse({"status": "ok", "roster_locked": False})
+    proof_entry = {}
+    with transaction.atomic():
+        team = Team.objects.select_for_update().get(pk=membership.team_id)
+        if not team_is_editable(team):
+            return JsonResponse({"error": "team_locked"}, status=409)
+        if team.payment_confirmed_at:
+            return JsonResponse({"error": "payment_already_confirmed"}, status=409)
+        if not team.roster_locked_at and not team.payment_proof_file:
+            return JsonResponse({"status": "ok", "roster_locked": False, "has_proof": False})
 
-    team.roster_locked_at = None
-    team.save(update_fields=["roster_locked_at", "updated_at"])
-    return JsonResponse({"status": "ok", "roster_locked": False})
+        # Cancellation is destructive: it unlocks the priced roster and clears
+        # its receipt. Poll the authoritative payment source first. A failed or
+        # unavailable check must leave both pieces of evidence untouched.
+        check = confirm_team_payment_via_timo(team)
+        if check.status == "confirmed" or team.payment_confirmed_at:
+            if not team.payment_confirmed_at:
+                team.payment_confirmed_at = timezone.now()
+                team.save(update_fields=["payment_confirmed_at", "updated_at"])
+            return JsonResponse({
+                "error": "payment_already_confirmed",
+                "message": check.message,
+            }, status=409)
+        if check.status != "not_found":
+            error_code = (
+                "payment_check_unavailable"
+                if check.status == "not_configured"
+                else "payment_check_failed"
+            )
+            return JsonResponse({
+                "error": error_code,
+                "message": check.message,
+            }, status=503)
+
+        proof_entry = team.payment_proof_file or {}
+        team.roster_locked_at = None
+        # A receipt records the amount for the roster that was locked when it
+        # was uploaded. Unlocking lets the captain change that roster, so the
+        # receipt must be invalidated at the same time or it could approve a
+        # different headcount and amount later.
+        team.payment_proof_file = None
+        team.save(update_fields=["roster_locked_at", "payment_proof_file", "updated_at"])
+
+    delete_stored_object(proof_entry.get("storage"), proof_entry.get("key"))
+    return JsonResponse({"status": "ok", "roster_locked": False, "has_proof": False})
 
 
 PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
@@ -750,10 +989,11 @@ def my_team_payment_proof_view(request: HttpRequest):
         resp = proof_file_response(team.payment_proof_file)
         return resp if resp else JsonResponse({"error": "not_found"}, status=404)
 
-    # POST — re-upload is allowed right up until the team is approved, same as
-    # every other team-editing endpoint in this file.
+    # POST — submitted receipts are frozen until BTC requests changes.
     if not team_is_editable(team):
         return JsonResponse({"error": "team_locked"}, status=409)
+    if not team.roster_locked_at:
+        return JsonResponse({"error": "roster_not_locked"}, status=409)
 
     uploaded = request.FILES.get("file")
     if not uploaded:
@@ -777,6 +1017,7 @@ def my_team_payment_proof_view(request: HttpRequest):
 
 
 @csrf_exempt
+@transaction.atomic
 def my_team_submit_view(request: HttpRequest):
     """POST: submit team for approval."""
     if request.method != "POST":
@@ -785,6 +1026,7 @@ def my_team_submit_view(request: HttpRequest):
     acc, err = _auth_or_401(request)
     if err:
         return err
+    lock_registration_capacity()
     membership = TeamMembership.objects.filter(
         participant__mssv=acc.mssv, is_captain=True,
     ).select_related("team").first()
@@ -793,13 +1035,17 @@ def my_team_submit_view(request: HttpRequest):
     if not _team_edits_allowed(membership.team):
         return _registration_closed_response()
 
-    team = membership.team
+    # Use the same row lock as cancellation: validate the current receipt and
+    # roster, then submit before another request can unlock either of them.
+    team = Team.objects.select_for_update().get(pk=membership.team_id)
+    if not team_is_editable(team):
+        return JsonResponse({"error": "team_locked"}, status=409)
     schema = get_schema()
     members = get_team_members(team)
     max_size = int(schema.get("team_size_max") or schema.get("team_size") or 5)
-    # Registration is final only for a solo entry (1) or a full team (max);
-    # a partial team (2..max-1) must recruit to full or stay individual.
-    if not (len(members) == 1 or len(members) == max_size):
+    min_size = int(schema.get("team_size_min") or 1)
+    # Registration is final for any team within the allowed size range.
+    if not (min_size <= len(members) <= max_size):
         return JsonResponse(
             {"error": f"team_size_not_final:{max_size}"},
             status=409,
@@ -811,6 +1057,8 @@ def my_team_submit_view(request: HttpRequest):
     # enabled/required flags no longer opt out of it.
     if not team.payment_proof_file:
         return JsonResponse({"error": "missing:team:payment_proof"}, status=400)
+    if not team.roster_locked_at:
+        return JsonResponse({"error": "roster_not_locked"}, status=409)
 
     for index, member in enumerate(members, start=1):
         payload = {**member, **(member.get("extra") or {})}
@@ -852,9 +1100,64 @@ def my_team_member_resolve_view(request: HttpRequest):
     if data is None:
         return JsonResponse({"error": "invalid_json"}, status=400)
 
-    payload, error = _member_resolution(data)
+    payload, error = _member_resolution(data, team=membership.team)
     if error:
         return JsonResponse({"error": error}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+def my_team_invite_view(request: HttpRequest):
+    """POST a fresh three-hour invite or DELETE the team's current invite."""
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv, is_captain=True,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "not_team_owner"}, status=403)
+
+    team = membership.team
+    if request.method == "DELETE":
+        revoke_team_invite(team)
+        return JsonResponse({"status": "revoked"})
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if not _team_edits_allowed(team):
+        return _registration_closed_response()
+    if not team_is_editable(team) or team.roster_locked_at:
+        return JsonResponse({"error": "team_locked"}, status=409)
+
+    schema = get_schema()
+    maximum = int(schema.get("team_size_max") or schema.get("team_size") or 5)
+    if TeamMembership.objects.filter(team=team).count() >= maximum:
+        return JsonResponse({"error": "team_full"}, status=409)
+
+    invite, raw_token = issue_team_invite(team, acc)
+    return JsonResponse({
+        "token": raw_token,
+        "expires_at": invite.expires_at.isoformat(),
+        "ttl_seconds": 3 * 60 * 60,
+    }, status=201)
+
+
+@csrf_exempt
+def team_invite_detail_view(request: HttpRequest, token: str):
+    """Public invite summary; authenticated acceptance uses the same URL."""
+    if request.method == "GET":
+        payload = inspect_team_invite(token)
+        return JsonResponse(payload, status=200 if payload["status"] == "active" else 410)
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    payload, accept_error = accept_team_invite(token, acc)
+    if accept_error:
+        status = 403 if accept_error == "participant_required" else 409
+        return JsonResponse({"error": accept_error}, status=status)
     return JsonResponse(payload)
 
 
@@ -933,7 +1236,7 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
 
     team = membership.team
     is_captain = membership.is_captain
-    target_mssv = (mssv or "").strip()
+    target_mssv = (mssv or "").strip().upper()
 
     if request.method == "DELETE" and not is_captain:
         return JsonResponse({"error": "not_team_owner"}, status=403)
@@ -955,13 +1258,8 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
 
         target_membership = TeamMembership.objects.filter(
             team=team,
-            participant__mssv=mssv,
+            participant__mssv=target_mssv,
         ).select_related("participant").first()
-        if profile_is_account_owned_by_other(
-            target_membership.participant if target_membership else None, acc
-        ):
-            return JsonResponse({"error": "member_profile_owned"}, status=403)
-
         # mssv + email are locked reference fields: they can never change on an
         # edit, so we take them from the existing record and ignore whatever the
         # client sent. This also lets a PATCH omit them entirely (the form keeps
@@ -970,13 +1268,13 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
             target_membership.participant.email if target_membership else None
         ) or data.get("email")
         columns, extra, schema_error = _prepare_member_submission(
-            {**data, "mssv": mssv, "email": locked_email}, "member"
+            {**data, "mssv": target_mssv, "email": locked_email}, "member"
         )
         if schema_error:
             return JsonResponse({"error": schema_error}, status=400)
 
         participant, err = update_member(
-            team, mssv,
+            team, target_mssv,
             full_name=columns.get("full_name"),
             email=columns.get("email"),
             phone=columns.get("phone"),
@@ -993,7 +1291,7 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
             (
                 item for item in get_team_members(
                     team,
-                    visibility="self",
+                    visibility="captain" if is_captain else "self",
                     requester=acc,
                 )
                 if item["mssv"] == participant.mssv
@@ -1007,12 +1305,101 @@ def my_team_member_detail_view(request: HttpRequest, mssv: str):
         return JsonResponse(member_payload)
 
     if request.method == "DELETE":
-        success, err = remove_member(team, mssv)
+        success, err = remove_member(team, target_mssv)
         if not success:
             return JsonResponse({"error": err}, status=404)
-        return JsonResponse({"status": "removed", "mssv": mssv})
+        return JsonResponse({"status": "removed", "mssv": target_mssv})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+
+@csrf_exempt
+@never_cache
+def my_team_member_private_details_view(request: HttpRequest, mssv: str):
+    """Return the requested teammate dossier in an encrypted response.
+
+    Every team member may inspect the small contact dossier requested by the
+    participant UI, but only for somebody on their own team.  The list endpoint
+    remains intentionally sparse; private contact data is fetched only after an
+    explicit click and never has a plaintext fallback.
+    """
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if len(request.body) > 4096:
+        return JsonResponse({"error": "invalid_public_key"}, status=400)
+
+    data = _json_body(request)
+    if not isinstance(data, dict):
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    try:
+        public_key = load_browser_public_key(data.get("public_key"))
+    except ValueError:
+        return JsonResponse({"error": "invalid_public_key"}, status=400)
+
+    requester_membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not requester_membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    target_mssv = (mssv or "").strip().upper()
+    target_membership = TeamMembership.objects.filter(
+        team=requester_membership.team,
+        participant__mssv=target_mssv,
+    ).select_related("participant", "participant__account").first()
+    if not target_membership:
+        # Do not reveal whether that MSSV exists in another team.
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    # Reuse the canonical account-linking/status policy, then select only the
+    # fields this participant-facing view is allowed to disclose.
+    member = next(
+        (
+            item for item in get_team_members(requester_membership.team, visibility="full")
+            if item["mssv"] == target_mssv
+        ),
+        None,
+    )
+    if member is None:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    participant = target_membership.participant
+    payload = {
+        "member": {
+            "full_name": member.get("full_name"),
+            "mssv": member.get("mssv"),
+            "school": member.get("school"),
+            "faculty": member.get("faculty"),
+            "facebook": member.get("facebook"),
+            "phone": member.get("phone"),
+            "is_captain": bool(target_membership.is_captain),
+        },
+        "accounts": {
+            "discord": {
+                "connected": bool(member.get("discord_id")),
+                "username": participant.discord_username or None,
+            },
+            "web": {
+                "connected": bool(member.get("has_account")),
+            },
+        },
+    }
+    encrypted = encrypt_account_details(payload, public_key, username=target_mssv)
+    record_audit(
+        actor=acc,
+        action="team.member_details_viewed",
+        summary="Viewed encrypted teammate details",
+        target_type="participant",
+        target_id=participant.pk,
+    )
+    response = JsonResponse(encrypted)
+    response["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 def my_team_qr_view(request: HttpRequest):
@@ -1137,31 +1524,52 @@ def my_team_stations_view(request: HttpRequest):
     total_stations = len(stations)
     visited_count = 0
     passed_count = 0
-    all_visited = all(journey_sessions.get(station.id) for station in stations)
+    all_visited = all(journey_sessions.get(station.id) or my_submissions.get(station.id) for station in stations)
 
     station_payloads = []
+    bank_counts: dict = {}
     for station in stations:
         session = my_sessions.get(station.id)
         submission = my_submissions.get(station.id)
         rows = journey_sessions.get(station.id, [])
 
         visit_count = len(rows)
-        if visit_count:
-            visited_count += 1
         has_active = any(r["status"] == StationSession.STATUS_ACTIVE for r in rows)
         has_closed = any(r["status"] == StationSession.STATUS_CLOSED for r in rows)
         has_passed = any(r["outcome"] == StationSession.OUTCOME_PASSED for r in rows)
+
+        if submission and not rows:
+            visit_count = 1
+            has_closed = True
+            
+            sub_score = submission.score if submission.score is not None else 0
+            if station.scoring_mode == Station.SCORING_THRESHOLD:
+                has_passed = sub_score >= station.pass_threshold
+            elif station.scoring_mode == Station.SCORING_SCORE_ONLY:
+                has_passed = submission.status == StationSubmission.STATUS_GRADED or sub_score > 0
+            elif station.scoring_mode == Station.SCORING_PASS_FAIL:
+                has_passed = sub_score == station.pass_points and sub_score > 0
+            
+            if station.scoring_mode == Station.SCORING_PASS_FAIL:
+                best_score = station.pass_points if has_passed else 0
+            elif station.scoring_mode == Station.SCORING_THRESHOLD:
+                best_score = sub_score if has_passed else 0
+            else:
+                best_score = sub_score
+        else:
+            if station.scoring_mode == Station.SCORING_PASS_FAIL:
+                best_score = station.pass_points if has_passed else 0
+            elif station.scoring_mode == Station.SCORING_THRESHOLD:
+                passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
+                best_score = max(passed_scores) if passed_scores else 0
+            else:  # score_only
+                scores = [r["score"] for r in rows]
+                best_score = max(scores) if scores else 0
+
+        if visit_count:
+            visited_count += 1
         if has_passed:
             passed_count += 1
-
-        if station.scoring_mode == Station.SCORING_PASS_FAIL:
-            best_score = station.pass_points if has_passed else 0
-        elif station.scoring_mode == Station.SCORING_THRESHOLD:
-            passed_scores = [r["score"] for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
-            best_score = max(passed_scores) if passed_scores else 0
-        else:  # score_only
-            scores = [r["score"] for r in rows]
-            best_score = max(scores) if scores else 0
 
         if has_active:
             journey_status = "active"
@@ -1180,8 +1588,9 @@ def my_team_stations_view(request: HttpRequest):
             # Tells the app whether to show a QR for a collab to scan, or to let
             # the team open the station on its own.
             "checkin_policy": station.checkin_policy,
-            "has_form": has_submission_items(station.submission_config),
+            "has_form": _station_has_form(station, bank_counts),
             "submission_brief": station.submission_config.get("brief", "") if isinstance(station.submission_config, dict) else "",
+            "limits": station.submission_config.get("limits", {}) if isinstance(station.submission_config, dict) else {},
             # Only meaningful where `has_form` — whether submitting ends the visit.
             "checkout_after_submit": checkout_after_submit(station.submission_config),
             "capacity": {
@@ -1217,6 +1626,7 @@ def my_team_stations_view(request: HttpRequest):
     payload["passed_count"] = passed_count
     payload["all_visited"] = all_visited
     payload["replay_enabled"] = replay_enabled
+    payload["server_now"] = timezone.now().isoformat()
 
     return JsonResponse(payload)
 
@@ -1253,8 +1663,9 @@ def my_team_forms_view(request: HttpRequest):
     )
 
     accessible_forms = []
+    bank_counts: dict = {}
     for station in stations:
-        if not has_submission_items(station.submission_config):
+        if not _station_has_form(station, bank_counts):
             continue
 
         phase_key = station.sub_event.phase.key
@@ -1273,6 +1684,60 @@ def my_team_forms_view(request: HttpRequest):
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "accessible_forms": accessible_forms,
+        "server_now": timezone.now().isoformat(),
+    })
+
+
+@csrf_exempt
+def my_team_form_start_view(request: HttpRequest, station_id: int):
+    """POST to explicitly start the form session, locking in the start time."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    membership = TeamMembership.objects.filter(
+        participant__mssv=acc.mssv,
+    ).select_related("team").first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+
+    team = membership.team
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        return JsonResponse({"error": "team_not_approved"}, status=403)
+
+    station = _team_form_station_or_none(team, station_id)
+    if not station:
+        return JsonResponse({"error": "form_not_found"}, status=404)
+
+    closure = _form_closure_state(station, team)
+    if closure["closed"] and closure.get("reason") != "not_started":
+        return JsonResponse({"error": "form_closed"}, status=403)
+
+    # Scan-gated stations start their clock at check-in, so "start" here only
+    # confirms the team is actually checked in; free-play stations self-start.
+    if station.checkin_policy != Station.POLICY_FREE_PLAY:
+        active = StationSession.objects.filter(
+            team=team, station=station, status=StationSession.STATUS_ACTIVE,
+        ).order_by("-entered_at").first()
+        if active is None:
+            return JsonResponse({"error": "not_checked_in"}, status=403)
+        started_at = active.entered_at
+    else:
+        session, _created = TeamFormSession.objects.get_or_create(
+            team=team, station=station,
+            defaults={"started_by": acc},
+        )
+        started_at = session.started_at
+
+    return JsonResponse({
+        "status": "started",
+        "started_at": started_at.isoformat(),
+        "server_now": timezone.now().isoformat(),
     })
 
 
@@ -1302,7 +1767,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         id=station_id,
         active=True,
     ).first()
-    if not station or not has_submission_items(station.submission_config):
+    if not station or not _station_has_form(station):
         return JsonResponse({"error": "form_not_found"}, status=404)
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
@@ -1324,7 +1789,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if current_event and station.sub_event_id != current_event.id:
         return JsonResponse({"error": "event_not_found"}, status=404)
 
-    closure = _form_closure_state(station)
+    closure = _form_closure_state(station, team)
     if closure["closed"]:
         return JsonResponse({
             "error": "form_closed",
@@ -1361,20 +1826,40 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
             return JsonResponse({"error": str(exc)}, status=400)
         attachment_payload = {"files": stored_files}
 
+    # Hard gate: a station that needs a coop scan only accepts a submission while
+    # the team holds an ACTIVE session there — i.e. a coop/admin actually scanned
+    # them in for this attempt. Without it a team could open any form from the
+    # list and submit without ever being checked in.
+    is_scan_gated = station.checkin_policy != Station.POLICY_FREE_PLAY
     session = StationSession.objects.filter(
-        team=team,
-        station=station,
+        team=team, station=station, status=StationSession.STATUS_ACTIVE,
     ).order_by("-entered_at").first()
+    if is_scan_gated and session is None:
+        return JsonResponse({"error": "not_checked_in"}, status=403)
 
-    submission = StationSubmission.objects.filter(
-        team=team,
-        station=station,
-    ).order_by("-created_at").first()
+    # Scope the submission to THIS attempt. A replay opens a fresh session, so it
+    # gets its own submission row — a later attempt never overwrites an earlier
+    # attempt's answers. Free-play stations have no session and keep one row.
+    if session is not None:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session=session,
+        ).order_by("-created_at").first()
+    else:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session__isnull=True,
+        ).order_by("-created_at").first()
     if not submission:
         submission = StationSubmission(team=team, station=station)
 
     # Same draw the team was served; answers to any other question are ignored.
-    quiz_result = grade_submission_quiz(config, response_payload, variant_item_ids(station, team))
+    from api.services.question_bank_service import effective_quiz_items
+    effective_items = effective_quiz_items(station)
+    quiz_result = grade_submission_quiz(
+        config, 
+        response_payload, 
+        variant_item_ids(station, team),
+        effective_quiz_items=effective_items
+    )
     if isinstance(response_payload, dict):
         # quiz_result is server-computed only; never trust a client-sent one
         response_payload.pop("quiz_result", None)
@@ -1507,8 +1992,9 @@ def my_experience_view(request: HttpRequest):
             active=True,
             checkin_policy=Station.POLICY_FREE_PLAY,
         ).order_by("order", "id")
+        bank_counts: dict = {}
         for station in stations:
-            if has_submission_items(station.submission_config):
+            if _station_has_form(station, bank_counts):
                 open_forms.append(_station_form_payload(station, team=team))
 
     return JsonResponse({
@@ -1590,6 +2076,36 @@ def my_team_captain_vote_view(request: HttpRequest):
     })
 
 
+def _team_qr_enabled_for_event(team, station_id) -> bool:
+    """Is this team's station QR live right now?
+
+    True when a sub-event is running and the team is eligible for it — the same
+    phase/roster gate `my_team_stations_view` uses to decide which stations the
+    team may even see. A named station must additionally be active and belong to
+    the running event. There is no separate BTC toggle: a running sub-event is
+    the open signal.
+    """
+    current_event = get_current_sub_event()  # phase is select_related, no extra query
+    if not current_event:
+        return False
+
+    # A named station must be a live station of the running event.
+    if station_id is not None and not Station.objects.filter(
+        id=station_id, sub_event=current_event, active=True,
+    ).exists():
+        return False
+
+    # Eligibility: a phase that has a roster admits only the teams on it; a phase
+    # without one is open to whoever is in the current phase (mirrors stations view).
+    # The common qualifying case — team on this phase's roster — settles in one query.
+    if PhaseRoster.objects.filter(phase=current_event.phase, team=team).exists():
+        return True
+    if PhaseRoster.objects.filter(phase=current_event.phase).exists():
+        return False  # phase is roster-gated and this team is not on it
+    current_phase = get_current_phase()
+    return bool(current_phase and current_event.phase_id == current_phase.id)
+
+
 def my_team_station_state_view(request: HttpRequest):
     """GET the one thing the QR screen polls for: has anything changed yet?
 
@@ -1637,8 +2153,10 @@ def my_team_station_state_view(request: HttpRequest):
         sessions = sessions.filter(status=StationSession.STATUS_ACTIVE)
 
     session = sessions.order_by("-entered_at").values(
-        "station_id", "status", "entered_at", "exited_at",
+        "station_id", "status", "entered_at", "exited_at", "id",
     ).first()
+    if session:
+        submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
         "station_id", "status", "submitted_at",
     ).first()
@@ -1652,18 +2170,27 @@ def my_team_station_state_view(request: HttpRequest):
     # station it is a check-in code, already inside it is a check-out code — so
     # the check-in and check-out QR for a station are genuinely different codes,
     # not one string the coop reinterprets.
+    #
+    # No global "BTC opens check-in" switch gates this any more: in the
+    # per-station model the QR is live automatically as soon as a sub-event is
+    # running and the team is eligible for it. Making a sub-event current *is*
+    # the act of opening the round. Eligibility (approved + on the phase roster,
+    # or in the current phase when that phase has no roster) still applies, and a
+    # named station must be active and belong to the running event.
     qr = {"enabled": False}
-    if team.approval_status == Team.APPROVAL_APPROVED and team_qr_visible(team):
-        if not team.qr_token:
-            rotate_qr_token(team)
-            team.refresh_from_db(fields=["qr_token"])
-        payload = f"t:{team.qr_token}"
-        direction = None
-        if station_id is not None:
-            inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
-            direction = "out" if inside else "in"
-            payload = f"{payload}|s:{station_id}|d:{direction}"
-        qr = {"enabled": True, "payload": payload, "direction": direction}
+    if team.approval_status == Team.APPROVAL_APPROVED:
+        enabled = _team_qr_enabled_for_event(team, station_id)
+        if enabled:
+            if not team.qr_token:
+                rotate_qr_token(team)
+                team.refresh_from_db(fields=["qr_token"])
+            payload = f"t:{team.qr_token}"
+            direction = None
+            if station_id is not None:
+                inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
+                direction = "out" if inside else "in"
+                payload = f"{payload}|s:{station_id}|d:{direction}"
+            qr = {"enabled": True, "payload": payload, "direction": direction}
 
     return JsonResponse({
         "team_code": team.code,
@@ -1680,4 +2207,7 @@ def my_team_station_state_view(request: HttpRequest):
             "submitted_at": stamp(submission["submitted_at"]),
         } if submission else None,
         "qr": qr,
+        "server_now": timezone.now().isoformat(),
     })
+
+

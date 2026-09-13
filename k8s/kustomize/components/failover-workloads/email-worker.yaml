@@ -1,0 +1,54 @@
+# Adapted from k8s/08.email-worker.yaml: same singleton, same image/env/
+# command, but baselined at replicas: 0. The site-activator owns the actual
+# replica count -- never add an HPA here, never hand-edit replicas.
+#
+# On homelab this ADOPTS the currently-imperative `email-worker` Deployment;
+# ArgoCD prune is off on prod so nothing is deleted, it just briefly scales to
+# 0 until the activator scales it back up.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-worker
+spec:
+  replicas: 0
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: email-worker
+
+  template:
+    metadata:
+      labels:
+        app: email-worker
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: email-worker
+          image: ghcr.io/hunndayne/vnutour-backend:latest
+
+          command:
+            - python
+            - webapi/manage.py
+            - process_email_queue
+            - --watch
+            - --sleep
+            - "5"
+
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"

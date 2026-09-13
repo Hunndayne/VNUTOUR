@@ -13,6 +13,7 @@ from unittest import mock
 
 from django.contrib.auth.hashers import make_password
 from django.core.cache import cache
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 
 from api.models import (
@@ -65,14 +66,10 @@ class AutoLinkServiceTests(TestCase):
         acc.refresh_from_db()
         self.assertIsNone(acc.mssv)
 
-    def test_no_link_when_email_is_ambiguous(self):
+    def test_duplicate_email_cannot_make_auto_link_ambiguous(self):
         _participant("2100001", "dup@gmail.com")
-        _participant("2100002", "dup@gmail.com")
-        acc = _account("dup@gmail.com")
-
-        self.assertIsNone(auto_link_participant_by_verified_email(acc))
-        acc.refresh_from_db()
-        self.assertIsNone(acc.mssv)
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            _participant("2100002", "DUP@gmail.com")
 
     def test_skips_when_account_already_has_mssv(self):
         _participant("2100001", "member@gmail.com")

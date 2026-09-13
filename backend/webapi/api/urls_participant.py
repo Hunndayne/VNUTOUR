@@ -3,11 +3,13 @@
 from django.urls import path
 from api.views_participant import (
     me_profile_view, my_team_view, my_team_submit_view,
-    my_team_members_view, my_team_member_detail_view, my_team_member_resolve_view,
-    my_team_qr_view, my_team_forms_view, my_team_form_submit_view, my_experience_view,
+    my_team_members_view, my_team_member_detail_view, my_team_member_private_details_view,
+    my_team_member_resolve_view,
+    my_team_qr_view, my_team_forms_view, my_team_form_submit_view, my_team_form_start_view, my_experience_view,
     my_team_captain_vote_view, my_team_stations_view, my_team_station_state_view,
     my_team_form_draft_view, my_team_payment_view, my_team_payment_proof_view,
     my_team_payment_confirm_auto_view, my_team_payment_cancel_view,
+    my_team_invite_view, team_invite_detail_view,
 )
 
 urlpatterns = [
@@ -21,6 +23,12 @@ urlpatterns = [
     path("my-team/members/", my_team_members_view),
     path("my-team/members/resolve", my_team_member_resolve_view),
     path("my-team/members/resolve/", my_team_member_resolve_view),
+    path("my-team/invite", my_team_invite_view),
+    path("my-team/invite/", my_team_invite_view),
+    path("team-invites/<str:token>", team_invite_detail_view),
+    path("team-invites/<str:token>/", team_invite_detail_view),
+    path("my-team/members/<str:mssv>/details", my_team_member_private_details_view),
+    path("my-team/members/<str:mssv>/details/", my_team_member_private_details_view),
     path("my-team/members/<str:mssv>", my_team_member_detail_view),
     path("my-team/members/<str:mssv>/", my_team_member_detail_view),
     path("my-team/qr", my_team_qr_view),
@@ -31,6 +39,8 @@ urlpatterns = [
     path("my-team/forms/", my_team_forms_view),
     path("my-team/forms/<int:station_id>/submit", my_team_form_submit_view),
     path("my-team/forms/<int:station_id>/submit/", my_team_form_submit_view),
+    path("my-team/forms/<int:station_id>/start", my_team_form_start_view),
+    path("my-team/forms/<int:station_id>/start/", my_team_form_start_view),
     path("my-team/stations/<int:station_id>/draft", my_team_form_draft_view),
     path("my-team/stations/<int:station_id>/draft/", my_team_form_draft_view),
     path("my-team/station-state", my_team_station_state_view),

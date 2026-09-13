@@ -41,6 +41,20 @@ def public_frames_view(request: HttpRequest):
     return JsonResponse({"frames": frames})
 
 
+def public_frame_detail_view(request: HttpRequest, frame_id: int):
+    """GET: detail of a single active frame for public viewing."""
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    frame, err = _get_frame_or_404(frame_id)
+    if err:
+        return err
+    if not frame.is_active:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    return JsonResponse({"frame": serialize_frame(frame, request, admin=False)})
+
+
 def public_frame_image_view(request: HttpRequest, frame_id: int):
     """GET: stream a frame's image bytes (same-origin, avoids canvas-taint/CORS)."""
     if request.method != "GET":

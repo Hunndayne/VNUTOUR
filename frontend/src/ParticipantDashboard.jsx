@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import logoImage from './assets/vnutour-logo.webp'
 import { Badge, Icon } from './ui.jsx'
 import SettingsPage from './SettingsPage.jsx'
+import RegistrationCapacityNotice from './RegistrationCapacityNotice.jsx'
 import DiscordConnectCard from './DiscordConnectCard.jsx'
+import { TeamSummaryCard } from './TeamDetailsPage.jsx'
+import FeedCard from './FeedCard.jsx'
 import { DISCORD_RETURN_KEY } from './discordConnect.js'
 import { apiDownload, apiRequest, formatDateTime, getStoredUser, logoutAndRedirect } from './api.js'
 import { DraftNotice, clearDraft, readDraft, writeDraft } from './drafts.jsx'
@@ -103,9 +106,9 @@ function normalizeProfile(authMe, profilePayload) {
     full_name: profile?.full_name || authMe?.full_name || '',
     mssv: profile?.mssv || authMe?.mssv || '',
     email: profile?.email || authMe?.email || '',
-    phone: profile?.phone || '',
-    faculty: profile?.faculty || '',
-    school: profile?.school || '',
+    phone: profile?.phone || authMe?.phone || '',
+    faculty: profile?.faculty || authMe?.faculty || '',
+    school: profile?.school || authMe?.school || '',
     facebook: profile?.facebook || '',
     cccd: profile?.cccd || '',
     date_of_birth: profile?.date_of_birth || '',
@@ -166,6 +169,15 @@ const FIELD_LABELS = {
   facebook: 'Link Facebook',
 }
 
+const MEMBERSHIP_CONFLICT_CODES = new Set([
+  'already_has_team',
+  'already_in_team',
+  'membership_changed',
+  'mssv_in_other_team',
+  'mssv_in_submitted_team',
+  'mssv_leads_other_team',
+])
+
 function explainApiError(error) {
   const code = error?.data?.error || error?.message
   if (code === 'missing:team:payment_proof') {
@@ -203,21 +215,27 @@ function explainApiError(error) {
     return `Đội cần đủ ${size} người, hoặc đúng 1 người (đăng ký cá nhân), mới có thể đặt tên, thanh toán hoặc gửi duyệt.`
   }
   if (code === 'registration_mismatch') {
-    const teamCode = error?.data?.detail?.team_code
-    const where = teamCode ? `đội ${teamCode}` : 'một đội'
-    return `MSSV này đã thuộc ${where}, nhưng email đăng ký trong đội chưa khớp với tài khoản Google của bạn — có thể trưởng nhóm nhập nhầm email. Vui lòng nhờ trưởng nhóm cập nhật lại email của bạn trong thông tin đội, hoặc liên hệ Ban tổ chức để được hỗ trợ. Sau khi email được sửa đúng, đăng nhập lại là hệ thống sẽ tự đưa bạn vào đội.`
+    return 'Email bạn vừa nhập không trùng với email đã đăng ký cho MSSV này. Vui lòng kiểm tra MSSV và Email của thành viên đã đăng ký trên trang web. Nếu thông tin đã đăng ký bị sai, vui lòng liên hệ Ban tổ chức để cập nhật.'
   }
   const map = {
     missing_mssv: 'Bạn cần cập nhật MSSV trước khi tiếp tục.',
     mssv_taken: 'MSSV này đã được dùng bởi tài khoản khác.',
-    registration_mismatch: 'MSSV này đã được đăng ký với email khác. Vui lòng kiểm tra lại.',
+    identity_review_required: 'Liên kết tài khoản và hồ sơ cần được BTC kiểm tra. Vui lòng liên hệ BTC để đối chiếu MSSV.',
+    registration_mismatch: 'Email bạn vừa nhập không trùng với email đã đăng ký cho MSSV này. Vui lòng kiểm tra MSSV và Email của thành viên đã đăng ký trên trang web.',
     profile_incomplete: 'Hồ sơ hiện chưa đủ để tạo đội.',
-    team_locked: 'Đội đã khóa chỉnh sửa.',
+    team_locked: 'Đội đã gửi duyệt nên không thể hủy thanh toán hoặc chỉnh sửa. Nếu cần thay đổi, hãy liên hệ BTC.',
+    duplicate_team_name: 'Tên đội này đã được một đội khác sử dụng. Vui lòng chọn tên khác.',
     roster_locked: 'Đội đã được xác nhận để thanh toán nên thông tin đã bị khóa. Cần thay đổi thì hãy liên hệ BTC.',
+    roster_not_locked: 'Bạn cần xác nhận lại danh sách đội trước khi tải minh chứng hoặc gửi duyệt.',
+    payment_already_confirmed: 'Hệ thống đã tìm thấy giao dịch. Thanh toán đã được xác nhận nên không thể hủy.',
+    payment_check_unavailable: 'Chưa thể kiểm tra trạng thái thanh toán. BTC cần cấu hình lại kết nối Timo trước khi bạn có thể hủy.',
+    payment_check_failed: 'Không kiểm tra được trạng thái thanh toán lúc này. Vui lòng thử lại sau; danh sách và minh chứng vẫn được giữ nguyên.',
     team_full: 'Đội đã đủ số lượng thành viên.',
-    mssv_in_other_team: 'MSSV này đang nằm trong đội khác.',
+    mssv_in_other_team: 'MSSV này đang nằm trong đội khác. Hãy liên hệ BTC nếu cần chuyển đội.',
     mssv_in_submitted_team: 'MSSV này đã thuộc một đội đã gửi duyệt, không thể thêm vào đội khác.',
+    mssv_leads_other_team: 'MSSV này đang là đội trưởng của một đội đã có thành viên khác. Hãy liên hệ BTC để xử lý đội hiện tại trước khi chuyển.',
     already_in_team: 'MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.',
+    membership_changed: 'Thông tin đội của thành viên vừa thay đổi. Danh sách đã được tải lại.',
     email_in_team: 'Email này đã được một người khác sử dụng — mỗi người phải dùng email riêng.',
     not_team_owner: 'Bạn không phải đội trưởng của đội này.',
     not_a_team_member: 'Bạn không thuộc đội này nên không bỏ phiếu được.',
@@ -231,6 +249,7 @@ function explainApiError(error) {
     team_not_approved: 'Đội cần được duyệt trước khi lấy QR.',
     invalid_json: 'Dữ liệu gửi lên không hợp lệ.',
     registration_closed: 'Đợt đăng ký hiện đang đóng.',
+    registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này. Vui lòng liên hệ BTC.',
     not_found: 'Không tìm thấy dữ liệu cần thiết.',
   }
   return map[code] || 'Có lỗi xảy ra khi đồng bộ dữ liệu.'
@@ -340,6 +359,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
           <select
             id={id}
             disabled={disabled}
+            required={field.required}
             className={baseClass}
             value={values.includes(value) ? value : (isOther ? '__other__' : '')}
             onChange={(e) => onChange(e.target.value === '__other__' ? ' ' : e.target.value)}
@@ -354,6 +374,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
             <input
               className={baseClass}
               disabled={disabled}
+              required={field.required}
               placeholder="Nhập giá trị khác"
               value={String(value).trim()}
               onChange={(e) => onChange(e.target.value)}
@@ -365,6 +386,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
           id={id}
           type="url"
           disabled={disabled}
+          required={field.required}
           className={baseClass}
           placeholder="Dán link ảnh minh chứng"
           value={value || ''}
@@ -375,6 +397,7 @@ function SchemaField({ field, value, onChange, disabled = false }) {
           id={id}
           type={field.type === 'date' ? 'date' : field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text'}
           disabled={disabled || field.key === 'mssv' && disabled}
+          required={field.required}
           className={baseClass}
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
@@ -450,10 +473,12 @@ function isTeamNamed(team) {
   return Boolean(team?.team_name) && !team?.name_is_placeholder
 }
 
-function getStepState(step, profile, team, members, fields) {
+function getStepState(step, profile, team, members, fields, profilePersisted = true) {
   const status = team?.approval_status
   const done = {
-    profile: isProfileComplete(profile, fields),
+    // Values typed into the form are not enough to create a team: the backend
+    // reads Account.mssv, which only changes after /me/profile accepts the save.
+    profile: profilePersisted && isProfileComplete(profile, fields),
     team: Boolean(team?.roster_size_final) && (team?.can_name ? isTeamNamed(team) : true),
     members: members.length > 0,
     payment: Boolean(team?.has_payment_proof),
@@ -469,13 +494,21 @@ function getStepState(step, profile, team, members, fields) {
   return 'idle'
 }
 
-function getNextAction(profile, team, members, fields, editable = true) {
+function getNextAction(profile, team, members, fields, editable = true, profilePersisted = true) {
   const missingProfileFields = getMissingProfileFields(profile, fields)
   if (missingProfileFields.length > 0) {
     return {
       title: 'Hoàn thiện thông tin đội trưởng',
       body: `Còn thiếu ${missingProfileFields.map((field) => field.label).join(', ')}. Bổ sung ngay trong danh sách thành viên.`,
       action: 'Bổ sung thông tin',
+      kind: 'profile',
+    }
+  }
+  if (!profilePersisted) {
+    return {
+      title: 'Lưu thông tin đội trưởng',
+      body: 'Thông tin đã điền đủ nhưng chưa được lưu. Hãy lưu trước khi tạo đội.',
+      action: 'Lưu thông tin',
       kind: 'profile',
     }
   }
@@ -558,7 +591,7 @@ function ProgressTrail({ profile, team, members, fields, activeStep, blockedStep
               type="button"
               disabled={!unlocked}
               aria-current={selected ? 'step' : undefined}
-              title={blocked ? 'Bước này đã khóa sau khi xác nhận thanh toán' : undefined}
+              title={blocked ? 'Bước này đã khóa theo trạng thái đăng ký của đội' : undefined}
               onClick={() => unlocked && onSelect?.(step.key)}
               className={`relative px-2 py-4 text-center transition ${unlocked ? 'cursor-pointer hover:bg-[#F3F4F1]' : 'cursor-not-allowed'}`}
               style={{ backgroundColor: selected ? COLORS.paper : 'white' }}
@@ -605,7 +638,9 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
   const [resolveError, setResolveError] = useState('')
 
   useEffect(() => {
-    if (!form) return
+    // Editing opens with every field already resolved; only an add needs to
+    // look up which fields the member is still missing.
+    if (!form || editing) return
     const mssv = String(form.mssv || '').trim()
     const email = String(form.email || '').trim()
     const key = `${mssv}|${email}`
@@ -640,7 +675,7 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [form?.mssv, form?.email, resolveKey, fields, form, onChange])
+  }, [form?.mssv, form?.email, resolveKey, fields, form, onChange, editing])
 
   useEffect(() => {
     if (!form) return undefined
@@ -659,6 +694,10 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
   if (!form) return null
   const identityFields = fields.filter((field) => field.key === 'mssv' || field.key === 'email')
   const visibleFields = form.resolved_fields || identityFields
+  const missingFields = form.resolved_fields
+    ? getMissingProfileFields(form, form.resolved_fields)
+    : []
+  const formReady = Boolean(form.resolved_fields) && missingFields.length === 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
@@ -672,7 +711,7 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
         role="dialog"
         aria-modal="true"
         aria-labelledby="member-modal-title"
-        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100dvh-3rem)]"
+        className="relative flex max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100vh-3rem)] sm:max-h-[calc(100dvh-3rem)]"
         onSubmit={onSave}
       >
         <div className="flex items-start justify-between border-b border-[#DCD8CC] bg-white px-5 py-4 sm:px-6">
@@ -713,18 +752,28 @@ function MemberModal({ form, fields, editing, saving, draft, error, onChange, on
               {error}
             </div>
           )}
+          {!form.resolved_fields && (
+            <p className="text-sm text-[#9A6B12]">
+              Nhập đúng MSSV và Email để tải hồ sơ, sau đó điền đủ các trường bắt buộc.
+            </p>
+          )}
+          {form.resolved_fields && missingFields.length > 0 && (
+            <p className="text-sm font-medium text-[#B93A23]">
+              Còn thiếu: {missingFields.map((field) => field.label).join(', ')}.
+            </p>
+          )}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button type="button" onClick={onClose} disabled={saving} className={SECONDARY_BUTTON}>
-            Huỷ
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className={PRIMARY_BUTTON}
-          >
-            <Icon name="checkPlain" className="h-4 w-4" />
-            {saving ? 'Đang lưu...' : 'Lưu thành viên'}
-          </button>
+            <button type="button" onClick={onClose} disabled={saving} className={SECONDARY_BUTTON}>
+              Huỷ
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !formReady}
+              className={PRIMARY_BUTTON}
+            >
+              <Icon name="checkPlain" className="h-4 w-4" />
+              {saving ? 'Đang lưu...' : 'Lưu thành viên'}
+            </button>
           </div>
         </div>
       </form>
@@ -769,7 +818,7 @@ function PaymentConfirmModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="payment-confirm-title"
-        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100dvh-3rem)]"
+        className="relative flex max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[#DCD8CC] bg-[#F3F4F1] shadow-[0_24px_80px_rgba(32,49,43,0.22)] sm:max-h-[calc(100vh-3rem)] sm:max-h-[calc(100dvh-3rem)]"
         onSubmit={onConfirm}
       >
         <div className="flex items-start justify-between border-b border-[#DCD8CC] bg-white px-5 py-4 sm:px-6">
@@ -844,7 +893,7 @@ function PaymentConfirmModal({
           <button type="button" onClick={onClose} disabled={busy} className={SECONDARY_BUTTON}>
             Quay lại chỉnh sửa
           </button>
-          <button type="submit" disabled={busy} className={PRIMARY_BUTTON}>
+          <button type="submit" disabled={busy || (!skipPayment && (paymentLoading || !paymentInfo))} className={PRIMARY_BUTTON}>
             <Icon name="checkPlain" className="h-4 w-4" />
             {busy ? 'Đang xác nhận...' : skipPayment ? 'Xác nhận thông tin đội' : 'Xác nhận & thanh toán'}
           </button>
@@ -1106,10 +1155,49 @@ function formatVnd(amount) {
 // team's captain scans/opens a VietQR to pay, then uploads a screenshot as
 // proof. The backend already tracks the proof file on the team, so all this
 // card owns is the VietQR display, the bank-app deeplinks, and the upload.
+function BankDropdown({ options, onSelect }) {
+  const [open, setOpen] = useState(false)
+  
+  return (
+    <div className="relative mt-2">
+      <button 
+        type="button" 
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between rounded-lg border border-[#DCD8CC] bg-white px-3 py-2 text-sm text-ink/80 transition hover:bg-[#F3F4F1]"
+      >
+        <span>Chọn ngân hàng...</span>
+        <Icon name="chevronD" className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-[#DCD8CC] bg-white shadow-lg">
+          {options.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => { setOpen(false); onSelect(option.key); }}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#20312B]/80 transition hover:bg-[#F3F4F1]"
+            >
+              {option.logo ? (
+                <img src={option.logo} alt={option.name} className="h-5 w-8 object-contain" />
+              ) : (
+                <div className="h-5 w-8" />
+              )}
+              <span className="font-semibold">{option.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PaymentSection({ team, editable, isCaptain, onProofChange }) {
+  const registrationSubmitted = ['pending_approval', 'approved'].includes(team?.approval_status)
+  const canEditPayment = editable && !registrationSubmitted
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [paymentError, setPaymentError] = useState('')
   const [notice, setNotice] = useState('')
   const [uploading, setUploading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1123,23 +1211,40 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 8000)
+    setInfo(null)
     setLoading(true)
-    setError('')
-    apiRequest('/my-team/payment')
-      .then((payload) => {
+    setPaymentError('')
+    // Load on entry only. Refreshing on window focus can unmount the file
+    // input while the OS picker is returning its selected receipt image.
+    const loadPayment = async () => {
+      try {
+        const payload = await apiRequest('/my-team/payment', { signal: controller.signal, cache: 'no-store' })
         if (cancelled) return
         setInfo(payload)
         setHasProof(Boolean(payload?.has_proof))
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return
-        setError(explainApiError(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+        // Capacity errors keep only receipt/cancellation state from the API.
+        const blocked = err?.data?.error === 'registration_capacity_reached'
+        setInfo(blocked ? err.data : null)
+        if (blocked) setHasProof(Boolean(err.data.has_proof))
+        setPaymentError(blocked
+          ? 'Không còn đủ suất cho toàn bộ đội. QR và thông tin chuyển khoản đã tạm ẩn. Vui lòng chưa chuyển tiền và liên hệ BTC nếu bạn đã thanh toán.'
+          : 'Chưa kiểm tra được số suất còn lại. Thông tin chuyển khoản tạm ẩn; vui lòng tải lại trang để thử lại.')
+      } finally {
+        if (!cancelled) {
+          window.clearTimeout(timeout)
+          setLoading(false)
+        }
+      }
+    }
+    void loadPayment()
     return () => {
       cancelled = true
+      controller.abort()
+      window.clearTimeout(timeout)
     }
   }, [team?.team_id])
 
@@ -1186,7 +1291,18 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const handleCopyContent = async () => {
     if (!info?.content) return
     try {
-      await navigator.clipboard.writeText(info.content)
+      try {
+        await navigator.clipboard.writeText(info.content)
+      } catch {
+        const ta = document.createElement('textarea')
+        ta.value = info.content
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -1224,7 +1340,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   const handleFileChange = async (event) => {
     const file = event.target.files?.[0]
     event.target.value = ''
-    if (!file) return
+    if (!file || !canEditPayment) return
     setUploading(true)
     setError('')
     try {
@@ -1261,13 +1377,31 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
   }
 
   const handleCancelPayment = async () => {
+    if (!isCaptain || !canEditPayment) return
     setCancelling(true)
     setError('')
+    setPaidNotice('')
     try {
       await apiRequest('/my-team/payment/cancel', { method: 'POST' })
-      setInfo((current) => (current ? { ...current, roster_locked: false } : current))
+      setHasProof(false)
+      setProofUrl(null)
+      setInfo((current) => (current ? { ...current, roster_locked: false, has_proof: false } : current))
       await onProofChange?.()
+      // Cancelling unlocks the roster so the captain can edit it again — the
+      // mirror of the confirm flow (team → payment). Staying on the payment
+      // step strands them: with the roster unlocked the proof upload is refused
+      // and the confirm/cancel buttons are hidden, so nothing here is
+      // actionable. Send them back to the team step. Navigate directly rather
+      // than via gotoStep — the parent still has to re-render on the reloaded
+      // (now unlocked) roster before the step guards would let 'team' through.
+      const params = new URLSearchParams(window.location.search)
+      params.set('step', 'team')
+      navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     } catch (err) {
+      if (err?.data?.error === 'payment_already_confirmed') {
+        setInfo((current) => (current ? { ...current, payment_confirmed: true } : current))
+        await onProofChange?.()
+      }
       setError(explainApiError(err))
     } finally {
       setCancelling(false)
@@ -1303,17 +1437,29 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
         </div>
       )}
 
-      {info && (
+      {paymentError && (
+        <div role="alert" className="mt-4 rounded-lg border border-[#D6492B]/25 bg-[#D6492B]/[0.06] px-4 py-3 text-sm text-[#D6492B]">
+          {paymentError}
+        </div>
+      )}
+
+      {info?.amount != null && (
         <p className="mt-3 text-sm leading-6 text-ink/55">
           {info.member_count} người × {formatVnd(info.fee_per_person)} ={' '}
           <span className="font-semibold text-ink">{formatVnd(info.amount)}</span>
         </p>
       )}
 
-      {isCaptain && info?.roster_locked && (
+      {registrationSubmitted && (
+        <p className="mt-4 text-sm leading-6 text-ink/55">
+          Đội đã gửi duyệt. Thanh toán và minh chứng đã khóa; nếu cần thay đổi, hãy liên hệ BTC.
+        </p>
+      )}
+
+      {isCaptain && canEditPayment && info?.roster_locked && (
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1]/60 px-4 py-3">
           {info?.timo_configured && !info?.payment_confirmed && (
-            <button type="button" onClick={handleMarkPaid} disabled={checkingPaid} className={SECONDARY_BUTTON}>
+            <button type="button" onClick={handleMarkPaid} disabled={checkingPaid || cancelling} className={SECONDARY_BUTTON}>
               <Icon name="checkPlain" className="h-4 w-4" />
               {checkingPaid ? 'Đang kiểm tra...' : 'Đã chuyển tiền'}
             </button>
@@ -1322,17 +1468,17 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             <button
               type="button"
               onClick={handleCancelPayment}
-              disabled={cancelling}
+              disabled={cancelling || checkingPaid}
               className="rounded-lg border border-[#D6492B]/25 bg-white px-3 py-1.5 text-xs font-semibold text-[#D6492B] transition hover:bg-[#D6492B]/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {cancelling ? 'Đang hủy...' : 'Hủy thanh toán'}
+              {cancelling ? 'Đang kiểm tra thanh toán...' : 'Hủy thanh toán'}
             </button>
           )}
           {paidNotice && <p className="w-full text-xs leading-5 text-ink/55">{paidNotice}</p>}
         </div>
       )}
 
-      {!bankReady ? (
+      {!paymentError && (!bankReady ? (
         <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1] px-4 py-3 text-sm text-ink/55">
           BTC chưa cấu hình tài khoản nhận. Vui lòng quay lại sau.
         </div>
@@ -1342,7 +1488,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             <img
               src={info.qr_image_url}
               alt="VietQR"
-              className="h-auto w-56 rounded-lg border border-[#DCD8CC] bg-white"
+              className="h-auto w-full max-w-56 rounded-lg border border-[#DCD8CC] bg-white"
             />
             <button type="button" onClick={handleDownloadQr} className={SECONDARY_BUTTON}>
               <Icon name="doc" className="h-4 w-4" />
@@ -1353,7 +1499,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
           <div className="mt-4 rounded-lg border border-[#DCD8CC] bg-white px-4 py-3">
             <p className="text-sm font-semibold text-ink">{info.bank.short_name}</p>
             <p className="mt-1 text-sm text-ink/60">
-              Số TK: <span className="font-mono font-semibold text-ink">{info.bank.account_no}</span>
+              Số TK: <span className="font-mono font-semibold text-ink break-all">{info.bank.account_no}</span>
             </p>
             <p className="mt-1 text-sm text-ink/60">Chủ TK: {info.bank.account_name}</p>
           </div>
@@ -1361,7 +1507,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
           <div className="mt-3">
             <span className="text-xs font-medium text-ink/50">Nội dung chuyển khoản</span>
             <div className="mt-1 flex items-center gap-2 rounded-lg border border-[#DCD8CC] bg-white px-3 py-2">
-              <span className="flex-1 truncate font-mono text-sm text-ink">{info.content}</span>
+              <span className="flex-1 min-w-0 truncate font-mono text-sm text-ink">{info.content}</span>
               <button type="button" onClick={handleCopyContent} className={SECONDARY_BUTTON}>
                 {copied ? 'Đã copy' : 'Copy'}
               </button>
@@ -1369,25 +1515,16 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             <p className="mt-1 text-xs leading-5 text-ink/45">Chuyển đúng nội dung để BTC đối soát nhanh.</p>
           </div>
 
-          <div className="mt-4">
-            <span className="text-xs font-medium text-ink/50">Mở app ngân hàng</span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {BANK_DEEPLINK_OPTIONS.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => handleDeeplink(option.key)}
-                  className="rounded-full border border-[#DCD8CC] bg-white px-3 py-1.5 text-xs font-semibold text-[#20312B]/65 transition hover:bg-[#F3F4F1] hover:text-[#20312B]"
-                >
-                  {option.name}
-                </button>
-              ))}
+          {/Android/i.test(navigator.userAgent) && (
+            <div className="mt-4">
+              <span className="text-xs font-medium text-ink/50">Mở app ngân hàng</span>
+              <BankDropdown options={BANK_DEEPLINK_OPTIONS} onSelect={handleDeeplink} />
             </div>
-          </div>
+          )}
 
           {notice && <p className="mt-2 text-xs leading-5 text-[#9A6B12]">{notice}</p>}
         </>
-      )}
+      ))}
 
       <div className="mt-5 border-t border-[#DCD8CC] pt-4">
         <span className="text-xs font-medium text-ink/50">Minh chứng thanh toán</span>
@@ -1407,7 +1544,7 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
               Chưa có ảnh
             </div>
           )}
-          {editable ? (
+          {canEditPayment && info?.roster_locked ? (
             <label className={`cursor-pointer ${SECONDARY_BUTTON}`}>
               <Icon name="paperclip" className="h-4 w-4" />
               {uploading ? 'Đang tải lên...' : hasProof ? 'Đổi ảnh' : 'Tải ảnh lên'}
@@ -1421,13 +1558,42 @@ function PaymentSection({ team, editable, isCaptain, onProofChange }) {
             </label>
           ) : (
             <p className="text-sm text-ink/45">
-              {hasProof ? 'Đội đã khoá chỉnh sửa — không thể đổi ảnh.' : 'Đội chưa upload minh chứng thanh toán.'}
+              {!info?.roster_locked
+                ? 'Hãy quay lại bước Đội và xác nhận danh sách trước khi tải minh chứng.'
+                : hasProof
+                  ? 'Đội đã khoá chỉnh sửa — không thể đổi ảnh.'
+                  : 'Đội chưa upload minh chứng thanh toán.'}
             </p>
           )}
         </div>
       </div>
     </div>
   )
+}
+
+// A member's MSSV is their identity, so the roster must never show the same one
+// twice. The server never returns duplicates, but an optimistic update or two
+// overlapping loads briefly could — dedupe defensively so the UI can't flash a
+// doubled row. Keep a captain entry over a plain one when both share an MSSV.
+function dedupeMembersByMssv(list) {
+  if (!Array.isArray(list)) return []
+  const byMssv = new Map()
+  const order = []
+  for (const member of list) {
+    const key = String(member?.mssv || '').trim().toLowerCase()
+    if (!key) {
+      order.push(member)
+      continue
+    }
+    const existing = byMssv.get(key)
+    if (!existing) {
+      byMssv.set(key, member)
+      order.push(key)
+    } else if (member?.is_captain && !existing.is_captain) {
+      byMssv.set(key, member)
+    }
+  }
+  return order.map((item) => (typeof item === 'string' ? byMssv.get(item) : item))
 }
 
 function ParticipantDashboard() {
@@ -1438,6 +1604,8 @@ function ParticipantDashboard() {
   })
   const [profile, setProfile] = useState(EMPTY_PROFILE)
   const [profileSaved, setProfileSaved] = useState(false)
+  const [profilePersisted, setProfilePersisted] = useState(false)
+  const [profileDirty, setProfileDirty] = useState(false)
   // Profile-save feedback lives next to the captain form, not in the page-level
   // apiError, so a "missing Trường/CCCD" reason is visible right at the button.
   const [profileError, setProfileError] = useState('')
@@ -1450,6 +1618,7 @@ function ParticipantDashboard() {
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false)
   const [editable, setEditable] = useState(true)
   const [loading, setLoading] = useState(true)
+  const [dashboardReady, setDashboardReady] = useState(false)
   const [busyAction, setBusyAction] = useState('')
   const [apiError, setApiError] = useState('')
   // Reopen Settings when we return from a Discord OAuth round-trip that was
@@ -1478,33 +1647,56 @@ function ParticipantDashboard() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [confirmPaymentLoading, setConfirmPaymentLoading] = useState(false)
+  const [confirmPaymentError, setConfirmPaymentError] = useState('')
+  const [latestPost, setLatestPost] = useState(null)
+  const [teamInvite, setTeamInvite] = useState(null)
+  const [inviteNotice, setInviteNotice] = useState('')
 
   const loadDashboard = async () => {
-    const me = await apiRequest('/auth/me')
-    const profilePayload = await apiRequest('/me/profile')
-    const teamPayload = await apiRequest('/my-team')
-    const schemaPayload = await apiRequest('/register/schema', { auth: false })
-    const experiencePayload = await apiRequest('/me/experience')
+    try {
+      const me = await apiRequest('/auth/me')
+      const profilePayload = await apiRequest('/me/profile')
+      const teamPayload = await apiRequest('/my-team')
+      const schemaPayload = await apiRequest('/register/schema', { auth: false })
+      const experiencePayload = await apiRequest('/me/experience')
 
-    // `/teams/{code}` is admin/collab only, so for a participant it could only
-    // ever 403 — and the throw skipped every setter below it, leaving the whole
-    // dashboard blank. `/my-team` already carries the same fields, and its
-    // members come back at "self" visibility rather than the thinner "basic".
-    setUser((current) => ({ ...current, ...me }))
-    setProfile(normalizeProfile(me, profilePayload))
-    const normalizedTeam = normalizeTeam(teamPayload)
-    setTeam(normalizedTeam)
-    // A placeholder name ("Pending team <mssv>") is server bookkeeping, not a
-    // name the captain chose — start the draft empty so the team step offers a
-    // clean field instead of pre-filling the stand-in.
-    setTeamNameDraft(
-      normalizedTeam && !normalizedTeam.name_is_placeholder ? normalizedTeam.team_name : '',
-    )
-    setMembers(Array.isArray(teamPayload?.members) ? teamPayload.members : [])
-    setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? normalizedTeam.approval_status !== 'approved' : true)))
-    setRegistrationSchema(schemaPayload)
-    setExperience(experiencePayload)
-    setCaptainVote(normalizedTeam ? await fetchCaptainVote() : null)
+      // `/teams/{code}` is admin/collab only, so for a participant it could only
+      // ever 403 — and the throw skipped every setter below it, leaving the whole
+      // dashboard blank. `/my-team` already carries the same fields, and its
+      // members come back at "self" visibility rather than the thinner "basic".
+      setUser((current) => ({ ...current, ...me }))
+      setProfile(normalizeProfile(me, profilePayload))
+      setProfilePersisted(Boolean(profilePayload?.profile_complete))
+      setProfileDirty(false)
+      const normalizedTeam = normalizeTeam(teamPayload)
+      setTeam(normalizedTeam)
+      // A placeholder name ("Pending team <mssv>") is server bookkeeping, not a
+      // name the captain chose — start the draft empty so the team step offers a
+      // clean field instead of pre-filling the stand-in.
+      setTeamNameDraft(
+        normalizedTeam && !normalizedTeam.name_is_placeholder ? normalizedTeam.team_name : '',
+      )
+      setMembers(dedupeMembersByMssv(teamPayload?.members))
+      setEditable(Boolean(teamPayload?.editable ?? (normalizedTeam ? ['draft', 'rejected'].includes(normalizedTeam.approval_status) : true)))
+      setRegistrationSchema(schemaPayload)
+      setExperience(experiencePayload)
+      setCaptainVote(normalizedTeam ? await fetchCaptainVote() : null)
+
+      if (normalizedTeam?.approval_status === 'approved') {
+        try {
+          const feedRes = await apiRequest('/feed/latest')
+          setLatestPost(feedRes?.post || null)
+        } catch {
+          setLatestPost(null)
+        }
+      } else {
+        setLatestPost(null)
+      }
+      setDashboardReady(true)
+    } catch (error) {
+      setDashboardReady(false)
+      throw error
+    }
   }
 
   useEffect(() => {
@@ -1531,6 +1723,32 @@ function ParticipantDashboard() {
     bootstrap()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // A member can be pulled into another team by that team's captain, which
+  // silently shrinks this roster on the server. There's no realtime channel, so
+  // refetch whenever the tab regains focus — the stale roster then self-corrects
+  // the moment the user looks at it again, without flashing the page loader.
+  const reloadingRef = useRef(false)
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible' || reloadingRef.current) return
+      reloadingRef.current = true
+      loadDashboard()
+        .catch((error) => {
+          if (error?.status === 401) logoutAndRedirect('/')
+          else setApiError(explainApiError(error))
+        })
+        .finally(() => {
+          reloadingRef.current = false
+        })
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
     }
   }, [])
 
@@ -1568,7 +1786,7 @@ function ParticipantDashboard() {
       : 'Đội chưa có đội trưởng nên chưa ai đổi được tên. Bầu xong đội trưởng thì người đó sẽ đặt tên chính thức.')
     : team?.member_count === 1
       ? 'Đăng ký cá nhân — hệ thống tự đặt tên tạm để nhận biết. Bạn có thể sang bước Thanh toán.'
-      : `Đội cần đủ ${maxMembers} người mới đặt được tên và sang bước Thanh toán, hoặc để lại 1 người (đăng ký cá nhân). Hiện ${team?.member_count ?? '—'}/${maxMembers}.`
+      : `Đội chưa đủ ${maxMembers} người nên chưa đặt được tên chính thức. BTC sẽ ghép đội sau. Hiện ${team?.member_count ?? '—'}/${maxMembers}.`
   // A merged team is left named after its code until the new captain renames it.
   const teamNameIsCode = Boolean(team && team.team_name && team.team_name === team.team_id)
   const captainShouldNameTeam = hasElectedCaptain && canRenameTeam && teamNameIsCode
@@ -1578,14 +1796,26 @@ function ParticipantDashboard() {
     [profile, personFields],
   )
   const profileComplete = missingProfileFields.length === 0
+  const profileReady = profileComplete && profilePersisted
   const profilePanelOpen = profileDetailsOpen
   const nextAction = useMemo(
-    () => getNextAction(profile, team, members, personFields, editable),
-    [profile, team, members, personFields, editable],
+    () => getNextAction(profile, team, members, personFields, editable, profilePersisted),
+    [profile, team, members, personFields, editable, profilePersisted],
   )
   const captainIndex = members.findIndex((member) => member.is_captain)
-  const displayedMemberCount = captainIndex === -1 ? members.length + 1 : members.length
   const myMssv = profile.mssv || user.mssv || ''
+  // The fallback "you are the captain" header block stands in only before the
+  // captain's own membership row exists (the team is created on arrival at the
+  // member step). Once the logged-in user is already listed in `members`,
+  // rendering it duplicates their row — which is exactly what happens when a
+  // team has no is_captain at all: a merge resets every flag pending the kín
+  // election, or a captain flag was otherwise lost. Defer to the member row.
+  const selfInMembers = members.some((member) => {
+    const key = String(member?.mssv || '').trim()
+    return key && key === String(myMssv).trim()
+  })
+  const showProfileAsCaptain = captainIndex === -1 && !selfInMembers
+  const displayedMemberCount = showProfileAsCaptain ? members.length + 1 : members.length
   // Backend now lets a non-captain PATCH their own row too; mirror that here
   // so the "Sửa" button shows for the row that belongs to the logged-in
   // account, not only for the captain.
@@ -1598,33 +1828,75 @@ function ParticipantDashboard() {
   // This is what keeps member editing off the Thanh toán screen — you navigate
   // back to the Thành viên step for that.
   const stepStates = useMemo(
-    () => Object.fromEntries(STEPS.map((s) => [s.key, getStepState(s, profile, team, members, personFields)])),
-    [profile, team, members, personFields],
+    () => Object.fromEntries(STEPS.map((s) => [s.key, getStepState(
+      s, profile, team, members, personFields, profilePersisted,
+    )])),
+    [profile, team, members, personFields, profilePersisted],
   )
   // Once the captain confirmed the roster for payment, its steps are closed:
   // the amount was computed from that roster, so editing it afterwards — even
   // just to "fix" something — is exactly the mismatch the confirm dialog
   // exists to prevent. BTC rejecting the team is what reopens them.
   const rosterLocked = Boolean(team?.roster_locked)
-  const rosterLockedSteps = rosterLocked ? ['members', 'team'] : []
+  const registrationSubmitted = ['pending_approval', 'approved'].includes(team?.approval_status)
+  const rosterLockedSteps = [
+    ...(rosterLocked || team?.approval_status === 'pending_approval' ? ['members', 'team'] : []),
+    ...(registrationSubmitted ? ['payment'] : []),
+  ]
   const stepUnlocked = (key) => {
     if (rosterLockedSteps.includes(key)) return false
     return stepStates[key] === 'done' || stepStates[key] === 'active'
   }
-  const currentStepKey = STEPS.find((s) => stepStates[s.key] === 'active')?.key
-    || (stepStates.approved === 'done' ? 'approved' : 'submit')
+  const currentStepKey = team?.approval_status === 'pending_approval'
+    ? 'submit'
+    : STEPS.find((s) => !rosterLockedSteps.includes(s.key) && stepStates[s.key] === 'active')?.key
+      || (stepStates.approved === 'done' ? 'approved' : 'submit')
   const [stepParam] = useEnumSearchParam('step', STEP_KEYS, currentStepKey)
   const activeStep = stepUnlocked(stepParam) ? stepParam : currentStepKey
+  const pendingStepScroll = useRef(null)
+
+  // Wait until React has rendered the destination step, then bring its form
+  // back under the sticky header. Without this, Next swaps the content while
+  // preserving the old document offset, often leaving the user below the next
+  // form on both mobile and desktop.
+  useEffect(() => {
+    if (pendingStepScroll.current !== activeStep) return undefined
+    pendingStepScroll.current = null
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById('registration-step-form')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeStep])
+
   // Always spell the step out in the URL instead of going through
   // `setStepParam` — that drops a parameter equal to its fallback, and the
   // fallback tracks live data. Leaving the param out is what let the team
   // record appearing (or the roster growing) recompute `currentStepKey` under
   // the user and yank them to a later step, e.g. straight to Thanh toán.
-  const gotoStep = (key) => {
-    if (!stepUnlocked(key)) return
+  const writeStepToUrl = (key) => {
+    pendingStepScroll.current = key
     const params = new URLSearchParams(window.location.search)
     params.set('step', key)
     navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
+    // A shortcut can target the step already on screen. That does not change
+    // activeStep, so its effect will not rerun; scroll it immediately instead.
+    if (key === activeStep) {
+      pendingStepScroll.current = null
+      window.requestAnimationFrame(() => {
+        document.getElementById('registration-step-form')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      })
+    }
+  }
+
+  const gotoStep = (key) => {
+    if (!stepUnlocked(key)) return
+    writeStepToUrl(key)
   }
 
   // `useEnumSearchParam`'s fallback is `currentStepKey`, recomputed on every
@@ -1652,7 +1924,7 @@ function ParticipantDashboard() {
   const teamAutoCreated = useRef(false)
   useEffect(() => {
     if (teamAutoCreated.current) return
-    if (loading || !registrationOpen || !profileComplete) return
+    if (loading || !registrationOpen || !profileReady) return
     if (activeStep !== 'members' || team) return
     teamAutoCreated.current = true
     withBusy('create-team', async () => {
@@ -1665,7 +1937,7 @@ function ParticipantDashboard() {
       }
       await loadDashboard()
     })
-  }, [activeStep, team, loading, registrationOpen, profileComplete])
+  }, [activeStep, team, loading, registrationOpen, profileReady])
 
   // Adding a member means typing MSSV, email and whatever the schema asks for,
   // five times over. The dialog is not a `useDraftState` because the parent
@@ -1683,7 +1955,12 @@ function ParticipantDashboard() {
     // Clear any error left over from a prior action so the modal opens clean —
     // its warning box only shows problems from this add/edit attempt.
     setApiError('')
-    const base = index === null ? blankMember() : withFlatExtra(members[index])
+    // Editing a member already on the roster: the captain owns this record, so
+    // show every field pre-filled instead of re-resolving (which would hide the
+    // fields that already have values).
+    const base = index === null
+      ? blankMember()
+      : { ...withFlatExtra(members[index]), resolved_fields: personFields }
     const stored = readDraft(`participant:member:${index === null ? 'new' : base.mssv || 'new'}`)
     setMemberDialog({ index })
     // The stored draft wins field by field, but anything the server has since
@@ -1714,12 +1991,17 @@ function ParticipantDashboard() {
     if (!confirmOpen || team?.approval_status === 'approved') return undefined
     let cancelled = false
     setConfirmPaymentLoading(true)
+    setConfirmPayment(null)
+    setConfirmPaymentError('')
     apiRequest('/my-team/payment')
       .then((payload) => {
         if (!cancelled) setConfirmPayment(payload)
       })
-      .catch(() => {
-        if (!cancelled) setConfirmPayment(null)
+      .catch((error) => {
+        if (!cancelled) {
+          setConfirmPayment(null)
+          setConfirmPaymentError(explainApiError(error))
+        }
       })
       .finally(() => {
         if (!cancelled) setConfirmPaymentLoading(false)
@@ -1727,7 +2009,7 @@ function ParticipantDashboard() {
     return () => {
       cancelled = true
     }
-  }, [confirmOpen, team?.approval_status])
+  }, [confirmOpen, team?.approval_status, team?.member_count])
 
   // A closed form should not keep showing a stale save error next time it opens.
   useEffect(() => {
@@ -1775,12 +2057,18 @@ function ParticipantDashboard() {
   // by the time the URL points at it.
   const openPaymentConfirm = () => {
     setApiError('')
+    setConfirmPaymentError('')
+    setConfirmPayment(null)
     setConfirmOpen(true)
   }
 
   const confirmTeamForPayment = async (event) => {
     event?.preventDefault?.()
     await withBusy('confirm-team', async () => {
+      if (team?.approval_status !== 'approved') {
+        // The preview may be stale by the time the captain confirms.
+        await apiRequest('/my-team/payment', { cache: 'no-store' })
+      }
       const body = {}
       const nextName = teamNameDraft.trim()
       if (nextName && nextName !== team.team_name) body.team_name = nextName
@@ -1795,7 +2083,9 @@ function ParticipantDashboard() {
       // move to payment would be silently dropped.
       const params = new URLSearchParams(window.location.search)
       const isApproved = team?.approval_status === 'approved'
-      params.set('step', isApproved ? 'approved' : 'payment')
+      const destination = isApproved ? 'approved' : 'payment'
+      pendingStepScroll.current = destination
+      params.set('step', destination)
       navigate(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
     })
   }
@@ -1809,6 +2099,14 @@ function ParticipantDashboard() {
       if (error?.status === 401) {
         logoutAndRedirect('/')
         return
+      }
+      const conflictCode = error?.data?.error || error?.message
+      if (error?.status === 409 && MEMBERSHIP_CONFLICT_CODES.has(conflictCode)) {
+        try {
+          await loadDashboard()
+        } catch {
+          // Preserve the original conflict: it explains the action that failed.
+        }
       }
       setApiError(explainApiError(error))
     } finally {
@@ -1828,6 +2126,30 @@ function ParticipantDashboard() {
       if (error?.data?.error !== 'already_has_team') throw error
     }
   }
+
+  const copyInviteUrl = async (url) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setInviteNotice('Đã copy link mời.')
+    } catch {
+      setInviteNotice('Không tự copy được. Hãy chọn và copy link bên dưới.')
+    }
+  }
+
+  const createTeamInvite = () => withBusy('team-invite', async () => {
+    await ensureTeamExists()
+    const payload = await apiRequest('/my-team/invite', { method: 'POST', body: {} })
+    const url = `${window.location.origin}/join-team?token=${encodeURIComponent(payload.token)}`
+    setTeamInvite({ url, expiresAt: payload.expires_at })
+    await copyInviteUrl(url)
+    await loadDashboard()
+  })
+
+  const revokeTeamInvite = () => withBusy('team-invite-revoke', async () => {
+    await apiRequest('/my-team/invite', { method: 'DELETE' })
+    setTeamInvite(null)
+    setInviteNotice('Đã thu hồi link mời.')
+  })
 
   const castCaptainVote = (candidateMssv) => withBusy('captain-vote', async () => {
     if (!candidateMssv) return
@@ -1851,8 +2173,14 @@ function ParticipantDashboard() {
     }
   })
 
+  const patchProfile = (patch) => {
+    setProfile((current) => ({ ...current, ...patch }))
+    setProfileDirty(true)
+    setProfileSaved(false)
+  }
+
   const saveProfile = async (event) => {
-    event.preventDefault()
+    event?.preventDefault?.()
     // Catch empty required fields (e.g. Trường not picked, CCCD blank) before
     // the request so the reason lands at the button instead of a rejected save
     // that reads as "nothing happened".
@@ -1870,34 +2198,65 @@ function ParticipantDashboard() {
       })
       const updatedProfile = { ...profile, ...nextProfile }
       setProfile(updatedProfile)
+      setProfilePersisted(true)
+      setProfileDirty(false)
       if (isProfileComplete(updatedProfile, personFields)) setProfileDetailsOpen(false)
       setProfileSaved(true)
       window.setTimeout(() => setProfileSaved(false), 1400)
+      const inviteToken = new URLSearchParams(window.location.search).get('team_invite')
+      if (inviteToken && updatedProfile.mssv) {
+        window.location.replace(`/join-team?token=${encodeURIComponent(inviteToken)}`)
+      }
+      return true
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
-        return
+        return false
       }
       setProfileError(explainApiError(error))
+      return false
     } finally {
       setBusyAction('')
     }
   }
 
+  const continueFromProfile = async () => {
+    if (!profileComplete) return
+    if ((profileDirty || !profilePersisted) && !(await saveProfile())) return
+    // The state update from saveProfile lands on the next render. Write the URL
+    // directly here so the successful save and the explicit Continue click are
+    // one action; the normal gotoStep guard would still see the previous render.
+    writeStepToUrl('members')
+  }
+
   const saveMember = async (event) => {
     event?.preventDefault?.()
     if (!memberForm?.mssv || !memberForm?.email) return
+    if (!memberForm.resolved_fields) {
+      setApiError('Vui lòng nhập đúng MSSV và Email, đợi hệ thống tải hồ sơ rồi điền đủ thông tin.')
+      return
+    }
+    const missingFields = getMissingProfileFields(memberForm, memberForm.resolved_fields)
+    if (missingFields.length > 0) {
+      setApiError(`Vui lòng nhập đầy đủ: ${missingFields.map((field) => field.label).join(', ')}.`)
+      return
+    }
+    const normalizedMemberForm = {
+      ...memberForm,
+      mssv: String(memberForm.mssv).trim().toUpperCase(),
+      email: String(memberForm.email).trim().toLowerCase(),
+    }
 
     // A student is identified by MSSV, so refuse a second row with an MSSV that
     // already belongs to the team — the captain (shown separately) or any listed
     // member — before it even reaches the server. Only guards new additions;
     // editing keeps its own MSSV.
     if (memberDialog?.index === null) {
-      const mssv = String(memberForm.mssv).trim()
+      const mssv = normalizedMemberForm.mssv
       const taken = new Set(
         [profile.mssv, ...members.map((m) => m.mssv)]
           .filter(Boolean)
-          .map((value) => String(value).trim()),
+          .map((value) => String(value).trim().toUpperCase()),
       )
       if (taken.has(mssv)) {
         setApiError('MSSV này đã có trong đội — không thể thêm cùng một sinh viên hai lần.')
@@ -1910,12 +2269,12 @@ function ParticipantDashboard() {
       if (memberDialog?.index === null) {
         await apiRequest('/my-team/members', {
           method: 'POST',
-          body: memberForm,
+          body: normalizedMemberForm,
         })
       } else {
         await apiRequest(`/my-team/members/${members[memberDialog.index].mssv}`, {
           method: 'PATCH',
-          body: memberForm,
+          body: normalizedMemberForm,
         })
       }
       // Saved server-side, so the local copy has nothing left to protect.
@@ -1996,6 +2355,19 @@ function ParticipantDashboard() {
     )
   }
 
+  if (!dashboardReady) {
+    return (
+      <div className="min-h-screen p-6 font-sans" style={{ backgroundColor: COLORS.paper, color: COLORS.ink }}>
+        <div className={`${PARTICIPANT_CARD} mx-auto max-w-lg space-y-4 p-6`} role="alert">
+          <h1 className="text-xl font-semibold">Không tải được hồ sơ</h1>
+          <p className="text-sm">{apiError || 'Chưa tải đủ dữ liệu. Vui lòng thử lại.'}</p>
+          <button type="button" className={PRIMARY_BUTTON} onClick={() => window.location.reload()}>Thử lại</button>
+          <button type="button" className={`${SECONDARY_BUTTON} ml-3`} onClick={logout}>Đăng xuất</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen font-sans" style={{ backgroundColor: COLORS.paper, color: COLORS.ink }}>
       <Contours />
@@ -2051,6 +2423,10 @@ function ParticipantDashboard() {
           </div>
         )}
 
+        {!showSettings && registrationOpen && (!team || team.approval_status === 'draft') && (
+          <RegistrationCapacityNotice remaining={registrationSchema?.registration_slots_remaining} />
+        )}
+
         {showSettings ? (
           <SettingsPage />
         ) : (
@@ -2069,7 +2445,7 @@ function ParticipantDashboard() {
           <>
             <section className={`${PARTICIPANT_CARD} overflow-hidden`}>
               <div className="grid gap-0 lg:grid-cols-[1.45fr_0.55fr]">
-                <div className="px-5 py-6 sm:px-7">
+                <div className="min-w-0 px-5 py-6 sm:px-7">
                   <div className="flex flex-wrap items-center gap-2">
                     {team ? <Badge label={status.label} cls={status.cls} /> : <Badge label="Chưa có đội" cls="bg-[#20312B]/[0.07] text-[#20312B]/50" />}
                   </div>
@@ -2116,6 +2492,26 @@ function ParticipantDashboard() {
                 })}
               />
             )}
+            {/* Feed Announcement Card for approved teams */}
+            {team?.approval_status === 'approved' && latestPost && (
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-lg font-bold text-ink sm:text-xl">Bảng tin Ban tổ chức</h2>
+                  <a
+                    href="/feed"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      navigate('/feed')
+                    }}
+                    className="text-sm font-semibold text-trail hover:underline"
+                  >
+                    Xem tất cả →
+                  </a>
+                </div>
+                <FeedCard post={latestPost} compact />
+              </section>
+            )}
+
             {/* Once registration closes or the team is approved, they just need
                 to run the course. Stations are now a separate page. */}
             {team && (
@@ -2142,10 +2538,11 @@ function ParticipantDashboard() {
             approved (provisioning is queued on approval), so the connect card is
             only useful — and only shown — after the team is approved. */}
         {team?.approval_status === 'approved' && <DiscordConnectCard />}
+        {team?.approval_status === 'approved' && <TeamSummaryCard team={team} members={members} />}
 
         {!isFullyApproved && (
         <section className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
-          <div className="space-y-5">
+          <div id="registration-step-form" className="min-w-0 scroll-mt-24 space-y-5">
             {registrationOpen && !isFullyApproved ? (
               <>
                 {/* BƯỚC 1 — HỒ SƠ */}
@@ -2164,14 +2561,15 @@ function ParticipantDashboard() {
                         saved={profileSaved}
                         saving={busyAction === 'save-profile'}
                         error={profileError}
-                        onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                        onPatch={patchProfile}
                         onSave={saveProfile}
                       />
                     </div>
                     <div className="mt-5">
                       <StepNav
-                        onNext={() => gotoStep('members')}
-                        nextDisabled={!profileComplete}
+                        onNext={continueFromProfile}
+                        nextLabel={busyAction === 'save-profile' ? 'Đang lưu...' : 'Tiếp tục'}
+                        nextDisabled={!profileComplete || busyAction === 'save-profile'}
                         hint={!profileComplete ? 'Cần điền đủ thông tin hồ sơ để sang bước tiếp theo.' : undefined}
                       />
                     </div>
@@ -2274,7 +2672,7 @@ function ParticipantDashboard() {
                               stepUnlocked('payment')
                                 ? undefined
                                 : !rosterSizeFinal
-                                  ? `Đội cần đủ ${maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới sang được bước Thanh toán.`
+                                  ? `Đội cần ít nhất ${minMembers} và tối đa ${maxMembers} người mới sang được bước Thanh toán.`
                                   : ((teamIsFull || team?.naming_allowed) && !teamNameDraft.trim())
                                     ? 'Nhập tên đội để sang bước Thanh toán.'
                                     : undefined
@@ -2353,7 +2751,7 @@ function ParticipantDashboard() {
                     </div>
                     {editable && !rosterSizeFinal && (
                       <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
-                        Đội cần đủ {maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
+                        Đội cần từ {minMembers} đến {maxMembers} người mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
                       </p>
                     )}
                     {editable && !team.has_payment_proof && (
@@ -2366,9 +2764,15 @@ function ParticipantDashboard() {
                         {apiError}
                       </div>
                     )}
-                    <div className="mt-5">
-                      <StepNav onBack={() => gotoStep('payment')} />
-                    </div>
+                    {registrationSubmitted ? (
+                      <p className="mt-5 text-sm leading-6 text-ink/55">
+                        Đội đã gửi duyệt nên không thể hủy thanh toán hoặc chỉnh sửa. Nếu cần thay đổi, hãy liên hệ BTC.
+                      </p>
+                    ) : (
+                      <div className="mt-5">
+                        <StepNav onBack={() => gotoStep('payment')} />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2380,9 +2784,6 @@ function ParticipantDashboard() {
                     <p className="mt-3 text-sm leading-6 text-ink/55">
                       Đội của bạn đã được BTC duyệt. Theo dõi Discord và thông báo từ BTC để nhận lịch.
                     </p>
-                    <div className="mt-5">
-                      <StepNav onBack={() => gotoStep('payment')} />
-                    </div>
                   </div>
                 )}
               </>
@@ -2477,7 +2878,7 @@ function ParticipantDashboard() {
                 </div>
                 {editable && !rosterSizeFinal && (
                   <p className="mt-2 text-xs leading-5 text-[#9A6B12]">
-                    Đội cần đủ {maxMembers} người hoặc đúng 1 người (đăng ký cá nhân) mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
+                    Đội cần từ {minMembers} đến {maxMembers} người mới gửi duyệt được. Hiện {team?.member_count ?? members.length}/{maxMembers}.
                   </p>
                 )}
                 {editable && !team.has_payment_proof && (
@@ -2528,7 +2929,60 @@ function ParticipantDashboard() {
               </div>
 
               <div className="divide-y divide-stone">
-                {captainIndex === -1 && (
+                {editable && !rosterLocked && amCaptain && displayedMemberCount < maxMembers && (
+                  <div className="bg-[#1F7A6B]/[0.045] px-5 py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1F7A6B]/12 text-[#1F7A6B]">
+                          <Icon name="users" className="h-4 w-4" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-ink">Mời thành viên bằng link</p>
+                          <p className="mt-0.5 text-xs text-ink/45">Người được mời tự dùng MSSV và email trong tài khoản của họ.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={createTeamInvite}
+                        disabled={Boolean(busyAction)}
+                        className={TRAIL_BUTTON}
+                      >
+                        <Icon name="link" className="h-4 w-4" />
+                        {busyAction === 'team-invite' ? 'Đang tạo...' : teamInvite ? 'Tạo link mới' : 'Tạo link mời 3 giờ'}
+                      </button>
+                    </div>
+
+                    {teamInvite && (
+                      <div className="mt-4 rounded-xl border border-dashed border-[#1F7A6B]/35 bg-white p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <input
+                            type="text"
+                            readOnly
+                            value={teamInvite.url}
+                            onFocus={(event) => event.target.select()}
+                            className="min-w-0 flex-1 rounded-lg border border-[#DCD8CC] bg-[#F3F4F1] px-3 py-2 font-mono text-xs text-ink/65 outline-none focus:border-[#1F7A6B]/50"
+                          />
+                          <button type="button" onClick={() => copyInviteUrl(teamInvite.url)} className={SECONDARY_BUTTON}>
+                            Copy link
+                          </button>
+                          <button
+                            type="button"
+                            onClick={revokeTeamInvite}
+                            disabled={Boolean(busyAction)}
+                            className="rounded-lg px-3 py-2 text-xs font-semibold text-[#D6492B] hover:bg-[#D6492B]/[0.07] disabled:opacity-40"
+                          >
+                            Thu hồi
+                          </button>
+                        </div>
+                        <p className="mt-2 text-xs text-ink/40">
+                          Hết hạn lúc {formatDateTime(teamInvite.expiresAt)}. Tạo link mới sẽ làm link cũ hết hiệu lực.
+                        </p>
+                      </div>
+                    )}
+                    {inviteNotice && <p className="mt-2 text-xs font-medium text-[#1F7A6B]">{inviteNotice}</p>}
+                  </div>
+                )}
+                {showProfileAsCaptain && (
                   <div id="captain-profile">
                     <div className={`grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center ${!profileComplete ? 'border-l-4 border-[#D6492B] bg-[#D6492B]/[0.04] pl-4' : ''}`}>
                       <div className="min-w-0">
@@ -2561,7 +3015,7 @@ function ParticipantDashboard() {
                       saved={profileSaved}
                       saving={busyAction === 'save-profile'}
                       error={profileError}
-                      onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                      onPatch={patchProfile}
                       onSave={saveProfile}
                     />
                   </div>
@@ -2606,7 +3060,7 @@ function ParticipantDashboard() {
                             </button>
                           ) : (
                             <>
-                              {member.email && (amCaptain || member.mssv === myMssv) && (
+                              {(amCaptain || member.mssv === myMssv) && (
                                 <button
                                   type="button"
                                   onClick={() => openMemberDialog(index)}
@@ -2639,7 +3093,7 @@ function ParticipantDashboard() {
                           saved={profileSaved}
                           saving={busyAction === 'save-profile'}
                           error={profileError}
-                          onPatch={(patch) => setProfile((current) => ({ ...current, ...patch }))}
+                          onPatch={patchProfile}
                           onSave={saveProfile}
                         />
                       )}
@@ -2659,7 +3113,7 @@ function ParticipantDashboard() {
             ) : null}
           </div>
 
-          <aside className="space-y-5">
+          <aside className="min-w-0 space-y-5">
             <div className={`${PARTICIPANT_CARD} p-5`}>
               <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/35">Ngày thi</p>
               <h2 className="mt-1 font-display text-lg font-bold text-ink">Checklist nhanh</h2>
@@ -2723,7 +3177,7 @@ function ParticipantDashboard() {
         paymentInfo={confirmPayment}
         paymentLoading={confirmPaymentLoading}
         busy={busyAction === 'confirm-team'}
-        error={apiError}
+        error={apiError || confirmPaymentError}
         onConfirm={confirmTeamForPayment}
         onClose={() => setConfirmOpen(false)}
         skipPayment={team?.approval_status === 'approved'}
