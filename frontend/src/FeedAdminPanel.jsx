@@ -16,6 +16,29 @@ const SECONDARY_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-l
 const DANGER_BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-clay/30 bg-white px-3 py-2 text-sm font-semibold text-clay transition hover:bg-clay/5 disabled:cursor-not-allowed disabled:opacity-40'
 const MAX_GALLERY_IMAGES = 10
 
+const EMOJIS = [
+  { type: 'heart', emoji: '❤️' },
+  { type: 'like', emoji: '👍' },
+  { type: 'fire', emoji: '🔥' },
+  { type: 'haha', emoji: '😂' },
+  { type: 'wow', emoji: '😮' },
+]
+
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffSec = Math.floor((now - date) / 1000)
+  if (diffSec < 60) return 'Vừa xong'
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin} phút trước`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour} giờ trước`
+  const diffDay = Math.floor(diffHour / 24)
+  if (diffDay < 7) return `${diffDay} ngày trước`
+  return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 export default function FeedAdminPanel() {
   const [posts, setPosts] = useState([])
   const [total, setTotal] = useState(0)
@@ -53,9 +76,22 @@ export default function FeedAdminPanel() {
   const [deletingPost, setDeletingPost] = useState(false)
   const [deletePostError, setDeletePostError] = useState('')
 
+  // Post detail/view modal state
+  const [viewingPost, setViewingPost] = useState(null)
+  const [viewComments, setViewComments] = useState([])
+  const [viewCommentsLoading, setViewCommentsLoading] = useState(false)
+  const [viewHasMore, setViewHasMore] = useState(false)
+  const [viewCommentInput, setViewCommentInput] = useState('')
+  const [viewSendingComment, setViewSendingComment] = useState(false)
+  const [viewReacting, setViewReacting] = useState(false)
+  const [replyingTo, setReplyingTo] = useState(null)
+  const [replyInput, setReplyInput] = useState('')
+  const [deletingViewCommentId, setDeletingViewCommentId] = useState(null)
+
   const textareaRef = useRef(null)
   const galleryInputRef = useRef(null)
   const bodyImgInputRef = useRef(null)
+  const videoInputRef = useRef(null)
 
   const fetchPosts = useCallback(async () => {
     setLoading(true)
@@ -315,6 +351,169 @@ export default function FeedAdminPanel() {
     }
   }
 
+  // ── Post Detail Modal handlers ──
+  const handleOpenView = async (post) => {
+    setViewingPost(post)
+    setViewComments([])
+    setViewCommentInput('')
+    setReplyingTo(null)
+    setReplyInput('')
+    setViewCommentsLoading(true)
+    try {
+      const res = await apiRequest(`/feed/${post.id}/comments?limit=20&offset=0`)
+      setViewComments(res.comments || [])
+      setViewHasMore((res.comments?.length || 0) < (res.total || 0))
+    } catch {
+      setViewComments([])
+    } finally {
+      setViewCommentsLoading(false)
+    }
+  }
+
+  const handleViewLoadMore = async () => {
+    if (!viewingPost) return
+    setViewCommentsLoading(true)
+    try {
+      const offset = viewComments.length
+      const res = await apiRequest(`/feed/${viewingPost.id}/comments?limit=20&offset=${offset}`)
+      const newComments = res.comments || []
+      setViewComments((prev) => [...prev, ...newComments])
+      setViewHasMore((offset + newComments.length) < (res.total || 0))
+    } catch {
+      // ignore
+    } finally {
+      setViewCommentsLoading(false)
+    }
+  }
+
+  const handleViewReact = async (reactionType) => {
+    if (viewReacting || !viewingPost) return
+    setViewReacting(true)
+    try {
+      const res = await apiRequest(`/feed/${viewingPost.id}/react`, {
+        method: 'POST',
+        body: { type: reactionType },
+      })
+      setViewingPost((prev) => ({
+        ...prev,
+        my_reaction: res.my_reaction,
+        reaction_counts: res.reaction_counts,
+      }))
+      // Also update in main posts list
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === viewingPost.id
+            ? { ...p, reaction_counts: res.reaction_counts, my_reaction: res.my_reaction }
+            : p,
+        ),
+      )
+    } catch {
+      // ignore
+    } finally {
+      setViewReacting(false)
+    }
+  }
+
+  const handleViewSendComment = async (e) => {
+    e.preventDefault()
+    const trimmed = viewCommentInput.trim()
+    if (!trimmed || viewSendingComment || !viewingPost) return
+    setViewSendingComment(true)
+    try {
+      const res = await apiRequest(`/feed/${viewingPost.id}/comments`, {
+        method: 'POST',
+        body: { body: trimmed },
+      })
+      if (res.comment) {
+        setViewComments((prev) => [res.comment, ...prev])
+        setViewCommentInput('')
+        setViewingPost((prev) => ({ ...prev, comment_count: (prev.comment_count || 0) + 1 }))
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === viewingPost.id ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p,
+          ),
+        )
+      }
+    } catch {
+      // ignore
+    } finally {
+      setViewSendingComment(false)
+    }
+  }
+
+  const handleViewSendReply = async (parentComment) => {
+    const trimmed = replyInput.trim()
+    if (!trimmed || viewSendingComment || !viewingPost) return
+    setViewSendingComment(true)
+    try {
+      const res = await apiRequest(`/feed/${viewingPost.id}/comments`, {
+        method: 'POST',
+        body: { body: trimmed, parent_id: parentComment.id },
+      })
+      if (res.comment) {
+        // Add reply under the parent comment
+        setViewComments((prev) =>
+          prev.map((c) =>
+            c.id === parentComment.id
+              ? { ...c, replies: [...(c.replies || []), res.comment] }
+              : c,
+          ),
+        )
+        setReplyingTo(null)
+        setReplyInput('')
+        setViewingPost((prev) => ({ ...prev, comment_count: (prev.comment_count || 0) + 1 }))
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === viewingPost.id ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p,
+          ),
+        )
+      }
+    } catch {
+      // ignore
+    } finally {
+      setViewSendingComment(false)
+    }
+  }
+
+  const handleViewDeleteComment = async (commentId, parentId) => {
+    if (!viewingPost) return
+    setDeletingViewCommentId(commentId)
+    try {
+      await apiRequest(`/admin/feed/${viewingPost.id}/comments/${commentId}`, {
+        method: 'DELETE',
+      })
+      // Deleting a top-level comment also removes its replies (server cascades).
+      const removed = parentId
+        ? 1
+        : 1 + (viewComments.find((c) => c.id === commentId)?.replies?.length || 0)
+      if (parentId) {
+        // Remove reply from parent
+        setViewComments((prev) =>
+          prev.map((c) =>
+            c.id === parentId
+              ? { ...c, replies: (c.replies || []).filter((r) => r.id !== commentId) }
+              : c,
+          ),
+        )
+      } else {
+        // Remove top-level comment
+        setViewComments((prev) => prev.filter((c) => c.id !== commentId))
+      }
+      setViewingPost((prev) => ({ ...prev, comment_count: Math.max(0, (prev.comment_count || 0) - removed) }))
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === viewingPost.id
+            ? { ...p, comment_count: Math.max(0, (p.comment_count || 0) - removed) }
+            : p,
+        ),
+      )
+    } catch {
+      // ignore
+    } finally {
+      setDeletingViewCommentId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header bar */}
@@ -391,7 +590,7 @@ export default function FeedAdminPanel() {
                             </div>
                           )}
                           <div className="min-w-0 max-w-xs">
-                            <p className="font-semibold text-ink truncate">{post.title}</p>
+                            <button type="button" onClick={() => handleOpenView(post)} className="font-semibold text-ink truncate text-left hover:text-trail transition">{post.title}</button>
                             <p className="text-xs text-ink/40 truncate">
                               {post.body ? post.body.replace(/\n+/g, ' ').substring(0, 50) : '(Không có nội dung)'}
                             </p>
@@ -441,6 +640,14 @@ export default function FeedAdminPanel() {
                         {post.published_at ? formatDateTime(post.published_at) : '—'}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-right space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenView(post)}
+                          className="rounded p-1 text-ink/60 hover:bg-stone/30 hover:text-ink"
+                          title="Xem chi tiết bài viết"
+                        >
+                          <Icon name="eye" className="h-4 w-4" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleOpenEdit(post)}
@@ -594,17 +801,26 @@ export default function FeedAdminPanel() {
                   <label className={LABEL_CLASS}>Video bài viết</label>
                   <p className="text-xs text-ink/50">MP4 hoặc WebM, tối đa 100 MB/file. Video đã đăng được xóa khỏi R2 khi bạn gỡ video và lưu bài, hoặc xóa bài.</p>
                   <input
+                    ref={videoInputRef}
                     type="file"
                     accept="video/mp4,video/webm,.mp4,.webm"
-                    aria-label="Tải video bảng tin, tối đa 100 MB"
-                    disabled={videoUploads.busy || savingPost}
-                    className="block w-full text-sm text-ink/70 file:mr-3 file:rounded-lg file:border file:border-stone file:bg-paper file:px-3 file:py-2"
+                    className="hidden"
                     onChange={(event) => {
                       const file = event.target.files?.[0]
                       event.target.value = ''
                       videoUploads.upload(file)
                     }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => videoInputRef.current?.click()}
+                    disabled={videoUploads.busy || savingPost}
+                    aria-label="Tải video bảng tin, tối đa 100 MB"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-trail/40 bg-trail/[0.04] px-4 py-3 text-sm font-semibold text-trail transition hover:border-trail/70 hover:bg-trail/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <span className="text-lg leading-none">+</span>
+                    {videoUploads.busy ? 'Đang tải video lên...' : 'Chọn video'}
+                  </button>
                   {videoUploads.busy && (
                     <div className="space-y-1" role="status">
                       <progress value={videoUploads.progress} max="100" className="w-full accent-trail" />
@@ -749,6 +965,266 @@ export default function FeedAdminPanel() {
               >
                 {savingPost ? 'Đang lưu...' : status === 'published' ? 'Xuất bản' : 'Lưu bản nháp'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Post Detail / View Modal */}
+      {viewingPost && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="flex h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl overflow-hidden border border-stone">
+            {/* Modal header */}
+            <div className="flex items-center justify-between border-b border-stone px-6 py-4 bg-paper">
+              <h3 className="font-display text-lg font-bold text-ink truncate pr-4">
+                {viewingPost.title}
+              </h3>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewingPost(null)
+                    handleOpenEdit(viewingPost)
+                  }}
+                  className={SECONDARY_BTN}
+                >
+                  <Icon name="edit" className="h-3.5 w-3.5" />
+                  Chỉnh sửa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingPost(null)}
+                  className="rounded-lg p-1.5 text-ink/40 hover:bg-stone/30 hover:text-ink"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* Post meta */}
+              <div className="flex items-center gap-2 text-xs text-ink/60">
+                {viewingPost.is_pinned && (
+                  <span className="rounded bg-[#E0A23A]/15 px-2.5 py-0.5 text-xs font-semibold text-[#9A6B12]">
+                    Đã ghim
+                  </span>
+                )}
+                <span className="font-semibold text-ink/90">{viewingPost.author_name || 'BTC VNUTour'}</span>
+                <span>•</span>
+                <span>{formatRelativeTime(viewingPost.published_at || viewingPost.created_at)}</span>
+                <Badge
+                  label={viewingPost.status === 'draft' ? 'Bản nháp' : 'Đã xuất bản'}
+                  cls={viewingPost.status === 'draft' ? 'bg-stone/50 text-ink/60' : 'bg-trail/15 text-trail'}
+                />
+              </div>
+
+              {/* Title */}
+              <h2 className="font-display text-xl sm:text-2xl font-bold text-ink leading-snug">
+                {viewingPost.title}
+              </h2>
+
+              {/* Image gallery */}
+              {(() => {
+                const urls = getFeedImageUrls(viewingPost)
+                return urls.length > 0 ? <FeedImageCarousel images={urls} title={viewingPost.title} /> : null
+              })()}
+
+              {/* Markdown body */}
+              <div className="border-t border-stone/50 pt-4">
+                <MarkdownPreview content={viewingPost.body || ''} emptyMessage="(Không có nội dung)" allowVideos />
+              </div>
+
+              {/* Reaction bar */}
+              <div className="flex flex-wrap items-center gap-2 border-t border-stone/50 pt-4">
+                {EMOJIS.map(({ type, emoji }) => {
+                  const count = viewingPost.reaction_counts?.[type] || 0
+                  const isSelected = viewingPost.my_reaction === type
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handleViewReact(type)}
+                      disabled={viewReacting}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition active:scale-95 ${
+                        isSelected
+                          ? 'border border-trail bg-trail/15 text-trail font-bold shadow-sm'
+                          : 'border border-stone bg-white text-ink/75 hover:bg-paper hover:text-ink'
+                      }`}
+                    >
+                      <span>{emoji}</span>
+                      {count > 0 && <span>{count}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Comments section */}
+              <div className="border-t border-stone/50 pt-5 space-y-4">
+                <h3 className="font-display text-sm font-bold text-ink/90">
+                  {viewingPost.comment_count || 0} bình luận
+                </h3>
+
+                {/* Comment input */}
+                <form onSubmit={handleViewSendComment} className="space-y-2">
+                  <textarea
+                    value={viewCommentInput}
+                    onChange={(e) => setViewCommentInput(e.target.value)}
+                    placeholder="Viết bình luận với tư cách BTC..."
+                    maxLength={1000}
+                    rows={2}
+                    className={`${FIELD_CLASS} resize-none`}
+                  />
+                  <div className="flex justify-between items-center">
+                    <span className="font-mono text-[11px] text-ink/40">{viewCommentInput.length}/1000</span>
+                    <button
+                      type="submit"
+                      disabled={!viewCommentInput.trim() || viewSendingComment}
+                      className={PRIMARY_BTN}
+                    >
+                      {viewSendingComment ? 'Đang gửi...' : 'Gửi bình luận'}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Comments list */}
+                {viewCommentsLoading && viewComments.length === 0 ? (
+                  <div className="py-6 text-center text-sm text-ink/40">Đang tải bình luận...</div>
+                ) : viewComments.length === 0 ? (
+                  <div className="py-6 text-center text-sm text-ink/40">Chưa có bình luận nào.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {viewComments.map((comment) => (
+                      <div key={comment.id} className="space-y-2">
+                        {/* Top-level comment */}
+                        <div className="rounded-lg border border-stone/60 bg-paper/50 p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-xs">
+                              {comment.team_name && (
+                                <span className="font-bold text-trail">{comment.team_name}</span>
+                              )}
+                              {comment.team_name && comment.author_name && <span>•</span>}
+                              {comment.author_name && (
+                                <span className="font-medium text-ink/80">{comment.author_name}</span>
+                              )}
+                              <span>•</span>
+                              <span className="font-mono text-ink/40">{formatRelativeTime(comment.created_at)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleViewDeleteComment(comment.id, null)}
+                              disabled={deletingViewCommentId === comment.id}
+                              className="text-xs font-semibold text-clay/70 hover:text-clay"
+                              title="Xoá bình luận"
+                            >
+                              {deletingViewCommentId === comment.id ? '...' : 'Xoá'}
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-sm text-ink whitespace-pre-line leading-relaxed">
+                            {comment.body}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReplyingTo(replyingTo === comment.id ? null : comment.id)
+                              setReplyInput('')
+                            }}
+                            className="mt-2 text-xs font-semibold text-trail hover:underline"
+                          >
+                            Trả lời
+                          </button>
+                        </div>
+
+                        {/* Replies */}
+                        {(comment.replies || []).length > 0 && (
+                          <div className="ml-6 space-y-2">
+                            {comment.replies.map((reply) => (
+                              <div key={reply.id} className="rounded-lg border border-stone/40 bg-white p-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <span className="text-ink/30">↳</span>
+                                    {reply.team_name && (
+                                      <span className="font-bold text-trail">{reply.team_name}</span>
+                                    )}
+                                    {reply.team_name && reply.author_name && <span>•</span>}
+                                    {reply.author_name && (
+                                      <span className="font-medium text-ink/80">{reply.author_name}</span>
+                                    )}
+                                    <span>•</span>
+                                    <span className="font-mono text-ink/40">{formatRelativeTime(reply.created_at)}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleViewDeleteComment(reply.id, comment.id)}
+                                    disabled={deletingViewCommentId === reply.id}
+                                    className="text-xs font-semibold text-clay/70 hover:text-clay"
+                                    title="Xoá trả lời"
+                                  >
+                                    {deletingViewCommentId === reply.id ? '...' : 'Xoá'}
+                                  </button>
+                                </div>
+                                <p className="mt-1.5 text-sm text-ink whitespace-pre-line leading-relaxed">
+                                  {reply.body}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Reply input */}
+                        {replyingTo === comment.id && (
+                          <div className="ml-6">
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={replyInput}
+                                onChange={(e) => setReplyInput(e.target.value)}
+                                placeholder={`Trả lời ${comment.author_name || ''}...`}
+                                maxLength={1000}
+                                className={`${FIELD_CLASS} flex-1`}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault()
+                                    handleViewSendReply(comment)
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleViewSendReply(comment)}
+                                disabled={!replyInput.trim() || viewSendingComment}
+                                className={PRIMARY_BTN}
+                              >
+                                Gửi
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setReplyingTo(null); setReplyInput('') }}
+                                className={SECONDARY_BTN}
+                              >
+                                Huỷ
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {viewHasMore && (
+                      <div className="pt-2 text-center">
+                        <button
+                          type="button"
+                          onClick={handleViewLoadMore}
+                          disabled={viewCommentsLoading}
+                          className="text-xs font-semibold text-trail hover:underline"
+                        >
+                          {viewCommentsLoading ? 'Đang tải...' : 'Xem thêm bình luận'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
