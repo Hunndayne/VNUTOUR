@@ -1,64 +1,52 @@
-Kubernetes Deployment
-=====================
+# Triển khai Kubernetes
 
-The same stack as `backend/DOCKER.md` — PostgreSQL, a one-shot migration job,
-Gunicorn, the React/Nginx frontend, the Discord bot and the email worker — plus
-a Prometheus/Grafana namespace and a nightly backup CronJob. This is what
-production runs on: the Compose stack it replaced is gone, and so is the
-Cloudflare Tunnel that used to front it.
+> **Kustomize / GitOps:** Xem [hướng dẫn tiếng Việt](KUSTOMIZE_GUIDE.vi.md) về base, components, ba overlay, Argo CD, ví dụ chỉnh sửa và vận hành. Tài liệu đó được đối chiếu với bản render ngày 09/09/2026. Các phần triển khai trực tiếp bên dưới mô tả luồng manifest đánh số; một số mô tả kiến trúc/CD đã cũ so với `kustomize/`. Không dùng lệnh triển khai cũ cho tài nguyên Argo CD quản lý mà chưa đối chiếu phạm vi trong hướng dẫn.
 
-Files are numbered in apply order. `00`–`10` are the application, `11`–`15` are
-monitoring, `16` is the backup CronJob. `cert-manager-issuer.yaml` is a leftover
-from the ACME attempt and is no longer applied — see **TLS** below.
+Cùng stack với `backend/DOCKER.md` — PostgreSQL, một migration job chạy một lần, Gunicorn, frontend React/Nginx, Discord bot và email worker — cộng thêm namespace Prometheus/Grafana và một backup CronJob chạy hằng đêm. Đây là những gì production đang chạy: stack Compose đã bị thay thế hoàn toàn, và Cloudflare Tunnel trước đây dùng để đứng trước nó cũng đã bị gỡ bỏ.
 
-Cluster layout
---------------
+Các file được đánh số theo thứ tự apply. `00`–`10` là ứng dụng, `11`–`15` là monitoring, `16` là backup CronJob. `cert-manager-issuer.yaml` là tàn dư từ lần thử ACME và không còn được apply — xem phần **TLS** bên dưới.
 
-| Node | Address | vCPU | RAM | Runs |
+---
+
+## Bố cục Cluster
+
+| Node | Địa chỉ | vCPU | RAM | Chạy gì |
 |---|---|---|---|---|
-| `vnutour-cp` | 192.168.1.110 | 2 | 3 GB | k3s server, ingress-nginx, Prometheus, the CI runner |
+| `vnutour-cp` | 192.168.1.110 | 2 | 3 GB | k3s server, ingress-nginx, Prometheus, CI runner |
 | `vnutour-w1` | 192.168.1.111 | 2 | 3 GB | postgres, backend, frontend, bot, email-worker, Grafana |
-| `vnutour-w2` | — | 2 | 6 GB | not built yet; headroom, powered off overnight when it is |
+| `vnutour-w2` | — | 2 | 6 GB | chưa dựng; dự phòng, tắt nguồn qua đêm khi có |
 
-Ubuntu 24.04, k3s v1.36.3. `w1` alone runs the whole application, which is what
-makes `w2` optional — and what makes it safe to power `w2` off overnight to free
-memory on the Proxmox host for the RL cluster.
+Ubuntu 24.04, k3s v1.36.3. `w1` một mình chạy toàn bộ ứng dụng — đó là lý do `w2` là tuỳ chọn, và vì sao có thể tắt `w2` qua đêm để giải phóng bộ nhớ trên Proxmox host cho RL cluster.
 
-`w1` must carry the label the stateful pods select on, or postgres, the backend
-and the backup Job stay Pending forever:
+`w1` phải mang label mà các stateful pod chọn, nếu không postgres, backend và backup Job sẽ ở trạng thái Pending mãi mãi:
 
 ```bash
 kubectl label node vnutour-w1 vnutour/storage=true
 ```
 
-The control plane briefly ran with `CriticalAddonsOnly=true:NoExecute` while it
-was a 2 GB VM, to keep application pods off it. That taint is **gone** now that
-cp has 3 GB and hosts Prometheus. Nothing in these manifests tolerates it, so
-putting it back strands every pod that is scheduled to cp afterwards.
+Control plane từng chạy với `CriticalAddonsOnly=true:NoExecute` khi còn là VM 2 GB, để tránh các pod ứng dụng bị lên đó. Taint đó **đã bị xoá** bây giờ khi cp có 3 GB và đang chạy Prometheus. Không có gì trong các manifest này tolerate nó, nên nếu đặt lại sẽ khiến mọi pod được schedule lên cp bị kẹt.
 
-Resource limits are sized for these nodes. Their sum exceeds a single node's
-memory on purpose — limits are ceilings that stop one runaway pod, not
-reservations — but it does mean the numbers cannot simply be scaled up without
-checking the total against the node again.
+Resource limits được định cỡ cho các node này. Tổng của chúng vượt quá bộ nhớ của một node — limits là trần để ngăn một pod chạy vượt mức, không phải reservation — nhưng điều này có nghĩa là các con số không thể tăng đơn giản mà không kiểm tra tổng với node.
 
-Cluster prerequisites
----------------------
+---
 
-**Ingress controller.** `10.ingress.yaml` sets `ingressClassName: nginx`, and a
-stock k3s ships Traefik instead — it will accept the object and never route to
-it. Install the server with Traefik disabled:
+## Yêu cầu tiên quyết của Cluster
+
+### Ingress controller
+
+`10.ingress.yaml` đặt `ingressClassName: nginx`, trong khi k3s mặc định đi kèm Traefik — nó sẽ chấp nhận object nhưng không bao giờ route đến nó. Cài server với Traefik bị vô hiệu hoá:
 
 ```bash
 curl -sfL https://get.k3s.io | sh -s - server --disable=traefik --node-ip 192.168.1.110
 ```
 
-On a cluster that is already running, remove it instead:
+Trên cluster đang chạy, thay vào đó hãy xoá nó:
 
 ```bash
 kubectl -n kube-system delete helmchart traefik traefik-crd
 ```
 
-Then install ingress-nginx **with forwarded headers turned on**:
+Sau đó cài ingress-nginx **với forwarded headers được bật**:
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -67,94 +55,48 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.config.use-forwarded-headers=true
 ```
 
-That setting is the opposite of what this file said while the cluster was its
-own edge, and the reason is Cloudflare. Cloudflare terminates the browser's TLS
-and sends `X-Forwarded-Proto: https`; without `use-forwarded-headers` the
-controller overwrites that header from the hop it accepted, Django concludes the
-request was plaintext, and `SECURE_SSL_REDIRECT` answers every `/api` call with a
-301 that loops.
+Cài đặt này ngược với những gì file này nói khi cluster còn là edge của chính nó, và lý do là Cloudflare. Cloudflare kết thúc TLS của trình duyệt và gửi `X-Forwarded-Proto: https`; nếu không có `use-forwarded-headers`, controller sẽ ghi đè header đó từ hop nó chấp nhận, Django kết luận request là plaintext, và `SECURE_SSL_REDIRECT` trả lời mọi lời gọi `/api` bằng 301 vòng lặp.
 
-The cost is that ingress-nginx now believes whatever `X-Forwarded-Proto` reaches
-it, so anything that can talk to the origin's 443 directly can claim its
-plaintext request arrived over HTTPS. What closes that is the Cloudflare
-allowlist in `host-firewall.nft` below: if the only source that can reach 443 is
-Cloudflare, the header can only come from Cloudflare. Authenticated Origin Pulls
-would add a second check at the TLS layer and is not set up.
+Hệ quả là ingress-nginx bây giờ tin bất kỳ `X-Forwarded-Proto` nào đến, vì vậy bất cứ thứ gì có thể nói chuyện trực tiếp với 443 của origin đều có thể tự nhận request plaintext của mình đến qua HTTPS. Điều đóng cửa điều đó là allowlist Cloudflare trong `host-firewall.nft` bên dưới: nếu nguồn duy nhất có thể đến 443 là Cloudflare, thì header chỉ có thể đến từ Cloudflare. Authenticated Origin Pulls sẽ thêm kiểm tra thứ hai ở lớp TLS nhưng chưa được thiết lập.
 
-`TRUST_PROXY_HEADERS=1` in the ConfigMap is a separate switch: it tells Django to
-believe the header ingress-nginx passes on, since every hop inside the cluster is
-plain HTTP.
+`TRUST_PROXY_HEADERS=1` trong ConfigMap là một switch riêng: nó báo Django tin header mà ingress-nginx chuyển tiếp, vì mọi hop bên trong cluster là HTTP thuần.
 
-**Exposure.** The router cannot forward an individual port, so the control plane
-sits in its DMZ instead: every port on 192.168.1.110 arrives from the internet —
-SSH, the Kubernetes API on 6443, the kubelet on 10250, the whole NodePort range.
-Nothing upstream filters any of it. That makes `host-firewall.nft` the only thing
-between the cluster and the internet rather than a second layer, which is why it
-is in this repository instead of living only on the host.
+### Phơi bày ra ngoài
 
-It is an nftables table of its own (`inet vnutour_fw`) at priority -10, not ufw:
-k3s writes its rules through iptables-nft, ufw's `DEFAULT_FORWARD_POLICY=DROP`
-breaks pod networking, and a ufw reload walks over kube-proxy's chains. A
-separate table runs ahead of k3s' own and survives a k3s restart untouched.
+Router không thể forward một port riêng lẻ, nên control plane nằm trong DMZ của nó: mọi port trên 192.168.1.110 đều đến từ internet — SSH, Kubernetes API trên 6443, kubelet trên 10250, toàn bộ dải NodePort. Không có gì upstream lọc bất kỳ thứ gì. Điều đó khiến `host-firewall.nft` là thứ duy nhất đứng giữa cluster và internet thay vì là lớp thứ hai, đó là lý do nó nằm trong repository này thay vì chỉ sống trên host.
 
-It filters **both** `input` and `forward`. Traffic to 443 and to every NodePort
-is DNAT'd in `PREROUTING` and then routed to a pod, so it passes through FORWARD
-and never reaches INPUT — an INPUT-only ruleset leaves the whole NodePort range
-open while looking like it closed it.
+Đây là một bảng nftables riêng (`inet vnutour_fw`) ở priority -10, không phải ufw: k3s viết rules của nó qua iptables-nft, `DEFAULT_FORWARD_POLICY=DROP` của ufw phá vỡ pod networking, và ufw reload ghi đè lên các chain của kube-proxy. Một bảng riêng chạy trước bảng của k3s và tồn tại qua k3s restart mà không bị ảnh hưởng.
 
-The policy: from the internet only 80 and 443, and only from Cloudflare's
-published ranges, so the origin cannot be scanned or hit directly and no request
-can skip the edge. Port 80 is in there only because the zone runs Flexible and
-Cloudflare therefore reaches the origin over HTTP — see TLS above. Everything arriving on any other interface is trusted — `enp6s19`
-(10.10.10.11, the Proxmox SDN management network) and k3s' own `cni0`,
-`flannel.1` and `veth*`. Sources inside `192.168.1.0/24` stay open on eth0 too,
-because w1 reaches the apiserver, the kubelet and flannel's VXLAN across it;
-closing that dropped w1 out of the cluster.
+Nó lọc **cả hai** `input` và `forward`. Traffic đến 443 và mọi NodePort được DNAT trong `PREROUTING` rồi route đến một pod, vì vậy nó đi qua FORWARD và không bao giờ đến INPUT — ruleset chỉ INPUT để nguyên toàn bộ dải NodePort mở trong khi trông có vẻ đã đóng.
 
-`update-cloudflare-ips.sh` fills the `cloudflare_v4`/`cloudflare_v6` sets from
-cloudflare.com and runs weekly from a timer, keeping the last good copy in
-`/var/lib/vnutour-fw/cloudflare.nft` so a boot with no network does not leave the
-sets empty. Two consequences worth remembering: turning the orange cloud **off**
-for a hostname takes it offline immediately, since traffic then comes straight
-from clients, and Grafana on `:30300` is reachable from the LAN and the SDN only.
+Chính sách: từ internet chỉ có 80 và 443, và chỉ từ các dải được publish của Cloudflare, nên origin không thể bị scan hay hit trực tiếp và không request nào có thể bỏ qua edge. Port 80 có ở đó chỉ vì zone đang chạy Flexible và Cloudflare vì vậy đến origin qua HTTP — xem TLS bên dưới. Mọi thứ đến trên bất kỳ interface nào khác đều được tin tưởng — `enp6s19` (10.10.10.11, mạng quản lý Proxmox SDN) và các `cni0`, `flannel.1`, `veth*` của k3s. Các source trong `192.168.1.0/24` vẫn mở trên eth0 vì w1 đến apiserver, kubelet và VXLAN của flannel qua nó; đóng điều đó đã làm w1 rời khỏi cluster.
 
-**TLS.** Browsers get HTTPS from Cloudflare, but the hop from Cloudflare to this
-origin is **plain HTTP on port 80** — the zone's SSL/TLS mode is **Flexible**.
-That was measured on 10/08/2026 while debugging the firewall: every inbound
-connection from Cloudflare's ranges arrives with `DPT=80`. This file claimed Full
-(strict) for months and was wrong.
+`update-cloudflare-ips.sh` điền các set `cloudflare_v4`/`cloudflare_v6` từ cloudflare.com và chạy hàng tuần từ một timer, giữ bản sao tốt nhất trong `/var/lib/vnutour-fw/cloudflare.nft` để boot không có mạng không để lại các set rỗng. Hai hệ quả đáng nhớ: tắt orange cloud cho một hostname sẽ đưa nó offline ngay lập tức, vì traffic khi đó đến thẳng từ client; và Grafana trên `:30300` chỉ có thể truy cập từ LAN và SDN.
 
-A **Cloudflare Origin Certificate** is already loaded and referenced by the
-Ingress, so the origin can serve HTTPS today — the edge simply is not asking for
-it. Switching the zone to Full (strict) is what makes it real, and it is what
-lets port 80 be closed on the host firewall. Check first that the certificate
-covers both hostnames, or the zone that is missing will answer 526:
+### TLS
+
+Trình duyệt nhận HTTPS từ Cloudflare, nhưng hop từ Cloudflare đến origin này là **HTTP thuần trên port 80** — chế độ SSL/TLS của zone là **Flexible**. Điều đó được đo vào ngày 10/08/2026 khi debug firewall: mọi kết nối đến từ dải Cloudflare đều đến với `DPT=80`. File này tuyên bố Full (strict) trong nhiều tháng và đã sai.
+
+**Cloudflare Origin Certificate** đã được load và được tham chiếu bởi Ingress, nên origin có thể phục vụ HTTPS ngay hôm nay — edge đơn giản là không yêu cầu nó. Chuyển zone sang Full (strict) là điều làm cho nó thực, và đó là điều cho phép đóng port 80 trên host firewall. Kiểm tra trước rằng certificate bao gồm cả hai hostname, nếu không zone còn thiếu sẽ trả lời 526:
 
 ```bash
 kubectl -n vnutour get secret vnutour-tls -o jsonpath='{.data.tls\.crt}' \
   | base64 -d | openssl x509 -noout -subject -dates -ext subjectAltName
 ```
 
-The certificate is valid for 15 years and renews never, so there is no
-cert-manager, no ACME, and no port-80 solver path to keep open. Port 80 is open
-purely because Flexible needs it.
+Certificate có hiệu lực 15 năm và không tự gia hạn, nên không có cert-manager, không có ACME, và không có đường solver port-80 nào cần giữ mở. Port 80 mở chỉ vì Flexible cần nó.
 
 ```bash
 kubectl -n vnutour create secret tls vnutour-tls --cert=origin.pem --key=origin.key
 ```
 
-`10.ingress.yaml` references that secret and keeps `ssl-redirect: "false"`.
-Forcing the redirect at the origin as well loops, because the edge already did
-it.
+`10.ingress.yaml` tham chiếu secret đó và giữ `ssl-redirect: "false"`. Ép redirect ở origin cũng gây vòng lặp, vì edge đã làm rồi.
 
-cert-manager was tried and dropped. `cert-manager-issuer.yaml` stays in the tree
-only as a record of that attempt — applying it does nothing useful unless
-cert-manager is reinstalled, and Full (strict) does not need it.
+cert-manager đã được thử và bỏ. `cert-manager-issuer.yaml` vẫn còn trong tree chỉ như một ghi chép về lần thử đó — apply nó không có ích gì trừ khi cert-manager được cài lại, và Full (strict) không cần nó.
 
-**Images.** Both images live in a **private** GHCR repository under the owner
-name in lowercase: `ghcr.io/hunndayne/vnutour-backend` and `-frontend`. The
-cluster needs a pull secret, wired to the namespace's default ServiceAccount so
-every pod picks it up without naming it:
+### Images
+
+Cả hai image đều nằm trong repository GHCR **private** dưới tên owner viết thường: `ghcr.io/hunndayne/vnutour-backend` và `-frontend`. Cluster cần một pull secret, được gắn vào ServiceAccount mặc định của namespace để mọi pod đều dùng nó mà không cần đặt tên:
 
 ```bash
 kubectl -n vnutour create secret docker-registry ghcr \
@@ -163,60 +105,44 @@ kubectl -n vnutour patch serviceaccount default \
   -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
 ```
 
-Tags are the short commit SHA. The tags written into the manifests are only a
-bootstrap value — the live tag comes from `kubectl set image`, which is what CD
-does, so a manifest can read older than what is running without anything being
-wrong. Avoid deploying `:latest`: it takes away both rollback and the ability to
-tell which build is live.
+Tags là short commit SHA. Các tag được ghi vào manifest chỉ là giá trị bootstrap — tag thực tế đến từ `kubectl set image`, đó là những gì CD làm, nên một manifest có thể đọc cũ hơn những gì đang chạy mà không có gì sai. Tránh deploy `:latest`: nó loại bỏ cả khả năng rollback lẫn khả năng biết build nào đang chạy.
 
-**Storage.** k3s provides `local-path` as the default StorageClass. These
-volumes live on one node's disk, so any pod mounting one is pinned to that node —
-see Known limitations.
+### Storage
 
-A claim binds to whichever node its pod first lands on, which makes the very
-first apply the moment that decides where the database lives for good. Do it
-with `w2` powered off, so nothing can bind a volume to the node that gets shut
-down every night. The `nodeSelector` on postgres, the backend and the backup Job
-is the second guard on the same problem.
+k3s cung cấp `local-path` là StorageClass mặc định. Các volume này sống trên disk của một node, nên bất kỳ pod nào mount một volume đều bị ghim vào node đó — xem Giới hạn đã biết.
 
-Secrets
--------
+Một claim bind với node mà pod của nó đầu tiên hạ xuống, điều này khiến lần apply đầu tiên là khoảnh khắc quyết định nơi database sống mãi mãi. Hãy làm điều đó với `w2` đã tắt nguồn, để không có gì bind volume vào node bị tắt đêm. `nodeSelector` trên postgres, backend và backup Job là lớp bảo vệ thứ hai cho cùng vấn đề đó.
 
-Four, none of them in git:
+---
 
-| Secret | Namespace | Holds |
+## Secrets
+
+Bốn secret, không có cái nào trong git:
+
+| Secret | Namespace | Chứa gì |
 |---|---|---|
 | `backend-secret` | `vnutour` | DB credentials, `DJANGO_SECRET_KEY`, SMTP, Discord, R2 |
 | `vnutour-tls` | `vnutour` | Cloudflare Origin Certificate |
 | `ghcr` | `vnutour` | GHCR pull credentials |
 | `grafana-admin` | `monitoring` | Grafana admin login |
 
-`02.secret.yaml` holds placeholders and is not meant to be applied as-is. Create
-the real one from a file kept outside the repository:
+`02.secret.yaml` chứa placeholder và không được apply nguyên bản. Tạo cái thực từ một file được giữ bên ngoài repository:
 
 ```bash
 kubectl -n vnutour create secret generic backend-secret --from-env-file=/srv/vnutour/.env
 ```
 
-That file has to be **minimal** — only genuinely secret keys. Pods load the
-ConfigMap first and the Secret second, so any key present in both wins from the
-Secret; a stray `DJANGO_ALLOWED_HOSTS` or `WEB_BASE_URL` copied out of the old
-Compose env quietly overrides the correct value in `01.configmap.yaml`.
+File đó phải **tối giản** — chỉ các key thực sự bí mật. Pod load ConfigMap trước và Secret sau, nên bất kỳ key nào có mặt trong cả hai sẽ thắng từ Secret; một `DJANGO_ALLOWED_HOSTS` hay `WEB_BASE_URL` lạc lõng được copy từ env Compose cũ sẽ âm thầm ghi đè giá trị đúng trong `01.configmap.yaml`.
 
-Key names must match `webapi/serverapi/settings.py` exactly. In particular the
-Django secret is `DJANGO_SECRET_KEY`, and SMTP settings are read as `SMTP_*`
-rather than Django's own `EMAIL_*` names.
+Tên key phải khớp chính xác với `webapi/serverapi/settings.py`. Đặc biệt Django secret là `DJANGO_SECRET_KEY`, và SMTP settings được đọc là `SMTP_*` thay vì tên `EMAIL_*` của Django.
 
-`backend-secret` currently carries the `R2_*` keys, which means the application
-stores uploaded media in R2 rather than on the `media-data` volume. That is also
-why the backup CronJob's optional `r2-backup` secret does not exist: the
-credentials it would supply are already in the environment.
+`backend-secret` hiện mang các key `R2_*`, nghĩa là ứng dụng lưu media upload trên R2 thay vì trên volume `media-data`. Đó cũng là lý do secret tuỳ chọn `r2-backup` của backup CronJob không tồn tại: credentials nó sẽ cung cấp đã có trong environment rồi.
 
-Deploy
-------
+---
 
-Only needed to build the cluster from scratch or to rebuild it elsewhere;
-day-to-day deployment is the pipeline below.
+## Triển khai
+
+Chỉ cần thiết khi dựng cluster từ đầu hoặc để dựng lại ở chỗ khác; triển khai hàng ngày là pipeline bên dưới.
 
 ```bash
 kubectl apply -f k8s/00.namespace.yaml
@@ -225,10 +151,7 @@ kubectl apply -f k8s/04.postgres.yaml
 kubectl -n vnutour rollout status statefulset/postgres
 ```
 
-The migration job cleans itself up an hour after it finishes, so routine deploys
-can just apply it. Redeploying sooner than that hits the fact that a Job's pod
-template is immutable and a second apply with a new image tag is rejected, so
-delete it first.
+Migration job tự dọn dẹp một tiếng sau khi hoàn thành, nên các deploy thông thường có thể apply ngay. Deploy lại sớm hơn sẽ gặp vấn đề vì pod template của Job là immutable và lần apply thứ hai với image tag mới sẽ bị từ chối, nên hãy xoá trước:
 
 ```bash
 kubectl -n vnutour delete job vnutour-migrate --ignore-not-found
@@ -236,149 +159,92 @@ kubectl apply -f k8s/05.migrate-job.yaml
 kubectl -n vnutour wait --for=condition=complete job/vnutour-migrate --timeout=300s
 ```
 
-The Job runs `migrate` and then `seed_phases`. Both are idempotent. Nothing else
-orders itself behind it, so wait for it before starting the workloads: the
-backend gates itself through its readiness probe, but the bot and the email
-worker have no probe and will happily run against an unmigrated schema.
+Job chạy `migrate` rồi `seed_phases`. Cả hai đều idempotent. Không có gì khác tự sắp xếp sau nó, nên hãy đợi nó trước khi khởi động workloads: backend tự chặn qua readiness probe, nhưng bot và email worker không có probe và sẽ vui vẻ chạy trên schema chưa migrate.
 
 ```bash
 kubectl apply -f k8s/06.backend.yaml -f k8s/07.bot.yaml -f k8s/08.email-worker.yaml -f k8s/09.frontend.yaml -f k8s/10.ingress.yaml
 kubectl apply -f k8s/16.backup-cronjob.yaml
 ```
 
-On a database that was created rather than restored, two things bite:
+Trên database được tạo mới thay vì restore, có hai điều cần lưu ý:
 
-- **The `hunn` account has no usable password.** Migration 0021 promotes it to
-  `master_admin` and 0024 invalidates the seeded one, and `Account` is not
-  `AUTH_USER_MODEL` so `createsuperuser` is no help. Set one by hand through
-  `manage.py shell`, and log in with the **username**, not the email —
-  `auth_service` looks up `username__iexact`.
-- **Program phases** come from `seed_phases`, not from `migrate`. Without them
-  the admin pages 404 on `/api/program/phases/registration`. The migration Job
-  already runs it; a hand-run `migrate` alone does not.
+- **Tài khoản `hunn` không có mật khẩu dùng được.** Migration 0021 thăng nó lên `master_admin` và 0024 vô hiệu hoá mật khẩu đã seed, và `Account` không phải `AUTH_USER_MODEL` nên `createsuperuser` không giúp được. Đặt bằng tay qua `manage.py shell`, và đăng nhập bằng **username**, không phải email — `auth_service` tra cứu `username__iexact`.
+- **Các phase chương trình** đến từ `seed_phases`, không phải từ `migrate`. Nếu không có chúng, các trang admin 404 trên `/api/program/phases/registration`. Migration Job đã chạy nó; chạy tay `migrate` một mình thì không.
 
-Continuous deployment
----------------------
+---
 
-`.github/workflows/ci.yml` runs tests and lint on every pull request. On a push
-to `main` it also builds both images and pushes them to GHCR tagged with the
-short SHA and `latest`, using the built-in `GITHUB_TOKEN` — no PAT is stored.
-`VITE_GOOGLE_CLIENT_ID` has to exist as a **repository variable**, because Vite
-bakes it into the bundle at build time and a ConfigMap value would come too late.
+## Continuous Deployment
 
-`.github/workflows/deploy.yml` then runs on the **self-hosted runner** in the
-homelab — the cluster's API is closed to the internet, so a cloud runner could
-not reach it. It runs the migration Job pinned to the image being deployed,
-`kubectl set image` on all four Deployments, and waits for the rollout of the
-backend and the frontend only. The bot is deliberately not waited on: it has no
-readiness probe and CrashLoops whenever `DISCORD_TOKEN` is unset, which would
-fail every deploy for an unrelated reason.
+`.github/workflows/ci.yml` chạy tests và lint trên mọi pull request. Trên push vào `main`, nó cũng build cả hai image và push lên GHCR được tag với short SHA và `latest`, sử dụng `GITHUB_TOKEN` tích hợp sẵn — không cần lưu PAT. `VITE_GOOGLE_CLIENT_ID` phải tồn tại như một **repository variable**, vì Vite bake nó vào bundle lúc build và giá trị ConfigMap sẽ đến quá muộn.
 
-Rolling back is `Run workflow` on Deploy with an earlier short SHA in
-`image_tag`. Deploying by hand is the same `kubectl set image`.
+`.github/workflows/deploy.yml` sau đó chạy trên **self-hosted runner** trong homelab — API của cluster đóng với internet, nên cloud runner không thể đến được. Nó chạy migration Job được ghim với image đang deploy, `kubectl set image` trên tất cả bốn Deployment, và đợi rollout của backend và frontend mà thôi. Bot được cố tình không đợi: nó không có readiness probe và CrashLoop khi `DISCORD_TOKEN` chưa set, điều này sẽ làm thất bại mọi deploy vì lý do không liên quan.
 
-One gap to know about: the deploy does **not** re-tag `16.backup-cronjob.yaml`,
-so the nightly backup keeps running whatever image the manifest names until it is
-bumped by hand. It only matters when `backup_service` itself changes.
+Rollback là `Run workflow` trên Deploy với short SHA cũ trong `image_tag`. Deploy bằng tay cũng là cùng lệnh `kubectl set image`.
 
-Monitoring
-----------
+Một điểm mù cần biết: deploy **không** re-tag `16.backup-cronjob.yaml`, nên backup đêm tiếp tục chạy image mà manifest đặt tên cho đến khi được bump bằng tay. Điều đó chỉ quan trọng khi chính `backup_service` thay đổi.
 
-Running, on the cluster described above.
+---
+
+## Monitoring
+
+Đang chạy trên cluster như mô tả ở trên.
 
 ```bash
 kubectl apply -f k8s/11.monitoring-namespace.yaml -f k8s/12.kube-state-metrics.yaml -f k8s/13.node-exporter.yaml -f k8s/14.prometheus.yaml -f k8s/15.grafana.yaml
 ```
 
-Prometheus is pinned to cp with a `nodeSelector` so its memory growth stays off
-`w1`, where postgres and the backend live, and it is trimmed to fit a 3 GB
-control plane: 5d retention, a 5GB size cap, a 6Gi volume and a 768Mi memory
-limit. Those numbers are a budget, not a preference — Prometheus OOMing on the
-control plane takes the k3s server down with it, so raise them only along with
-the VM's RAM. Grafana, kube-state-metrics and node-exporter carry no such
-constraint.
+Prometheus được ghim vào cp với `nodeSelector` để việc tăng trưởng bộ nhớ không ảnh hưởng đến `w1`, nơi postgres và backend sống, và được trim để vừa với control plane 3 GB: retention 5 ngày, giới hạn 5GB, volume 6Gi và memory limit 768Mi. Các con số đó là ngân sách, không phải tuỳ chọn — Prometheus OOM trên control plane sẽ kéo k3s server xuống cùng, nên chỉ tăng khi tăng RAM của VM. Grafana, kube-state-metrics và node-exporter không có ràng buộc như vậy.
 
-Prometheus discovers targets from the `prometheus.io/scrape` annotation rather
-than from ServiceMonitor objects, because a plain k3s has no Prometheus Operator
-to read them. Three pods carry that annotation: the backend exports Django
-request metrics on `:8000/metrics`, the postgres pod runs an exporter sidecar on
-`:9187`, and the frontend pod runs one on `:9113` reading Nginx's `stub_status`.
+Prometheus khám phá target từ annotation `prometheus.io/scrape` thay vì từ ServiceMonitor object, vì k3s thường không có Prometheus Operator để đọc chúng. Ba pod mang annotation đó: backend export Django request metrics trên `:8000/metrics`, postgres pod chạy exporter sidecar trên `:9187`, và frontend pod chạy một exporter trên `:9113` đọc `stub_status` của Nginx.
 
-Grafana is a NodePort on `30300`, reachable over the LAN and the VPN at
-`http://192.168.1.111:30300`, and not from the internet because the router
-forwards no NodePort. Prometheus has no external route at all:
+Grafana là NodePort trên `30300`, có thể truy cập qua LAN và VPN tại `http://192.168.1.111:30300`, và không từ internet vì router không forward NodePort nào. Prometheus không có route external nào cả:
 
 ```bash
 kubectl -n monitoring port-forward svc/prometheus 9090:9090
 ```
 
-`15.grafana.yaml` still ships the placeholder password `change-me`. Change it.
+`15.grafana.yaml` vẫn đi kèm mật khẩu placeholder `change-me`. Hãy thay đổi nó.
 
-Backup
-------
+---
 
-`16.backup-cronjob.yaml` runs at 03:00 Asia/Ho_Chi_Minh. It calls the
-application's own `create_backup(prefix='cron')` rather than `pg_dump`, so the
-archive is exactly the `.zip` the admin restore page accepts, keeps the newest 14
-on the `backup-data` volume, and copies each one offsite to Cloudflare R2
-(`vnutour` bucket, `db-backups/` prefix) through `scripts/upload_backup.py`.
+## Backup
 
-The local copy is the fast restore path and guards against logical mistakes; the
-R2 copy is what survives losing `w1`. Pruning applies only to the local copies —
-put a lifecycle rule on the bucket for the R2 side.
+`16.backup-cronjob.yaml` chạy lúc 03:00 Asia/Ho_Chi_Minh. Nó gọi `create_backup(prefix='cron')` của chính ứng dụng thay vì `pg_dump`, nên archive là đúng file `.zip` mà trang admin restore chấp nhận, giữ 14 bản mới nhất trên volume `backup-data`, và copy mỗi bản offsite lên Cloudflare R2 (bucket `vnutour`, prefix `db-backups/`) qua `scripts/upload_backup.py`.
 
-Rehearse restores on a scratch database. `restore_backup()` wipes the target
-before loading, so pointing it at production to "check the backup" is how the
-backup destroys what it was protecting.
+Bản copy local là đường restore nhanh và bảo vệ chống sai lầm logic; bản copy R2 là thứ tồn tại khi mất `w1`. Pruning chỉ áp dụng cho bản copy local — đặt lifecycle rule trên bucket cho bên R2.
 
-Powering `w2` down overnight
-----------------------------
+Hãy thực hành restore trên database scratch. `restore_backup()` xoá target trước khi load, nên trỏ nó vào production để "kiểm tra backup" chính là cách backup phá huỷ thứ nó bảo vệ.
 
-Once it exists. Drain first, then shut the VM down:
+---
+
+## Tắt nguồn `w2` qua đêm
+
+Sau khi `w2` tồn tại. Drain trước, rồi tắt VM:
 
 ```bash
 kubectl drain vnutour-w2 --ignore-daemonsets --delete-emptydir-data
 ```
 
+Sau khi bật lại `w2`:
+
 ```bash
 kubectl uncordon vnutour-w2
 ```
 
-Draining moves the pods to `w1` before the node goes away. Shutting the VM down
-without it leaves the node NotReady for about five minutes before the controller
-evicts anything, and the bot is offline for that whole window without being
-rescheduled anywhere.
+Drain di chuyển các pod sang `w1` trước khi node biến mất. Tắt VM mà không drain sẽ để node ở trạng thái NotReady khoảng năm phút trước khi controller evict bất cứ thứ gì, và bot sẽ offline trong suốt khoảng thời gian đó mà không được reschedule ở đâu cả.
 
-Never do this to `w1`. Its volumes are the database, the uploads and the backups,
-and none of them follow the pod to another node — that is an outage, not reduced
-capacity.
+Đừng bao giờ làm điều này với `w1`. Các volume của nó là database, uploads và backups, và không cái nào theo pod sang node khác — đó là một outage, không phải giảm capacity.
 
-Known limitations
------------------
+---
 
-**The backend cannot scale past one replica yet.** It mounts the `media-data`
-and `backup-data` claims, and `local-path` volumes are node-local, so every
-backend pod is pinned to the node holding them — the `nodeSelector` states
-outright what the volumes were going to enforce anyway. An HPA would pile all
-replicas onto that one node or leave them Pending. Media is already on R2, so
-what remains is dropping the two mounts once the backup Job is the only writer of
-`/app/backups`; deleting the `nodeSelector` is the last step of that change, not
-the first. The frontend has no volumes and scales today.
+## Giới hạn đã biết
 
-For the same reason the backend deploys with `strategy: Recreate` and takes a few
-seconds of downtime on each rollout. A rolling update would have to surge a
-second pod onto the one node holding those volumes, and anywhere else it cannot
-attach them — the rollout would stop with the new pod Pending. Both this and the
-HPA question are fixed by the same change.
+**Backend chưa thể scale quá một replica.** Nó mount các claim `media-data` và `backup-data`, và `local-path` volumes là node-local, nên mọi backend pod bị ghim vào node chứa chúng — `nodeSelector` nói thẳng điều mà volumes sẽ enforce dù sao. HPA sẽ chồng tất cả replica lên một node đó hoặc để chúng Pending. Media đã ở trên R2, nên thứ còn lại là bỏ hai mount sau khi backup Job là writer duy nhất của `/app/backups`; xoá `nodeSelector` là bước cuối cùng của thay đổi đó, không phải bước đầu. Frontend không có volume và có thể scale ngay hôm nay.
 
-**The bot and the email worker must stay at one replica.** Two bot pods mean two
-Discord gateway sessions on the same token and every slash command runs twice.
-Both use `strategy: Recreate` so a rollout never overlaps them. Do not put an HPA
-on either.
+Vì lý do tương tự, backend deploy với `strategy: Recreate` và có vài giây downtime mỗi lần rollout. Rolling update sẽ phải surge thêm một pod lên node duy nhất đang giữ những volume đó, và ở chỗ khác nó không thể attach chúng — rollout sẽ dừng với pod mới Pending. Cả hai vấn đề HPA và rollout đều được giải quyết bởi cùng một thay đổi.
 
-**Postgres is a StatefulSet over a static PVC**, not `volumeClaimTemplates`.
-Scaling it to 2 gives two postgres processes writing the same data directory.
+**Bot và email worker phải dừng ở một replica.** Hai pod bot nghĩa là hai Discord gateway session trên cùng token và mọi slash command chạy hai lần. Cả hai dùng `strategy: Recreate` để rollout không bao giờ overlap. Đừng đặt HPA cho bất kỳ cái nào.
 
-**The homelab is a single point of failure.** One site, one ISP link, no UPS: a
-power cut or an outage during the event stops the event. The R2 copy of the
-backup is what a rebuild elsewhere would start from.
+**Postgres là StatefulSet trên một PVC tĩnh**, không phải `volumeClaimTemplates`. Scale lên 2 sẽ có hai tiến trình postgres ghi cùng một data directory.
+
+**Homelab là single point of failure.** Một địa điểm, một đường ISP, không có UPS: mất điện hoặc sự cố trong sự kiện sẽ dừng sự kiện đó. Bản copy R2 của backup là thứ một lần dựng lại ở chỗ khác sẽ bắt đầu từ đó.
