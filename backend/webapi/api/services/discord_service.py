@@ -125,7 +125,9 @@ def claim_discord_identity(
         participant.save(update_fields=update_fields)
 
         if affected_team_ids:
-            Team.objects.filter(pk__in=affected_team_ids).update(
+            Team.objects.filter(
+                pk__in=affected_team_ids, approval_status=Team.APPROVAL_APPROVED,
+            ).update(
                 provision_state=Team.PROVISION_PENDING,
                 provision_last_error=None,
                 updated_at=django_timezone.now(),
@@ -166,7 +168,9 @@ def release_discord_identity(mssv: str) -> dict:
         participant.save(update_fields=["discord_id", "discord_username", "updated_at"])
 
         if affected_team_id:
-            Team.objects.filter(pk=affected_team_id).update(
+            Team.objects.filter(
+                pk=affected_team_id, approval_status=Team.APPROVAL_APPROVED,
+            ).update(
                 provision_state=Team.PROVISION_PENDING,
                 provision_last_error=None,
                 updated_at=django_timezone.now(),
@@ -189,7 +193,12 @@ def get_participant_payload(*, mssv: str | None = None, discord_id: int | None =
 def get_pending_team_payloads(limit: int = 50) -> list[dict]:
     """Return bot-ready provisioning payloads sourced only from PostgreSQL."""
     teams = (
-        Team.objects.filter(provision_state=Team.PROVISION_PENDING)
+        # Only approved teams get Discord resources; a draft/pending team that
+        # was flagged pending (e.g. a member linked Discord) must wait for approval.
+        Team.objects.filter(
+            provision_state=Team.PROVISION_PENDING,
+            approval_status=Team.APPROVAL_APPROVED,
+        )
         .prefetch_related("memberships__participant")
         .order_by("created_at")[:limit]
     )
@@ -283,6 +292,7 @@ def get_provisioning_queue() -> list[dict]:
     """Return teams waiting for Discord provisioning."""
     teams = Team.objects.filter(
         provision_state__in=[Team.PROVISION_PENDING, Team.PROVISION_FAILED],
+        approval_status=Team.APPROVAL_APPROVED,
     ).order_by("created_at")
 
     return [
@@ -300,7 +310,7 @@ def get_provisioning_queue() -> list[dict]:
 
 def retry_provision(team_code: str) -> Team:
     """Retry Discord provisioning for a team."""
-    team = Team.objects.get(code=team_code)
+    team = Team.objects.get(code=team_code, approval_status=Team.APPROVAL_APPROVED)
     team.provision_state = Team.PROVISION_PENDING
     team.provision_retry_count += 1
     team.provision_last_error = None
@@ -348,7 +358,7 @@ def list_members(query: str = "", linked: str = "all", limit: int = 200) -> tupl
     """Return the web<->Discord mapping for team members with server-side filtering."""
     memberships = TeamMembership.objects.select_related(
         "participant", "team",
-    )
+    ).filter(team__approval_status=Team.APPROVAL_APPROVED)
 
     query = (query or "").strip()
     if query:
@@ -398,7 +408,9 @@ def sync_member(mssv: str) -> Tuple[Optional[Participant], Optional[str]]:
         return None, "member_not_found"
     membership = participant.memberships.first()
     if membership:
-        Team.objects.filter(pk=membership.team_id).update(
+        Team.objects.filter(
+            pk=membership.team_id, approval_status=Team.APPROVAL_APPROVED,
+        ).update(
             provision_state=Team.PROVISION_PENDING,
             provision_last_error=None,
             updated_at=django_timezone.now(),

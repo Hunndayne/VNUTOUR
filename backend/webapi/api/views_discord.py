@@ -23,9 +23,10 @@ def discord_status_view(request: HttpRequest):
         return err
 
     from api.models import Team
-    pending = Team.objects.filter(provision_state=Team.PROVISION_PENDING).count()
-    failed = Team.objects.filter(provision_state=Team.PROVISION_FAILED).count()
-    done = Team.objects.filter(provision_state=Team.PROVISION_DONE).count()
+    approved = Team.objects.filter(approval_status=Team.APPROVAL_APPROVED)
+    pending = approved.filter(provision_state=Team.PROVISION_PENDING).count()
+    failed = approved.filter(provision_state=Team.PROVISION_FAILED).count()
+    done = approved.filter(provision_state=Team.PROVISION_DONE).count()
 
     return JsonResponse({
         "bot": get_bot_runtime_status(),
