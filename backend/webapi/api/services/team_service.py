@@ -626,15 +626,75 @@ def _open_captain_election(team: Team) -> None:
         team.save(update_fields=updates + ["updated_at"])
 
 
-def remove_member(team: Team, mssv: str) -> Tuple[bool, Optional[str]]:
-    """Remove a participant from a team. Returns (success, error_code).
+def _requeue_discord(*teams: Team | None) -> None:
+    """Send approved teams back to the bot after an organiser roster edit.
 
-    Removing the captain reshapes the team, so it is reset to the same
-    leaderless, ballot-open state a fresh merge produces — the team drops its
-    captain-chosen name and owner and re-opens the captain election. See
-    ``_open_captain_election``.
+    The bot derives role holders from the roster, so a member added, moved or
+    removed keeps a stale role until the team is reconciled. Only approved
+    teams own Discord resources.
+    """
+    ids = [
+        team.pk for team in teams
+        if team is not None and team.approval_status == Team.APPROVAL_APPROVED
+    ]
+    if ids:
+        Team.objects.filter(pk__in=ids).update(
+            provision_state=Team.PROVISION_PENDING,
+            provision_last_error=None,
+            updated_at=datetime.now(timezone.utc),
+        )
+
+
+@transaction.atomic
+def set_team_captain(team: Team, mssv: str) -> Tuple[Optional[Participant], Optional[str]]:
+    """Organiser appoints a captain directly. Returns (participant, error_code).
+
+    Skips the ballot entirely: any open ballot is discarded, the team name is
+    left alone, and the captain's account (when it owns no other team) becomes
+    the team owner so the captain's dashboard controls work.
     """
     mssv = (mssv or "").strip().upper()
+    team = Team.objects.select_for_update().get(pk=team.pk)
+    membership = (
+        TeamMembership.objects.select_for_update()
+        .filter(team=team, participant__mssv=mssv)
+        .select_related("participant")
+        .first()
+    )
+    if not membership:
+        return None, "not_found"
+
+    # Clear the others first: one captain per team is a partial unique constraint.
+    TeamMembership.objects.filter(team=team).exclude(pk=membership.pk).update(is_captain=False)
+    if not membership.is_captain:
+        membership.is_captain = True
+        membership.save(update_fields=["is_captain", "updated_at"])
+    CaptainVote.objects.filter(team=team).delete()
+
+    participant = membership.participant
+    owner_id = participant.account_id
+    if owner_id and Team.objects.filter(owner_account_id=owner_id).exclude(pk=team.pk).exists():
+        owner_id = None
+    if team.owner_account_id != owner_id:
+        team.owner_account_id = owner_id
+        team.save(update_fields=["owner_account", "updated_at"])
+    return participant, None
+
+
+def remove_member(
+    team: Team,
+    mssv: str,
+    new_captain_mssv: str | None = None,
+) -> Tuple[bool, Optional[str]]:
+    """Remove a participant from a team. Returns (success, error_code).
+
+    Removing the captain reshapes the team. With ``new_captain_mssv`` the
+    organiser hands captaincy to a remaining member and the team keeps its
+    name. Without it the team is reset to the same leaderless, ballot-open
+    state a fresh merge produces — see ``_open_captain_election``.
+    """
+    mssv = (mssv or "").strip().upper()
+    successor = (new_captain_mssv or "").strip().upper()
     try:
         with transaction.atomic():
             membership = TeamMembership.objects.filter(
@@ -643,12 +703,132 @@ def remove_member(team: Team, mssv: str) -> Tuple[bool, Optional[str]]:
             if not membership:
                 return False, "not_found"
             was_captain = membership.is_captain
+            if was_captain and successor and (
+                successor == mssv
+                or not TeamMembership.objects.filter(
+                    team=team, participant__mssv=successor,
+                ).exists()
+            ):
+                return False, "new_captain_not_in_team"
             membership.delete()
             if was_captain:
-                _open_captain_election(team)
+                if successor:
+                    set_team_captain(team, successor)
+                else:
+                    _open_captain_election(team)
+            _requeue_discord(team)
         return True, None
     except Exception as e:
         return False, str(e)
+
+
+@transaction.atomic
+def admin_add_member(
+    team: Team,
+    mssv: str,
+    *,
+    full_name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    school: str | None = None,
+    faculty: str | None = None,
+    move: bool = False,
+) -> Tuple[Optional[Participant], Optional[str], Optional[Team]]:
+    """Organiser roster edit: add, or move, a participant into any team.
+
+    Returns (participant, error_code, source_team). Unlike ``add_member`` (the
+    captain's editor) this works on submitted and approved teams and never
+    touches the destination's name or captain, so a roster can be fixed without
+    a merge and the rename/ballot a merge forces.
+
+    A participant already on another team is only moved with ``move=True``; the
+    refusal carries that team's code. If they captained it, that team re-opens
+    its ballot exactly as ``remove_member`` does. An unknown MSSV creates the
+    participant, which needs at least a full name.
+    """
+    mssv = (mssv or "").strip().upper()
+    normalized_email = (email or "").strip().lower()
+    if not mssv:
+        return None, "missing_mssv", None
+
+    # Same lock order as add_member: capacity, participant, then teams by pk.
+    lock_registration_capacity()
+    participant = Participant.objects.select_for_update().filter(mssv=mssv).first()
+    initial = (
+        TeamMembership.objects.filter(participant=participant).first()
+        if participant else None
+    )
+    team_ids = {team.pk} | ({initial.team_id} if initial else set())
+    locked = {
+        item.pk: item
+        for item in Team.objects.select_for_update().filter(pk__in=team_ids).order_by("pk")
+    }
+    if team.pk not in locked:
+        return None, "not_found", None
+    team = locked[team.pk]
+
+    membership = (
+        TeamMembership.objects.select_for_update().filter(participant=participant).first()
+        if participant else None
+    )
+    if membership and membership.team_id not in locked:
+        return None, "membership_changed", None
+    if membership and membership.team_id == team.pk:
+        return None, "already_in_team", None
+    source = locked[membership.team_id] if membership else None
+    if source is not None and not move:
+        return None, f"mssv_in_other_team:{source.code}", source
+
+    max_members = _get_setting("team_max_members", 5)
+    if TeamMembership.objects.filter(team=team).count() >= max_members:
+        return None, "team_full", None
+
+    if participant is None:
+        full_name = (full_name or "").strip()
+        if not full_name:
+            return None, "participant_not_found", None
+        if normalized_email and (
+            Participant.objects.filter(email__iexact=normalized_email).exists()
+            or Account.objects.filter(email__iexact=normalized_email)
+            .exclude(mssv__isnull=True).exclude(mssv="").exclude(mssv=mssv)
+            .exists()
+        ):
+            return None, "email_in_team", None
+
+    # Moving between two counted teams frees one slot and takes one.
+    counted_source = source is not None and source.approval_status in COUNTED_TEAM_STATUSES
+    needed = int(team.approval_status in COUNTED_TEAM_STATUSES and not counted_source)
+    capacity_error = registration_capacity_error(needed)
+    if capacity_error:
+        return None, capacity_error, None
+
+    if participant is None:
+        try:
+            with transaction.atomic():
+                participant = Participant.objects.create(
+                    mssv=mssv,
+                    full_name=full_name,
+                    email=normalized_email or None,
+                    phone=(phone or "").strip() or None,
+                    school=(school or "").strip() or None,
+                    faculty=(faculty or "").strip() or None,
+                )
+        except IntegrityError:
+            return None, "membership_changed", None
+        TeamMembership.objects.create(team=team, participant=participant)
+    else:
+        was_source_captain = membership is not None and membership.is_captain
+        if membership is not None:
+            membership.team = team
+            membership.is_captain = False
+            membership.save(update_fields=["team", "is_captain", "updated_at"])
+            if was_source_captain:
+                _open_captain_election(source)
+        else:
+            TeamMembership.objects.create(team=team, participant=participant)
+
+    _requeue_discord(team, source)
+    return participant, None, source
 
 
 @transaction.atomic
