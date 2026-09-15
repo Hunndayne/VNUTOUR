@@ -118,9 +118,15 @@ jobs:
                           }]
                       }')
 
-                  curl -sSf -X POST "$WEBHOOK" \
+                  # Retry temporary errors, curl honors Retry-After.
+                  # A notification failure must not fail CI or skip the PR summary.
+                  if ! curl -sSf --retry 3 --retry-max-time 60 \
+                      --connect-timeout 5 --max-time 15 \
+                      -X POST "$WEBHOOK" \
                       -H "Content-Type: application/json" \
-                      -d "$PAYLOAD"
+                      -d "$PAYLOAD"; then
+                      echo "::warning::Discord notification could not be delivered; continuing with the CI summary."
+                  fi
 
             # 3. PR summary comment (pull_request events only) - Updates an existing bot comment on re-runs to avoid spam.
             - name: Post PR summary comment

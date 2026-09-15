@@ -21,10 +21,11 @@ resources:
 components:
   - ../../components/prod-config
   - ../../components/backend-ops
-  - ../../components/images
   - ../../components/db-patroni
   - ../../components/failover-workloads
   - ../../components/site-failover
+  # Set image tags after all workloads are added, including bot and email-worker.
+  - ../../components/images
 
 # site-activator per-site knobs: this is the HOMELAB site, and the site that
 # performs auto-failback. See components/site-failover/kustomization.yaml for
