@@ -209,7 +209,123 @@ function createSubmissionLimits(limits = {}) {
     opensAt: limits.opensAt ?? '',
     closesAt: limits.closesAt ?? '',
     durationMinutes: Math.max(0, Number(limits.durationMinutes) || 0),
+    durationSeconds: limits.durationSeconds != null
+      ? Math.max(0, Number(limits.durationSeconds) || 0)
+      : Math.max(0, Number(limits.durationMinutes) || 0) * 60,
   }
+}
+
+
+
+// Thứ tự checkout để BTC xét vé chung kết: thời điểm, rồi số trạm đạt, rồi tổng lượt (ít hơn xếp trên).
+function CheckoutPanel({ eventId }) {
+  const [rows, setRows] = useState([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await apiRequest(`/event-checkins/checkouts?event_id=${encodeURIComponent(eventId)}`)
+      setRows(Array.isArray(data?.checkouts) ? data.checkouts : [])
+    } catch (err) {
+      setError(err?.message || 'Không tải được danh sách checkout.')
+    } finally {
+      setLoading(false)
+    }
+  }, [eventId])
+
+  useEffect(() => {
+    void load()
+    const timer = setInterval(() => { void load() }, 15000)
+    return () => clearInterval(timer)
+  }, [load])
+
+  const undo = async (row) => {
+    if (!window.confirm(`Huỷ checkout của đội ${row.team_code}? Đội sẽ được chơi tiếp.`)) return
+    try {
+      await apiRequest(`/event-checkins/${row.id}?scope=checkout`, { method: 'DELETE' })
+      await load()
+    } catch (err) {
+      setError(err?.message || 'Không huỷ được checkout.')
+    }
+  }
+
+  return (
+    <div className={`${CARD} mt-5 overflow-hidden`}>
+      <div className="flex items-center justify-between gap-3 border-b border-stone px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-ink">Danh sách checkout</p>
+          <p className="text-xs text-ink/45">Xếp theo thời điểm checkout. Số trạm đạt và tổng lượt dùng để xét khi đến cùng lúc.</p>
+        </div>
+        <button type="button" onClick={() => void load()} disabled={loading}
+          className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-50">
+          {loading ? 'Đang tải…' : 'Tải lại'}
+        </button>
+      </div>
+      {error && <p className="px-4 py-2 text-xs text-clay" role="alert">{error}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-paper text-[10px] uppercase tracking-widest text-ink/40">
+            <tr>
+              <th className="px-4 py-2">#</th>
+              <th className="px-4 py-2">Đội</th>
+              <th className="px-4 py-2">Checkout lúc</th>
+              <th className="px-4 py-2 text-right">Trạm đạt</th>
+              <th className="px-4 py-2 text-right">Tổng lượt</th>
+              <th className="px-4 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.id} className="border-t border-stone/60">
+                <td className="px-4 py-2 font-mono text-ink/60">{row.rank}</td>
+                <td className="px-4 py-2"><span className="font-semibold text-ink">{row.team_name}</span> <span className="font-mono text-xs text-ink/45">{row.team_code}</span></td>
+                <td className="px-4 py-2 text-ink/70">{new Date(row.checked_out_at).toLocaleTimeString('vi-VN')}</td>
+                <td className="px-4 py-2 text-right">{row.passed_count}</td>
+                <td className="px-4 py-2 text-right">{row.total_attempts}</td>
+                <td className="px-4 py-2 text-right">
+                  <button type="button" onClick={() => void undo(row)} className="text-xs font-semibold text-clay hover:underline">Huỷ checkout</button>
+                </td>
+              </tr>
+            ))}
+            {!loading && rows.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-xs text-ink/40">Chưa có đội nào checkout.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function DurationInput({ seconds, onChange }) {
+  // Keep the chosen unit locally so typing "1" in minutes does not flip to seconds.
+  const [unit, setUnit] = useState(() => (seconds > 0 && seconds % 60 === 0 ? 'minutes' : 'seconds'))
+  const factor = unit === 'minutes' ? 60 : 1
+  const shown = unit === 'minutes' ? seconds / 60 : seconds
+  return (
+    <div className="mb-4 flex gap-2">
+      <input
+        type="number"
+        min={0}
+        step={unit === 'minutes' ? 'any' : 1}
+        value={shown || 0}
+        onChange={event => onChange(Math.max(0, Math.round((Number(event.target.value) || 0) * factor)))}
+        className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+      />
+      <select
+        value={unit}
+        onChange={event => setUnit(event.target.value)}
+        aria-label="Đơn vị thời gian"
+        className="rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+      >
+        <option value="seconds">Giây</option>
+        <option value="minutes">Phút</option>
+      </select>
+    </div>
+  )
 }
 
 function createSubmissionConfig(submission = {}) {
@@ -262,12 +378,14 @@ function createBlankStation() {
     name: '',
     location: '',
     active: true,
+    kind: 'play',
     checkinPolicy: 'staff_scan',
     capacityMode: 'unlimited',
     maxConcurrentTeams: 2,
     scoringMode: 'score_only',
     passThreshold: 0,
     passPoints: 0,
+    maxAttempts: null,
     teamsHere: [],
     teamsDone: [],
     submission: createSubmissionConfig(),
@@ -288,6 +406,7 @@ function createStation(station = {}) {
     }))
     : []
   next.checkinPolicy = Object.prototype.hasOwnProperty.call(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
+  next.kind = ['checkin', 'checkout'].includes(station.kind) ? station.kind : 'play'
   next.capacityMode = station.capacityMode === 'limited' ? 'limited' : 'unlimited'
   next.maxConcurrentTeams = Math.max(1, Number(station.maxConcurrentTeams) || 2)
   next.scoringMode = Object.prototype.hasOwnProperty.call(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
@@ -295,6 +414,7 @@ function createStation(station = {}) {
   next.passThreshold = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? Math.round(rawThreshold) : 0
   const rawPoints = Number(station.passPoints)
   next.passPoints = Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 0
+  next.maxAttempts = station.maxAttempts == null ? null : Number(station.maxAttempts)
   next.submission = createSubmissionConfig(station.submission)
 
   return next
@@ -812,12 +932,14 @@ function stationFromApi(station, sessions = []) {
     name: station.name || '',
     location: station.location || '',
     active: station.active !== false,
+    kind: station.kind || 'play',
     checkinPolicy: station.checkin_policy || 'staff_scan',
     capacityMode: station.capacity_mode || 'unlimited',
     maxConcurrentTeams: Math.max(1, Number(station.max_concurrent_teams) || 2),
     scoringMode: station.scoring_mode || 'score_only',
     passThreshold: station.pass_threshold,
     passPoints: station.pass_points,
+    maxAttempts: station.max_attempts,
     teamsHere,
     teamsDone,
     submission: createSubmissionConfig(station.submission_config),
@@ -830,12 +952,14 @@ function buildStationPayload(form, order, active) {
     location: form.location.trim(),
     order,
     active,
+    kind: form.kind || 'play',
     checkin_policy: form.checkinPolicy,
     capacity_mode: form.capacityMode,
     max_concurrent_teams: form.capacityMode === 'limited'
       ? Math.max(1, Number(form.maxConcurrentTeams) || 1)
       : null,
     scoring_mode: form.scoringMode,
+    max_attempts: form.maxAttempts == null ? null : Number(form.maxAttempts),
     // Chỉ giữ giá trị của ô đang áp dụng — tránh gửi lên số liệu cũ của chế độ
     // đã bỏ chọn, giống cách max_concurrent_teams về null khi hết giới hạn.
     pass_threshold: form.scoringMode === 'threshold'
@@ -1836,6 +1960,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
 
   const handleSave = async () => {
     if (!form.name.trim()) return
+    if (form.maxAttempts != null && (!Number.isInteger(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1 || Number(form.maxAttempts) > 2147483647)) return
     // onSave (addStation/saveStation) trả về true khi lưu thành công — chỉ xoá
     // nháp lúc đó, thất bại thì giữ nguyên để không mất nội dung đang soạn.
     const result = await onSave({
@@ -1893,6 +2018,29 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           <span className="text-sm text-ink/60">{form.active ? 'Đang hoạt động' : 'Chưa mở'}</span>
         </div>
 
+        <div className="sm:col-span-2">
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Loại trạm
+          </label>
+          <select
+            value={form.kind || 'play'}
+            onChange={event => set('kind', event.target.value)}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          >
+            <option value="play">Trạm chơi</option>
+            <option value="checkin">Trạm check-in (ghi nhận đội đến sự kiện)</option>
+            <option value="checkout">Trạm checkout (ghi nhận đội hoàn thành)</option>
+          </select>
+          <p className="mt-1 text-xs leading-5 text-ink/45">
+            {form.kind === 'checkin'
+              ? 'CTV quét QR đội để check-in sự kiện. Không có câu hỏi, điểm hay số lượt.'
+              : form.kind === 'checkout'
+                ? 'CTV quét QR đội để ghi thời điểm hoàn thành. Đội đã checkout không được chơi thêm trạm nào.'
+                : 'Trạm có nhiệm vụ, chấm điểm và giới hạn lượt chơi.'}
+          </p>
+        </div>
+
+        {(form.kind || 'play') === 'play' && (<>
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
             Luồng vào trạm
@@ -1980,6 +2128,21 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </p>
         </div>
 
+        <div className="sm:col-span-2 space-y-2">
+          <label htmlFor="station-max-attempts" className="block text-sm font-semibold text-ink">Tổng số lượt chơi tối đa của mỗi đội</label>
+          <label className="flex items-center gap-2 text-sm text-ink/65">
+            <input type="checkbox" checked={form.maxAttempts == null}
+              onChange={event => set('maxAttempts', event.target.checked ? null : 3)} />
+            Không giới hạn số lượt
+          </label>
+          {form.maxAttempts != null && <input id="station-max-attempts" type="number" min={1} step={1} required
+            value={form.maxAttempts} onChange={event => set('maxAttempts', event.target.value)}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink" />}
+          <p className="text-xs text-ink/55">3 lượt gồm 1 lượt đầu và tối đa 2 lượt chơi lại. Đã đạt có được chơi tiếp hay không do tuỳ chọn của event quyết định.</p>
+          {form.maxAttempts != null && (!Number.isInteger(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1 || Number(form.maxAttempts) > 2147483647) && <p className="text-xs text-clay" role="alert">Nhập tổng số lượt là số nguyên từ 1 đến 2147483647.</p>}
+          {form.scoringMode === 'score_only' && <p className="text-xs text-ink/55">Chỉ nhập điểm không phân biệt đúng/sai. Muốn chơi lại khi sai, hãy chọn Đạt/Không đạt hoặc Ngưỡng điểm đạt.</p>}
+        </div>
+
         {form.scoringMode === 'threshold' && (
           <div className="sm:col-span-2">
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
@@ -2009,8 +2172,10 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
             />
           </div>
         )}
+        </>)}
       </div>
 
+      {(form.kind || 'play') === 'play' && (<>
       <div className="space-y-3">
         <SectionTitle
           title="Nhiệm vụ trạm"
@@ -2274,14 +2439,14 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
             />
 
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-              Thời gian làm bài (Phút, 0 = Không giới hạn)
+              Thời gian làm bài (0 = Không giới hạn)
             </label>
-            <input
-              type="number"
-              min={0}
-              value={form.submission.limits.durationMinutes || 0}
-              onChange={event => updateLimits('durationMinutes', Math.max(0, Number(event.target.value) || 0))}
-              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
+            <DurationInput
+              seconds={form.submission.limits.durationSeconds || 0}
+              onChange={seconds => {
+                updateLimits('durationSeconds', seconds)
+                updateLimits('durationMinutes', Math.floor(seconds / 60))
+              }}
             />
             <p className="mt-1 mb-4 text-xs leading-5 text-ink/45">
               Thời gian đếm ngược sẽ tính từ lúc đội check-in quét QR mã trạm.
@@ -2366,6 +2531,8 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </p>
         </div>
       )}
+
+      </>)}
 
       <div className="flex gap-2 pt-1">
         <button
@@ -3414,6 +3581,10 @@ function StationsPage({
           </div>
         </div>
       ) : null}
+
+      {selectedEvent && stations.some(station => station.kind === 'checkout') && (
+        <CheckoutPanel eventId={selectedEvent.id} />
+      )}
     </div>
   )
 }

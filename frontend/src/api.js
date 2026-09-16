@@ -1,5 +1,6 @@
 import { FIXED_PHASES } from './adminProgram.js'
 import { clearAllDrafts } from './drafts.jsx'
+import { normalizeMinCheckinMembers } from './attendanceCheckin.js'
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -255,6 +256,10 @@ export function normalizeProgramForFrontend(programPayload = {}) {
             // Công tắc "cho chơi lại trạm sau khi đã đi hết" — nếu không đọc ở
             // đây thì form sửa event luôn thấy false dù DB đã lưu true.
             replayAfterAll: Boolean(subEvent.replay_after_all),
+            replayAfterPass: Boolean(subEvent.replay_after_pass),
+            requireCheckin: Boolean(subEvent.require_checkin),
+            checkinMode: subEvent.checkin_mode === 'individual' ? 'individual' : 'team',
+            minCheckinMembers: normalizeMinCheckinMembers(subEvent.min_checkin_members),
           })),
         ]
       }),

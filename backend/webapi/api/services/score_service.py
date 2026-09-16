@@ -158,6 +158,8 @@ def get_phase_scoreboard(phase_key: str) -> dict:
                 "type": se.type,
                 "uses_stations": se.uses_stations,
                 "replay_after_all": se.replay_after_all,
+                "replay_after_pass": se.replay_after_pass,
+                "require_checkin": se.require_checkin,
                 "note": se.note,
                 "order": se.order,
             }

@@ -15,6 +15,7 @@ import FeedAdminPanel from './FeedAdminPanel.jsx'
 import OperationsPage from './OperationsPage.jsx'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, isMasterAdmin, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
+import { normalizeMinCheckinMembers } from './attendanceCheckin.js'
 import { navigate, useLocation, useSearchParam } from './router.js'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1001,6 +1002,10 @@ function AdminDashboard() {
           note: draft.note || '',
           order: draft.order || 0,
           replay_after_all: Boolean(draft.replayAfterAll),
+          replay_after_pass: Boolean(draft.replayAfterPass),
+          require_checkin: Boolean(draft.requireCheckin),
+          checkin_mode: draft.checkinMode === 'individual' ? 'individual' : 'team',
+          min_checkin_members: normalizeMinCheckinMembers(draft.minCheckinMembers),
         },
       })
       await loadProgram()
@@ -1021,6 +1026,10 @@ function AdminDashboard() {
           note: nextEvent.note || '',
           order: nextEvent.order || 0,
           replay_after_all: Boolean(nextEvent.replayAfterAll),
+          replay_after_pass: Boolean(nextEvent.replayAfterPass),
+          require_checkin: Boolean(nextEvent.requireCheckin),
+          checkin_mode: nextEvent.checkinMode === 'individual' ? 'individual' : 'team',
+          min_checkin_members: normalizeMinCheckinMembers(nextEvent.minCheckinMembers),
         },
       })
       await loadProgram()

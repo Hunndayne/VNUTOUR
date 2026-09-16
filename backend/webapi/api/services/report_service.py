@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 from defusedxml import ElementTree as DefusedET
 from django.conf import settings
 from django.utils import timezone
+from api.services.attendance_service import recorded_checkins
 
 from api.models import (
     AuditLog,
@@ -177,9 +178,9 @@ def build_operations_report(*, phase_key: str | None = None) -> bytes:
                 participant.discord_username or "",
             ])
 
-    checkins = EventCheckIn.objects.select_related(
+    checkins = recorded_checkins().select_related(
         "phase", "sub_event", "team", "scanner",
-    ).prefetch_related("team__memberships__participant").order_by("-created_at")
+    ).prefetch_related("team__memberships__participant", "attendances__participant").order_by("-created_at")
     scores = ScoreEntry.objects.select_related(
         "phase", "sub_event", "team", "created_by",
     ).order_by("-created_at")
@@ -195,9 +196,14 @@ def build_operations_report(*, phase_key: str | None = None) -> bytes:
 
     checkin_rows = []
     for checkin in checkins:
+        people = (
+            [attendance.participant for attendance in checkin.attendances.all()]
+            if checkin.sub_event.checkin_mode == "individual"
+            else [membership.participant for membership in checkin.team.memberships.all()]
+        )
         members = "; ".join(
-            f"{membership.participant.mssv} - {membership.participant.full_name} - {membership.participant.school or ''}"
-            for membership in checkin.team.memberships.all()
+            f"{person.mssv} - {person.full_name} - {person.school or ''}"
+            for person in people
         )
         checkin_rows.append([
             checkin.id,
@@ -265,7 +271,7 @@ def build_operations_report(*, phase_key: str | None = None) -> bytes:
                     "B4": timezone.now(),
                     "B5": Team.objects.count(),
                     "B6": TeamMembership.objects.count(),
-                    "B7": EventCheckIn.objects.filter(
+                    "B7": recorded_checkins().filter(
                         status=EventCheckIn.STATUS_ACTIVE,
                     ).count(),
                     "B8": ScoreEntry.objects.count(),

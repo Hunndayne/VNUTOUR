@@ -19,6 +19,12 @@ const SECONDARY_BUTTON =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-stone/80 bg-white px-4 py-3 text-sm font-semibold text-ink/80 transition hover:bg-stone/20 hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 min-h-[46px]'
 
 const RESULT_META = {
+  checkout: {
+    label: 'Checkout sự kiện',
+    badgeCls: 'bg-sky-100 text-sky-800 border border-sky-300',
+    icon: 'check',
+    tone: 'sky',
+  },
   event: {
     label: 'Check-in sự kiện',
     badgeCls: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
@@ -79,7 +85,12 @@ function explainScanError(error) {
     team_not_found: 'Không tìm thấy đội với mã QR hoặc mã đội này.',
     qr_already_used: 'Mã QR này đã được quét rồi. Đề nghị đội mở lại màn hình để lấy mã mới.',
     team_not_approved: 'Đội này chưa được duyệt nên không thể scan.',
-    already_checked_in: 'Đội này đã được check-in sự kiện.',
+    personal_qr_required: 'Điểm danh sự kiện cần QR cá nhân của từng thành viên, không dùng QR đội.',
+    team_qr_required: 'Event này check-in theo đội. Mời mở QR check-in đội để quét.',
+    invalid_personal_qr: 'QR cá nhân không hợp lệ hoặc đã hết hiệu lực. Hãy yêu cầu thành viên mở lại QR điểm danh của mình.',
+    checkin_qr_event_mismatch: 'QR cá nhân này thuộc event khác. Hãy quét QR của event đang mở.',
+    participant_not_in_team: 'Thành viên trong QR này không thuộc đội đã đăng ký cho event.',
+    already_checked_in: 'QR này đã được check-in sự kiện.',
     event_not_found: 'Không tìm thấy event đang thao tác.',
     phase_not_found: 'Không tìm thấy phase hiện tại.',
     team_not_in_phase: 'Đội này không nằm trong roster của phase hiện tại.',
@@ -95,6 +106,13 @@ function explainScanError(error) {
     results_locked: 'Kết quả đã khóa ở phase Kết thúc nên không thể tiếp tục thao tác trạm.',
     replay_locked_incomplete: 'Đội phải đi hết tất cả các trạm khác rồi mới được quay lại trạm này.',
     replay_locked_passed: 'Đội đã qua trạm này rồi nên không cần vào lại.',
+    replay_locked_attempts_exhausted: 'Đội đã dùng hết số lượt chơi của trạm này.',
+    replay_locked_pending_result: 'Lượt trước của đội đang chờ chấm kết quả.',
+    event_not_checked_in: 'Đội chưa check-in sự kiện. Mời quét QR theo chế độ check-in của event.',
+    event_insufficient_checkin: 'Đội chưa đủ số thành viên đã check-in để vào trạm. Mời thêm thành viên quét QR cá nhân.',
+    team_checked_out: 'Đội đã checkout, không được chơi thêm trạm nào.',
+    already_checked_out: 'Đội này đã checkout rồi.',
+    station_not_playable: 'Đây là trạm check-in/checkout, không phải trạm chơi.',
   }
   return map[code] || 'Không thể xử lý mã vừa quét.'
 }
@@ -635,19 +653,28 @@ function CoopDashboard() {
       })
 
       const teamName = response.team_name || response.team_code
+      const participantName = response.participant_name || ''
+      const participantMssv = response.mssv || ''
+      const checkedInCount = Number(response.checked_in_count)
+      const requiredCount = Number(response.required_count)
       setLastResult({
         kind: response.kind,
         teamId: response.team_code,
         teamName,
         eventName: response.event_name || selectedEvent?.name || '',
         stationName: response.station_name || '',
-        timestamp: response.checked_in_at || response.exited_at || response.entered_at || new Date().toISOString(),
+        timestamp: response.checked_in_at || response.checked_out_at || response.exited_at || response.entered_at || new Date().toISOString(),
         sessionId: response.kind === 'exit' ? response.id : null,
         scoringMode: response.scoring_mode || null,
         passThreshold: response.pass_threshold ?? null,
         passPoints: response.pass_points ?? null,
         submission: response.submission,
         score: response.score,
+        participantName,
+        participantMssv,
+        checkedInCount: Number.isFinite(checkedInCount) ? checkedInCount : null,
+        requiredCount: Number.isFinite(requiredCount) && requiredCount > 0 ? requiredCount : null,
+        eligible: response.eligible,
       })
 
       if (response.kind === 'exit') {
@@ -655,7 +682,11 @@ function CoopDashboard() {
         setActiveTab('review')
       }
       const message = response.kind === 'event'
-        ? `Đã check-in sự kiện cho đội ${teamName}.`
+        ? participantName
+          ? `Đã check-in ${participantName}${participantMssv ? ` (${participantMssv})` : ''}${Number.isFinite(checkedInCount) && Number.isFinite(requiredCount) && requiredCount > 0 ? ` · ${checkedInCount}/${requiredCount} thành viên đã check-in.` : '.'}`
+          : `Đã check-in sự kiện cho đội ${teamName}.`
+        : response.kind === 'checkout'
+          ? `Đã ghi nhận đội ${teamName} checkout lúc ${new Date(response.checked_out_at).toLocaleTimeString('vi-VN')}.`
         : response.kind === 'enter'
           ? `Đã nhận đội ${teamName} vào ${response.station_name}.`
           : `Đã ghi nhận đội ${teamName} rời ${response.station_name}.`
@@ -832,6 +863,7 @@ function CoopDashboard() {
   }
 
   const statsTeams = Number(eventStats?.checked_in_teams) || 0
+  const statsEligible = Number(eventStats?.eligible_teams ?? eventStats?.checked_in_teams) || 0
   const statsParticipants = Number(eventStats?.checked_in_participants) || 0
   const liveStationCount = eventSessions.filter((session) => session.status === 'active').length
   const selectedStationOccupancy = occupancy?.active_sessions ?? activeTeams.length
@@ -1186,8 +1218,17 @@ function CoopDashboard() {
 
                 {lastResult && lastResult.kind !== 'exit' && <div className="rounded-xl border border-trail/20 bg-white p-4" role="status">
                   <p className="text-sm font-semibold text-trail">{(RESULT_META[lastResult.kind] || RESULT_META.event).label}</p>
-                  <p className="mt-1 text-lg font-bold text-ink">{lastResult.teamName}</p>
-                  <p className="text-sm text-ink/60">{lastResult.stationName || lastResult.eventName}</p>
+                  <p className="mt-1 text-lg font-bold text-ink">{lastResult.participantName || lastResult.teamName}</p>
+                  <p className="text-sm text-ink/60">
+                    {lastResult.participantMssv && `${lastResult.participantMssv} · `}
+                    {lastResult.stationName || lastResult.eventName}
+                  </p>
+                  {lastResult.kind === 'event' && lastResult.checkedInCount != null && lastResult.requiredCount != null && (
+                    <p className="mt-2 text-sm font-semibold text-trail">
+                      {lastResult.checkedInCount}/{lastResult.requiredCount} thành viên đã check-in
+                      {lastResult.eligible ? ' · Đủ điều kiện vào trạm' : ''}
+                    </p>
+                  )}
                 </div>}
                 {reviewPausedRef.current && <div className="rounded-xl border border-gold/40 bg-gold/10 p-4 text-sm text-ink">
                   Đang tạm dừng quét để chấm bài của {lastResult?.teamName}.
@@ -1519,6 +1560,13 @@ function CoopDashboard() {
                       <div className={`${CARD} p-4 text-center border-stone`}>
                         <p className="font-mono text-2xl font-black text-trail">{statsTeams}</p>
                         <p className="mt-1 text-xs font-bold text-ink/70">Đội đã check-in</p>
+                        {/* Có người đến chưa phải là đủ điều kiện vào trạm: event
+                            điểm danh theo cá nhân còn đòi đủ số thành viên. */}
+                        {statsEligible < statsTeams && (
+                          <p className="mt-1 text-[11px] font-semibold text-amber-700">
+                            {statsEligible} đội đủ điều kiện vào trạm
+                          </p>
+                        )}
                       </div>
                       <div className={`${CARD} p-4 text-center border-stone`}>
                         <p className="font-mono text-2xl font-black text-amber-700">{statsParticipants}</p>
@@ -1557,7 +1605,7 @@ function CoopDashboard() {
             <form onSubmit={handleManualSubmit} className="space-y-4">
               <div>
                 <label htmlFor="manual-qr-code" className="block text-sm font-semibold text-ink/75 mb-1.5">
-                  Nội dung mã QR của đội
+                  Nội dung QR cá nhân hoặc QR đội
                 </label>
                 <input
                   id="manual-qr-code"
@@ -1565,7 +1613,7 @@ function CoopDashboard() {
                   autoFocus
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
-                  placeholder="Dán nội dung QR thí sinh đang hiển thị"
+                  placeholder="Dán QR cá nhân để điểm danh, hoặc QR đội để vào/rời trạm"
                   className="w-full rounded-xl border-2 border-stone bg-paper px-3.5 py-3 text-base font-mono font-bold text-ink outline-none focus:border-trail focus:bg-white"
                 />
               </div>
