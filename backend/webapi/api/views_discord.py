@@ -23,9 +23,10 @@ def discord_status_view(request: HttpRequest):
         return err
 
     from api.models import Team
-    pending = Team.objects.filter(provision_state=Team.PROVISION_PENDING).count()
-    failed = Team.objects.filter(provision_state=Team.PROVISION_FAILED).count()
-    done = Team.objects.filter(provision_state=Team.PROVISION_DONE).count()
+    approved = Team.objects.filter(approval_status=Team.APPROVAL_APPROVED)
+    pending = approved.filter(provision_state=Team.PROVISION_PENDING).count()
+    failed = approved.filter(provision_state=Team.PROVISION_FAILED).count()
+    done = approved.filter(provision_state=Team.PROVISION_DONE).count()
 
     return JsonResponse({
         "bot": get_bot_runtime_status(),
@@ -68,6 +69,10 @@ def retry_provision_view(request: HttpRequest, team_code: str):
         team = retry_provision(team_code)
     except Team.DoesNotExist:
         return JsonResponse({"error": "team_not_found"}, status=404)
+    except ValueError as exc:
+        if str(exc) == "team_not_approved":
+            return JsonResponse({"error": "team_not_approved"}, status=409)
+        raise
 
     return JsonResponse({
         "team_code": team.code,
