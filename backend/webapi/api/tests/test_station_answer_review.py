@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.utils import timezone
 
-from api.models import Account, QuestionBankItem, Station, StationAssignment, StationSubmission
+from api.models import Account, QuestionBankItem, Station, StationAssignment, StationSubmission, SubEvent, SystemSetting
 from api.services.auth_service import generate_session
 from api.services.submission_config_service import public_config
 from api.services.question_bank_service import effective_quiz_items
@@ -14,6 +14,8 @@ from api.tests.test_participant_forms_api import FormsApiTestBase
 class StationAnswerReviewTests(FormsApiTestBase):
     def setUp(self):
         super().setUp()
+        self.event.end_date = timezone.now() + timedelta(hours=2)
+        self.event.save(update_fields=["end_date"])
         self.station.submission_config = {
             "items": [
                 {"id": "q1", "type": "quiz", "question": "Capital?",
@@ -62,13 +64,15 @@ class StationAnswerReviewTests(FormsApiTestBase):
         self.assertEqual(review[0]["explanation"], "Hanoi is the capital.")
         self.assertTrue(review[1]["is_correct"])
         self.assertEqual(response["submission"]["id"], sub.id)
-        self.assertEqual(self.history()[0]["review"]["items"], review)
+        self.assertEqual(self.history()[0]["review"]["items"], [])
+        with patch('api.services.submission_review_service.timezone.now', return_value=self.event.end_date):
+            self.assertEqual(self.history()[0]["review"]["items"], review)
         state = self.client.get(f'/api/my-team/station-state?station_id={self.station.id}', HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
         self.assertEqual(state["submission"]["quiz_result"]["correct_count"], 1)
         self.assertEqual(state["submission"]["quiz_result"]["total"], 2)
         self.assertNotIn("answer_review", str(state))
 
-    def test_fixed_deadline_is_respected_even_after_checkout_and_config_change(self):
+    def test_station_deadline_and_checkout_do_not_release_before_event_end(self):
         deadline = timezone.now() + timedelta(minutes=10)
         self.station.submission_config["limits"] = {"closesAt": deadline.isoformat()}
         self.station.save()
@@ -80,6 +84,10 @@ class StationAnswerReviewTests(FormsApiTestBase):
         with patch('api.services.submission_review_service.timezone.now', return_value=deadline + timedelta(seconds=14)):
             self.assertEqual(self.history()[0]["review"]["items"], [])
         with patch('api.services.submission_review_service.timezone.now', return_value=deadline + timedelta(seconds=16)):
+            self.assertEqual(self.history()[0]["review"]["items"], [])
+        with patch('api.services.submission_review_service.timezone.now', return_value=self.event.end_date - timedelta(microseconds=1)):
+            self.assertFalse(self.history()[0]["review"]["available"])
+        with patch('api.services.submission_review_service.timezone.now', return_value=self.event.end_date):
             self.assertEqual(len(self.history()[0]["review"]["items"]), 2)
 
     def test_duration_starts_at_checkin_and_cannot_be_spoofed(self):
@@ -97,11 +105,12 @@ class StationAnswerReviewTests(FormsApiTestBase):
         self.checkout()
         self.station.submission_config = {"items": []}
         self.station.save()
-        history = self.history()
+        with patch('api.services.submission_review_service.timezone.now', return_value=self.event.end_date):
+            history = self.history()
         self.assertEqual([item["id"] for item in history], [sub.id])
         self.assertEqual(history[0]["review"]["items"][0]["correct_answer"], "Hanoi")
 
-    def test_free_play_answer_release_freezes_the_finished_attempt(self):
+    def test_free_play_attempt_is_frozen_even_while_answers_remain_hidden(self):
         self.session.delete()
         self.station.checkin_policy = Station.POLICY_FREE_PLAY
         self.station.save()
@@ -109,6 +118,49 @@ class StationAnswerReviewTests(FormsApiTestBase):
             HTTP_AUTHORIZATION=f'Bearer {self.token}')
         self.assertEqual(started.status_code, 200, started.content)
         self.submit_answers()
+        self.assertFalse(self.history()[0]["review"]["available"])
+        response = self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]}})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "attempt_finished")
+
+    def test_missing_event_end_keeps_answers_hidden_after_checkout(self):
+        self.event.end_date = None
+        self.event.save(update_fields=["end_date"])
+        self.submit_answers()
+        self.checkout()
+        review = self.history()[0]["review"]
+        self.assertEqual(review, {"available": False, "available_at": None, "items": []})
+
+    def test_event_end_updates_apply_to_already_submitted_attempts(self):
+        sub = self.submit_answers()
+        self.checkout()
+        original_end = self.event.end_date
+        self.event.end_date += timedelta(hours=1)
+        self.event.save(update_fields=["end_date"])
+        with patch('api.services.submission_review_service.timezone.now', return_value=original_end):
+            review = self.history()[0]["review"]
+            self.assertFalse(review["available"])
+            self.assertEqual(review["available_at"], self.event.end_date.isoformat())
+        # Legacy submissions may store a station deadline long in the past.
+        sub.response_payload["review_available_at"] = "2000-01-01T00:00:00Z"
+        sub.save(update_fields=["response_payload"])
+        self.assertFalse(self.history()[0]["review"]["available"])
+        with patch('api.services.submission_review_service.timezone.now', return_value=self.event.end_date):
+            self.assertEqual(len(self.history()[0]["review"]["items"]), 2)
+
+    def test_changing_current_event_does_not_publish_previous_event_answers(self):
+        self.submit_answers()
+        self.checkout()
+        other = SubEvent.objects.create(phase=self.phase, name="Next event", end_date=timezone.now())
+        SystemSetting.objects.update_or_create(key="current_sub_event_id", defaults={"value": other.id})
+        self.assertFalse(self.history()[0]["review"]["available"])
+
+    def test_event_end_blocks_resubmission_even_before_station_edit_deadline(self):
+        self.station.submission_config["limits"] = {"closesAt": (self.event.end_date + timedelta(hours=1)).isoformat()}
+        self.station.save()
+        self.submit_answers()
+        self.event.end_date = timezone.now() - timedelta(seconds=1)
+        self.event.save(update_fields=["end_date"])
         self.assertTrue(self.history()[0]["review"]["available"])
         response = self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]}})
         self.assertEqual(response.status_code, 409)

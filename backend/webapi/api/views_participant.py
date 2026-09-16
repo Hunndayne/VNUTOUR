@@ -1841,14 +1841,14 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     closure = _form_closure_state(station, team)
     resumable_submission = None
     if closure["reason"] == "not_started" and station.checkin_policy == Station.POLICY_FREE_PLAY:
-        # Preserve edits within the unreleased answer window of the same
+        # Preserve edits within the allowed edit window of the same
         # finished attempt. This never starts or spends another attempt.
         resumable_submission = StationSubmission.objects.filter(
             team=team, station=station, station_session__status=StationSession.STATUS_CLOSED,
         ).select_related("station_session", "station").order_by("-station_session__entered_at", "-id").first()
         if resumable_submission:
-            from api.services.submission_review_service import participant_review
-            if participant_review(resumable_submission)["available"]:
+            from api.services.submission_review_service import attempt_is_finished
+            if attempt_is_finished(resumable_submission):
                 return JsonResponse({"error": "attempt_finished"}, status=409)
     if closure["closed"] and not (closure["reason"] == "not_started" and resumable_submission):
         return JsonResponse({
@@ -1899,8 +1899,8 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if not submission:
         submission = StationSubmission(team=team, station=station)
     elif submission.status in (StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED):
-        from api.services.submission_review_service import participant_review
-        if participant_review(submission)["available"]:
+        from api.services.submission_review_service import attempt_is_finished
+        if attempt_is_finished(submission):
             return JsonResponse({"error": "attempt_finished"}, status=409)
 
     # Reject finished/stale attempts before creating any uploaded objects.
