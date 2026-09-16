@@ -139,7 +139,10 @@ function createTextItem(field = {}) {
   return {
     id: field.id ?? makeLocalId('field'),
     type: 'text',
-    label: field.label ?? '',
+    label: field.label ?? field.question ?? '',
+    correctText: Array.isArray(field.correctText) ? field.correctText : [],
+    points: field.points ?? 1,
+    explanation: field.explanation ?? '',
     placeholder: field.placeholder ?? '',
     required: field.required ?? true,
   }
@@ -147,15 +150,16 @@ function createTextItem(field = {}) {
 
 function createQuizItem(item = {}) {
   const nextOptions = Array.isArray(item.options) ? [...item.options] : []
-  while (nextOptions.length < 4) nextOptions.push('')
+  if (nextOptions.length === 0) nextOptions.push('', '', '', '')
   const rawPoints = Number(item.points)
 
   return {
     id: item.id ?? makeLocalId('quiz'),
     type: 'quiz',
     question: item.question ?? '',
-    options: nextOptions.slice(0, 4),
-    correctOption: Number.isInteger(item.correctOption) ? item.correctOption : 0,
+    explanation: item.explanation ?? '',
+    options: nextOptions,
+    correctOption: Number.isInteger(item.correctOption) ? item.correctOption : item.correctOption === null ? null : 0,
     points: Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 1,
   }
 }
@@ -1437,6 +1441,14 @@ function SubmissionItemCard({
         </>
       )}
 
+      {(item.type === 'quiz' || item.type === 'text') && <label className="mt-3 block text-sm font-medium text-ink/70">
+        Giải thích
+        <textarea rows={3} value={item.explanation || ''} onChange={event => onChange('explanation', event.target.value)} placeholder="Lý do đáp án đúng; thí sinh xem sau khi hết thời gian trạm" className={`${INPUT_CLS} mt-1`} />
+      </label>}
+      {item.type === 'text' && <label className="mt-3 block text-sm text-ink/70">
+        Đáp án chấp nhận (mỗi dòng một đáp án, để trống để chấm thủ công)
+        <textarea rows={2} value={(item.correctText || []).join('\n')} onChange={event => onChange('correctText', event.target.value.split('\n'))} className={`${INPUT_CLS} mt-1`} />
+      </label>}
       {item.type === 'attachment' && (
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -1691,30 +1703,28 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   const fileInputRef = useRef(null)
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState(null)
+  const [importMode, setImportMode] = useState('replace')
+  const [importBusy, setImportBusy] = useState(false)
 
   const handleFileImport = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     try {
+      setImportBusy(true)
       setImportError(null)
       const parsed = await importFromFile(file)
       if (!Array.isArray(parsed) || parsed.length === 0) {
         throw new Error("Không tìm thấy câu hỏi hợp lệ trong file")
       }
       
-      const newItems = parsed.map(item => ({
-        id: `quiz-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-        type: 'quiz',
-        question: item.question,
-        options: item.options,
-        correctOption: item.correctOption,
-        points: item.points,
-        required: true,
+      const newItems = parsed.map(item => createSubmissionItem(item.type === 'text' ? 'text' : 'quiz', {
+        ...item, id: makeLocalId(item.type === 'text' ? 'field' : 'quiz'),
       }))
+      if (importMode === 'replace' && form.submission.items.some(item => item.type !== 'attachment') && !window.confirm(`Thay các câu hỏi của trạm bằng ${newItems.length} câu từ ${file.name}? Mục tải tệp được giữ lại. Bấm Lưu trạm để áp dụng.`)) return
       
       updateSubmission(submission => ({
         ...submission,
-        items: [...submission.items, ...newItems],
+        items: [...(importMode === 'replace' ? submission.items.filter(item => item.type === 'attachment') : submission.items), ...newItems],
       }))
       
       setImporting(false)
@@ -1722,16 +1732,19 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
     } catch (err) {
       setImportError(err.message || 'Lỗi nhập dữ liệu')
       if (fileInputRef.current) fileInputRef.current.value = ''
+    } finally {
+      setImportBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
   const handleExportJSON = () => {
-    const quizItems = form.submission.items.filter(i => i.type === 'quiz')
+    const quizItems = form.submission.items.filter(i => i.type === 'quiz' || i.type === 'text')
     exportToJson(quizItems, `station_${form.code || 'draft'}_quiz.json`)
   }
 
   const handleExportExcel = () => {
-    const quizItems = form.submission.items.filter(i => i.type === 'quiz')
+    const quizItems = form.submission.items.filter(i => i.type === 'quiz' || i.type === 'text')
     exportQuizToExcel(quizItems, `station_${form.code || 'draft'}_quiz.xlsx`)
   }
 
@@ -2048,8 +2061,11 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           >
             {importing ? 'Đóng' : 'Nhập file Excel/JSON'}
           </button>
-          {form.submission.items.some(i => i.type === 'quiz') && (
+          {form.submission.items.some(i => i.type !== 'attachment') && (
             <>
+              <button type="button" disabled={importBusy} onClick={() => {
+                if (window.confirm('Gỡ các câu hỏi hiện tại của trạm? Mục tải tệp và câu hỏi dùng chung được giữ lại. Bấm Lưu trạm để áp dụng.')) updateSubmission(submission => ({ ...submission, items: submission.items.filter(item => item.type === 'attachment') }))
+              }} className="rounded-lg border border-clay/30 px-3 py-2 text-xs font-medium text-clay">Gỡ bộ câu hỏi</button>
               <button
                 type="button"
                 onClick={handleExportExcel}
@@ -2078,10 +2094,17 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
               </div>
             </div>
             <p className="text-xs text-ink/60 mb-3">
-              Hỗ trợ file <code>.xlsx</code> hoặc <code>.json</code>. Các câu hỏi sẽ được nối thêm vào danh sách trắc nghiệm.
+              Hỗ trợ Excel/JSON, gồm trắc nghiệm và tự luận. Thêm cột Explanation (Giải thích) để thí sinh xem lại. Bấm Lưu trạm sau khi nhập để áp dụng.
             </p>
+            <label className="mb-3 block text-sm text-ink">Cách nhập
+              <select disabled={importBusy} value={importMode} onChange={e => setImportMode(e.target.value)} className="ml-3 rounded-lg border border-stone bg-white p-2">
+                <option value="replace">Thay bộ câu hỏi hiện tại</option>
+                <option value="append">Thêm vào bộ hiện tại</option>
+              </select>
+            </label>
             <input
               type="file"
+              disabled={importBusy}
               accept=".json,.xlsx,.xls,.csv"
               ref={fileInputRef}
               onChange={handleFileImport}
@@ -2355,7 +2378,8 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
         <button
           type="button"
           onClick={() => void handleSave()}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9]"
+          disabled={importBusy}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-ink py-2.5 text-sm font-semibold text-white transition hover:brightness-[0.9] disabled:opacity-50"
         >
           <Icon name="checkPlain" className="h-4 w-4" />
           Lưu trạm

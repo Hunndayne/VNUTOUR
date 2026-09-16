@@ -204,7 +204,7 @@ def sub_event_detail_view(request: HttpRequest, event_id: int):
 @csrf_exempt
 def question_bank_view(request: HttpRequest, event_id: int):
     from api.models import QuestionBankItem
-    from api.services.question_bank_service import import_questions
+    from api.services.question_bank_service import import_questions, clear_questions
     acc, err = _require_role(request, "admin")
     if err:
         return err
@@ -225,6 +225,7 @@ def question_bank_view(request: HttpRequest, event_id: int):
                     "options": item.options,
                     "correctOption": item.correct_option,
                     "correctText": item.correct_text,
+                    "explanation": item.explanation,
                     "points": item.points,
                     "order": item.order,
                     "active": item.active,
@@ -238,12 +239,18 @@ def question_bank_view(request: HttpRequest, event_id: int):
         if not data or "items" not in data:
             return JsonResponse({"error": "invalid_payload"}, status=400)
         
-        # Replace or import? If we want full sync, we could update existing. 
-        # But import_questions just appends. 
-        # To support CRUD properly, we could just accept a full list and sync.
-        # But for now, we'll implement import as described in plan.
-        result = import_questions(event_id, data["items"])
+        mode = data.get("mode", "append")
+        if mode not in ("append", "replace"):
+            return JsonResponse({"error": "invalid_import_mode"}, status=400)
+        try:
+            result = import_questions(event_id, data["items"], replace=mode == "replace")
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
         return JsonResponse(result)
+
+    if request.method == "DELETE":
+        clear_questions(event_id)
+        return JsonResponse({"status": "deleted"})
 
     return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -267,7 +274,7 @@ def question_bank_item_view(request: HttpRequest, event_id: int, item_id: int):
         if not isinstance(data, dict):
             return JsonResponse({"error": "invalid_payload"}, status=400)
         fields = {}
-        for key in ("type", "question", "options", "correctOption", "correctText", "points", "order", "tags", "active"):
+        for key in ("type", "question", "options", "correctOption", "correctText", "explanation", "points", "order", "tags", "active"):
             if key in data:
                 fields[key] = data[key]
         try:
@@ -283,6 +290,7 @@ def question_bank_item_view(request: HttpRequest, event_id: int, item_id: int):
             "options": item.options,
             "correctOption": item.correct_option,
             "correctText": item.correct_text,
+            "explanation": item.explanation,
             "points": item.points,
             "order": item.order,
             "active": item.active,

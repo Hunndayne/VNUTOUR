@@ -18,6 +18,7 @@ import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
 import { useSearchParam } from './router.js'
 import { MarkdownBlock, InvisibleWatermark, TrapPattern } from './FormResponses.jsx'
+import QuestionHistory, { QuizSummary } from './QuestionReview.jsx'
 
 const POLL_MS = 2000
 const EXIT_LOCK_MS = 10000
@@ -725,6 +726,7 @@ function StationStageScreen({
           title="Đã nộp bài xong"
           body="Trạm này không cần quét ra. Đội có thể đi tiếp sang trạm khác."
         >
+          <QuizSummary result={state?.submission?.quiz_result} score={state?.submission?.score} />
           <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
             Chọn trạm tiếp theo
           </button>
@@ -753,6 +755,7 @@ function StationStageScreen({
             ? 'Lượt chơi tại trạm đã đóng. Đội đã đi hết các trạm nên có thể chơi lại trạm này — bấm "Chơi lại" rồi đưa QR cho CTV quét.'
             : 'Lượt chơi tại trạm đã được đóng. Chúc đội may mắn ở trạm tiếp theo.'}
         >
+          <QuizSummary result={state?.submission?.quiz_result} score={state?.submission?.score} />
           {station?.replay_locked === false && typeof onReplay === 'function' && (
             <button type="button" onClick={onReplay} className={`mb-3 w-full ${TRAIL_BUTTON}`}>
               <Icon name="doc" className="h-5 w-5" />
@@ -775,6 +778,7 @@ function StationStageScreen({
 }
 
 export default function StationRunPage({ onOpenForm, embedded = false }) {
+  const [view, setView] = useSearchParam('stationView', 'stations')
   const [listPayload, setListPayload] = useState(null)
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState('')
@@ -983,7 +987,10 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
       ? 'relative w-full'
       : 'relative mx-auto w-full max-w-2xl px-4 pb-20 pt-3 sm:px-6'}
     >
-      {sessionExpired ? (
+      <nav aria-label="Chạy trạm" className="mb-5 flex gap-2 border-b border-stone pb-3">
+        {[['stations', 'Làm bài ở trạm'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => setView(key)} aria-current={view === key ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${view === key ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
+      </nav>
+      {view === 'history' ? <QuestionHistory /> : sessionExpired ? (
           <SessionExpiredCard />
         ) : openStationId == null ? (
           <StationListScreen
@@ -1021,7 +1028,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   if (embedded) {
     return (
       <>
-        <InvisibleWatermark text={listPayload?.team_code} />
+        {view !== 'history' && <InvisibleWatermark text={listPayload?.team_code} />}
         {body}
       </>
     )
@@ -1030,7 +1037,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   return (
     <div className="relative min-h-screen min-h-[100dvh] bg-[#F3F4F1] text-[#20312B]">
       <Contours />
-      <InvisibleWatermark text={listPayload?.team_code} />
+      {view !== 'history' && <InvisibleWatermark text={listPayload?.team_code} />}
       {body}
     </div>
   )

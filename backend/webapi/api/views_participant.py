@@ -1814,6 +1814,10 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         attachment_payload = data.get("attachment_payload") or data.get("attachments") or {}
 
     config = station.submission_config or {}
+    if not isinstance(response_payload, dict) or any(
+        not isinstance(response_payload.get(key, []), list) for key in ("quiz", "form")
+    ):
+        return JsonResponse({"error": "invalid_payload"}, status=400)
     if uploaded_files:
         attachment_config = submission_attachment_item(config)
         if attachment_config is None:
@@ -1850,6 +1854,10 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         ).order_by("-created_at").first()
     if not submission:
         submission = StationSubmission(team=team, station=station)
+    elif submission.status in (StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED):
+        from api.services.submission_review_service import participant_review
+        if participant_review(submission)["available"]:
+            return JsonResponse({"error": "attempt_finished"}, status=409)
 
     # Same draw the team was served; answers to any other question are ignored.
     from api.services.question_bank_service import effective_quiz_items
@@ -1865,6 +1873,11 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         response_payload.pop("quiz_result", None)
         if quiz_result is not None:
             response_payload["quiz_result"] = quiz_result
+        from api.services.submission_review_service import build_review, review_deadline
+        response_payload["answer_review"] = build_review(
+            config, response_payload, variant_item_ids(station, team), effective_items,
+        )
+        response_payload["review_available_at"] = review_deadline(station, team, session)
 
     submission.station_session = session
     submission.status = StationSubmission.STATUS_SUBMITTED
@@ -2158,7 +2171,7 @@ def my_team_station_state_view(request: HttpRequest):
     if session:
         submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
-        "station_id", "status", "submitted_at",
+        "station_id", "status", "submitted_at", "score", "response_payload",
     ).first()
 
     def stamp(value):
@@ -2205,9 +2218,36 @@ def my_team_station_state_view(request: HttpRequest):
             "station_id": submission["station_id"],
             "status": submission["status"],
             "submitted_at": stamp(submission["submitted_at"]),
+            "score": submission["score"],
+            "quiz_result": (submission["response_payload"] or {}).get("quiz_result"),
         } if submission else None,
         "qr": qr,
         "server_now": timezone.now().isoformat(),
     })
+
+
+def my_team_question_history_view(request: HttpRequest):
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+    membership = TeamMembership.objects.filter(participant__mssv=acc.mssv).first()
+    if not membership:
+        return JsonResponse({"error": "no_team"}, status=404)
+    from api.services.submission_review_service import participant_review
+    submissions = StationSubmission.objects.filter(
+        team_id=membership.team_id,
+        status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
+    ).select_related("station__sub_event", "station_session", "team").order_by("-submitted_at", "-id")
+    return JsonResponse({"attempts": [{
+        "id": sub.id, "station_id": sub.station_id, "station_name": sub.station.name,
+        "event_name": sub.station.sub_event.name,
+        "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+        "score": sub.score, "quiz_result": (sub.response_payload or {}).get("quiz_result"),
+        "review": participant_review(sub),
+    } for sub in submissions]})
 
 

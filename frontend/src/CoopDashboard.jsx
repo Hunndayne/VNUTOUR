@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import CheckoutReview from './CheckoutReview.jsx'
 import logoImage from './assets/vnutour-logo.png'
 import { FIXED_PHASES } from './adminProgram.js'
 import {
@@ -43,20 +44,6 @@ const CHECKIN_POLICY_META = {
   free_play: { label: 'Tự do vào chơi', cls: 'bg-stone/30 text-ink/70 border border-stone' },
 }
 
-function Contours() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none fixed inset-0 opacity-40"
-      style={{
-        backgroundImage:
-          "url(\"data:image/svg+xml,%3Csvg width='520' height='520' viewBox='0 0 520 520' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23C5C0B3' stroke-width='1'%3E%3Cpath d='M62 80c64-48 142-56 212-24 80 37 132 22 182-6'/%3E%3Cpath d='M30 166c70-58 154-68 236-32 78 34 132 24 218-20'/%3E%3Cpath d='M18 252c78-44 142-52 214-22 90 38 168 32 252-22'/%3E%3Cpath d='M44 338c72-35 130-42 196-18 88 32 164 22 238-28'/%3E%3Cpath d='M92 428c72-42 146-48 220-18 60 24 118 16 166-20'/%3E%3Ccircle cx='392' cy='138' r='52'/%3E%3Ccircle cx='392' cy='138' r='82'/%3E%3Ccircle cx='142' cy='330' r='46'/%3E%3Ccircle cx='142' cy='330' r='76'/%3E%3C/g%3E%3C/svg%3E\")",
-        backgroundSize: '520px 520px',
-      }}
-    />
-  )
-}
-
 function LogoutIcon({ className = 'h-4 w-4' }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -81,14 +68,6 @@ function QrIcon({ className = 'h-5 w-5' }) {
       <path d="M16 12h1" />
       <path d="M21 12v.01" />
       <path d="M12 21v-1" />
-    </svg>
-  )
-}
-
-function SparklesIcon({ className = 'h-4 w-4' }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
     </svg>
   )
 }
@@ -222,7 +201,7 @@ function CoopDashboard() {
   const [stationSessions, setStationSessions] = useState([])
   const [selectedEventId, setSelectedEventId] = useSearchParam('event', '')
   const [selectedStationId, setSelectedStationId] = useSearchParam('station', '')
-  const [activeTab, setActiveTab] = useState('scan') // 'scan' | 'roster' | 'logs' | 'info'
+  const [activeTab, setActiveTab] = useSearchParam('view', 'scan') // 'scan' | 'roster' | 'logs' | 'info'
 
   const [manualCode, setManualCode] = useState('')
   const [showManualModal, setShowManualModal] = useState(false)
@@ -244,6 +223,8 @@ function CoopDashboard() {
 
   const videoRef = useRef(null)
   const scannerRef = useRef(null)
+  const scanBusyRef = useRef(false)
+  const reviewPausedRef = useRef(false)
   const scanHandlerRef = useRef(null)
   const lastScanRef = useRef({ code: '', at: 0 })
   const selectedStationIdRef = useRef(selectedStationId)
@@ -637,10 +618,11 @@ function CoopDashboard() {
   }
 
   const handleScan = useCallback(async (rawCode) => {
-    if (!rawCode || processingScan) return
+    if (!rawCode || scanBusyRef.current || reviewPausedRef.current) return
+    scanBusyRef.current = true
 
     const now = Date.now()
-    if (rawCode === lastScanRef.current.code && now - lastScanRef.current.at < 2500) return
+    if (rawCode === lastScanRef.current.code && now - lastScanRef.current.at < 2500) { scanBusyRef.current = false; return }
     lastScanRef.current = { code: rawCode, at: now }
 
     setProcessingScan(true)
@@ -664,8 +646,14 @@ function CoopDashboard() {
         scoringMode: response.scoring_mode || null,
         passThreshold: response.pass_threshold ?? null,
         passPoints: response.pass_points ?? null,
+        submission: response.submission,
+        score: response.score,
       })
 
+      if (response.kind === 'exit') {
+        reviewPausedRef.current = true
+        setActiveTab('review')
+      }
       const message = response.kind === 'event'
         ? `Đã check-in sự kiện cho đội ${teamName}.`
         : response.kind === 'enter'
@@ -681,8 +669,9 @@ function CoopDashboard() {
       playScanFeedback('error')
     } finally {
       setProcessingScan(false)
+      scanBusyRef.current = false
     }
-  }, [processingScan, refreshLive, selectedEvent])
+  }, [refreshLive, selectedEvent, setActiveTab])
 
   scanHandlerRef.current = handleScan
 
@@ -746,7 +735,7 @@ function CoopDashboard() {
       }
       scannerRef.current = null
     }
-  }, [cameraMode])
+  }, [cameraMode, bootLoading, stationEvents.length])
 
   const toggleTorch = async () => {
     if (!scannerRef.current) return
@@ -824,10 +813,13 @@ function CoopDashboard() {
         scoringMode: selectedStation?.scoringMode || 'score_only',
         passThreshold: selectedStation?.passThreshold ?? null,
         passPoints: selectedStation?.passPoints ?? null,
+        submission: response.submission,
+        score: response.score,
       })
       setFlashMessage('success', `Đã cho đội ${teamName} rời trạm.`)
       playScanFeedback('success')
-      setActiveTab('scan')
+      reviewPausedRef.current = true
+      setActiveTab('review')
       await refreshLive()
     } catch (error) {
       const message = error?.status ? explainScanError(error) : error.message
@@ -835,6 +827,7 @@ function CoopDashboard() {
       playScanFeedback('error')
     } finally {
       setProcessingScan(false)
+      scanBusyRef.current = false
     }
   }
 
@@ -879,7 +872,6 @@ function CoopDashboard() {
   if (bootLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper text-ink">
-        <Contours />
         <div className="relative flex flex-col items-center gap-3 rounded-2xl border border-stone bg-white p-8 shadow-sm">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-trail border-t-transparent" />
           <p className="font-semibold text-ink/80">Đang chuẩn bị cổng cộng tác viên...</p>
@@ -890,7 +882,6 @@ function CoopDashboard() {
 
   return (
     <div className="min-h-screen bg-paper text-ink pb-24 lg:pb-12">
-      <Contours />
 
       {/* TOP COMPACT HEADER */}
       <header className="sticky top-0 z-40 border-b border-stone bg-white/95 backdrop-blur shadow-xs">
@@ -1042,7 +1033,8 @@ function CoopDashboard() {
           <>
             {/* MOBILE NAVIGATION TABS (Sticky at bottom on mobile, inline switch on desktop) */}
             <div className="flex lg:hidden sticky top-[92px] z-30 -mx-3 px-3 py-1 bg-paper/95 backdrop-blur border-b border-stone/60">
-              <div className="grid grid-cols-4 w-full gap-1 p-1 bg-stone/25 rounded-xl">
+              <div className={`grid ${lastResult?.kind === 'exit' ? 'grid-cols-5' : 'grid-cols-4'} w-full gap-1 p-1 bg-stone/25 rounded-xl`}>
+                {lastResult?.kind === 'exit' && <button type="button" onClick={() => setActiveTab('review')} className={`flex flex-col items-center justify-center rounded-lg py-2 text-xs font-bold ${activeTab === 'review' ? 'bg-ink text-white' : 'text-ink/70'}`}><Icon name="doc" className="mb-0.5 h-4 w-4" /><span>Chấm bài</span></button>}
                 <button
                   type="button"
                   onClick={() => setActiveTab('scan')}
@@ -1094,10 +1086,11 @@ function CoopDashboard() {
               </div>
             </div>
 
+            {lastResult?.kind === 'exit' && activeTab !== 'review' && <button type="button" onClick={() => setActiveTab('review')} className="mb-4 w-full rounded-xl bg-trail px-4 py-3 font-semibold text-white lg:hidden">Chấm bài · {lastResult.teamName}</button>}
             {/* MAIN CONTENT GRID (Responsive: 1 col on mobile, 2 cols on lg+) */}
             <div className="grid gap-5 lg:grid-cols-12 items-start">
               {/* LEFT COLUMN: SCANNER & IMMEDIATE ACTION CARD (lg: 6 cols or 7 cols) */}
-              <div className={`space-y-4 lg:col-span-6 xl:col-span-5 ${activeTab !== 'scan' ? 'hidden lg:block' : 'block'}`}>
+              <div className={`space-y-4 lg:col-span-4 ${activeTab !== 'scan' ? 'hidden lg:block' : 'block'}`}>
                 {/* CAMERA SCANNER CARD */}
                 <div className={`${CARD} overflow-hidden border-stone shadow-sm`}>
                   <div className="flex items-center justify-between border-b border-stone/80 bg-stone/10 px-4 py-2.5">
@@ -1149,7 +1142,7 @@ function CoopDashboard() {
 
                   <div className="p-3 sm:p-4 space-y-3">
                     {/* CAMERA VIEWPORT WITH RETICLE */}
-                    <div className="relative aspect-4/3 w-full overflow-hidden rounded-2xl bg-black shadow-inner border border-stone/40">
+                    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-black shadow-inner border border-stone/40">
                       <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
 
                       {/* SCANNING TARGET FRAME OVERLAY */}
@@ -1181,128 +1174,32 @@ function CoopDashboard() {
                       <button
                         type="button"
                         onClick={() => setShowManualModal(true)}
-                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-stone bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-ink/80 hover:bg-stone/20 hover:text-ink transition active:scale-98 shadow-xs"
+                        disabled={processingScan || reviewPausedRef.current}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-stone bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-ink/80 hover:bg-stone/20 hover:text-ink transition active:scale-98 shadow-xs disabled:opacity-50"
                       >
                         <span>⌨️</span>
-                        <span>Nhập mã tay / Payload</span>
+                        <span>Nhập mã QR thủ công</span>
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* LAST SCANNED RESULT & IMMEDIATE SCORING PAD */}
-                <div className={`${CARD} overflow-hidden border-stone shadow-sm`}>
-                  <div className="flex items-center justify-between border-b border-stone/80 bg-stone/10 px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <SparklesIcon className="h-4 w-4 text-trail" />
-                      <h2 className="font-display text-sm font-bold text-ink">Kết quả vừa quét</h2>
-                    </div>
-                    {lastResult && (
-                      <span className="font-mono text-[11px] font-semibold text-ink/65">
-                        {formatDateTime(lastResult.timestamp)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="p-4 sm:p-5">
-                    {lastResult ? (
-                      <div className="space-y-4">
-                        {/* Kind Header Badge */}
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span
-                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
-                              (RESULT_META[lastResult.kind] || RESULT_META.event).badgeCls
-                            }`}
-                          >
-                            <span className="h-2 w-2 rounded-full bg-current" />
-                            {(RESULT_META[lastResult.kind] || RESULT_META.event).label}
-                          </span>
-                          <span className="font-mono text-xs font-bold text-ink/65 bg-stone/20 px-2 py-0.5 rounded-md">
-                            Mã: {lastResult.teamId}
-                          </span>
-                        </div>
-
-                        {/* Team Name Big */}
-                        <div className="rounded-xl border border-stone/60 bg-paper/60 p-3">
-                          <h3 className="font-display text-lg sm:text-xl font-bold text-ink leading-tight">
-                            {lastResult.teamName}
-                          </h3>
-                          <p className="mt-1 text-xs text-ink/75">
-                            {lastResult.stationName ? `Trạm: ${lastResult.stationName}` : `Sự kiện: ${lastResult.eventName}`}
-                          </p>
-                        </div>
-
-                        {/* Scoring pad for exit */}
-                        {lastResult.kind === 'exit' && lastResult.sessionId && (
-                          <div className="rounded-2xl border-2 border-sky-300 bg-sky-50/70 p-4 space-y-3 shadow-xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-display text-sm font-bold text-sky-950 flex items-center gap-1.5">
-                                <span>🎯</span> Chấm điểm rời trạm
-                              </span>
-                              {lastResult.scoringMode === 'threshold' && lastResult.passThreshold != null && (
-                                <span className="rounded-md bg-white px-2 py-0.5 text-xs font-bold text-sky-800 border border-sky-200">
-                                  Đạt khi ≥ {lastResult.passThreshold} điểm
-                                </span>
-                              )}
-                            </div>
-
-                            {lastResult.scoringMode === 'pass_fail' ? (
-                              <div className="grid grid-cols-2 gap-3 pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => saveSessionOutcome(lastResult.sessionId, 'passed')}
-                                  disabled={savingScoreId === lastResult.sessionId}
-                                  className="flex flex-col items-center justify-center rounded-xl bg-emerald-600 p-4 text-white font-bold text-base hover:bg-emerald-700 active:scale-95 transition shadow-sm disabled:opacity-50 min-h-[56px]"
-                                >
-                                  <span>✅ ĐẠT</span>
-                                  {lastResult.passPoints != null && (
-                                    <span className="text-xs text-emerald-100 font-normal mt-0.5">
-                                      (+{lastResult.passPoints} điểm)
-                                    </span>
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => saveSessionOutcome(lastResult.sessionId, 'failed')}
-                                  disabled={savingScoreId === lastResult.sessionId}
-                                  className="flex flex-col items-center justify-center rounded-xl bg-rose-600 p-4 text-white font-bold text-base hover:bg-rose-700 active:scale-95 transition shadow-sm disabled:opacity-50 min-h-[56px]"
-                                >
-                                  <span>❌ KHÔNG ĐẠT</span>
-                                  <span className="text-xs text-rose-100 font-normal mt-0.5">(0 điểm)</span>
-                                </button>
-                              </div>
-                            ) : (
-                              <BigScorePad
-                                currentScore={scoreDrafts[lastResult.sessionId] ?? ''}
-                                onScoreChange={(val) =>
-                                  setScoreDrafts((curr) => ({ ...curr, [lastResult.sessionId]: val }))
-                                }
-                                onSaveScore={() =>
-                                  saveSessionScore(lastResult.sessionId, scoreDrafts[lastResult.sessionId] ?? 0)
-                                }
-                                saving={savingScoreId === lastResult.sessionId}
-                              />
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="py-8 text-center text-ink/65 space-y-2">
-                        <span className="mx-auto block text-3xl">📷</span>
-                        <p className="text-sm font-medium">Chưa có kết quả quét trong phiên này</p>
-                        <p className="text-xs text-ink/60 max-w-xs mx-auto">
-                          Hãy hướng camera vào mã QR của đội hoặc bấm &quot;Nhập mã tay&quot; để thao tác.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                {lastResult && lastResult.kind !== 'exit' && <div className="rounded-xl border border-trail/20 bg-white p-4" role="status">
+                  <p className="text-sm font-semibold text-trail">{(RESULT_META[lastResult.kind] || RESULT_META.event).label}</p>
+                  <p className="mt-1 text-lg font-bold text-ink">{lastResult.teamName}</p>
+                  <p className="text-sm text-ink/60">{lastResult.stationName || lastResult.eventName}</p>
+                </div>}
+                {reviewPausedRef.current && <div className="rounded-xl border border-gold/40 bg-gold/10 p-4 text-sm text-ink">
+                  Đang tạm dừng quét để chấm bài của {lastResult?.teamName}.
+                  <button type="button" onClick={() => setActiveTab('review')} className="mt-2 block font-semibold text-trail underline">Mở bài vừa checkout</button>
+                </div>}
               </div>
 
               {/* RIGHT COLUMN: TABS (LIVE ROSTER, HISTORY LOGS, SHIFT INFO) */}
-              <div className="space-y-4 lg:col-span-6 xl:col-span-7">
+              <div className="space-y-4 lg:col-span-8">
                 {/* DESKTOP TAB SELECTOR */}
-                <div className="hidden lg:flex items-center gap-1 border-b border-stone/80 pb-2">
+                <div className="hidden lg:flex flex-wrap items-center gap-1 border-b border-stone/80 pb-2">
+                  {lastResult?.kind === 'exit' && <button type="button" onClick={() => setActiveTab('review')} className={`rounded-lg px-4 py-3 text-sm font-semibold ${activeTab === 'review' ? 'bg-ink text-white' : 'bg-white text-ink'}`}>Bài vừa checkout</button>}
                   <button
                     type="button"
                     onClick={() => setActiveTab('roster')}
@@ -1349,9 +1246,20 @@ function CoopDashboard() {
                   </button>
                 </div>
 
+                {activeTab === 'review' && !lastResult && <div className="rounded-xl border border-stone bg-white p-6">
+                  <h2 className="text-lg font-semibold text-ink">Chưa có bài vừa checkout</h2>
+                  <p className="mt-2 text-sm text-ink/60">Quét QR checkout để xem đáp án, giải thích và chấm điểm cho đội.</p>
+                  <button type="button" onClick={() => setActiveTab('scan')} className="mt-4 rounded-lg bg-trail px-4 py-3 font-semibold text-white">Mở máy quét</button>
+                </div>}
+                {lastResult?.kind === 'exit' && (activeTab === 'review' || activeTab === 'scan') && <CheckoutReview
+                  key={lastResult.sessionId}
+                  result={lastResult}
+                  onSaved={updated => { setLastResult(current => ({ ...current, score: updated.score })); void refreshLive() }}
+                  onNext={() => { reviewPausedRef.current = false; setActiveTab('scan'); setLastResult(null) }}
+                />}
                 {/* TAB CONTENT: LIVE ROSTER */}
-                {(activeTab === 'roster' || (activeTab === 'scan' && window.innerWidth >= 1024)) && (
-                  <div className={`${CARD} overflow-hidden border-stone shadow-sm`}>
+                {(activeTab === 'roster' || activeTab === 'scan') && (
+                  <div className={`${CARD} overflow-hidden border-stone shadow-sm ${activeTab === 'scan' ? 'hidden lg:block' : ''}`}>
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone/80 bg-stone/10 px-4 py-3">
                       <div>
                         <h2 className="font-display text-base font-bold text-ink">Đội đang ở trạm ({activeTeams.length})</h2>
@@ -1631,11 +1539,11 @@ function CoopDashboard() {
 
       {/* MODAL: MANUAL CODE ENTRY */}
       {showManualModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in">
+        <div role="dialog" aria-modal="true" aria-labelledby="manual-qr-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in">
           <div className="w-full max-w-md rounded-2xl border border-stone bg-white p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-stone/60 pb-3">
-              <h3 className="font-display text-base font-bold text-ink flex items-center gap-2">
-                <span>⌨️</span> Nhập mã đội hoặc payload QR
+              <h3 id="manual-qr-title" className="font-display text-base font-bold text-ink flex items-center gap-2">
+                Nhập mã QR thủ công
               </h3>
               <button
                 type="button"
@@ -1648,15 +1556,16 @@ function CoopDashboard() {
 
             <form onSubmit={handleManualSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-ink/75 mb-1.5">
-                  Mã đội (ví dụ: T0007) hoặc chuỗi QR payload:
+                <label htmlFor="manual-qr-code" className="block text-sm font-semibold text-ink/75 mb-1.5">
+                  Nội dung mã QR của đội
                 </label>
                 <input
+                  id="manual-qr-code"
                   type="text"
                   autoFocus
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
-                  placeholder="Nhập T0001, T0002..."
+                  placeholder="Dán nội dung QR thí sinh đang hiển thị"
                   className="w-full rounded-xl border-2 border-stone bg-paper px-3.5 py-3 text-base font-mono font-bold text-ink outline-none focus:border-trail focus:bg-white"
                 />
               </div>

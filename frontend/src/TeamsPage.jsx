@@ -77,6 +77,13 @@ function explainApiError(error) {
     registration_capacity_reached: 'Không còn đủ suất đăng ký cho số thành viên này.',
     forbidden: 'Bạn không có quyền thực hiện thao tác này.',
     remove_failed: 'Không xóa được thành viên. Vui lòng thử lại.',
+    missing_mssv: 'Nhập MSSV thành viên cần thêm.',
+    already_in_team: 'Thí sinh này đã ở trong đội.',
+    team_full: `Đội đã đủ ${MAX_TEAM_SIZE} thành viên.`,
+    email_in_team: 'Email này đã thuộc về một thí sinh hoặc tài khoản khác.',
+    membership_changed: 'Đội vừa thay đổi ở nơi khác. Tải lại rồi thử lại.',
+    captain_not_in_team: 'Người được chọn không còn trong đội.',
+    new_captain_not_in_team: 'Đội trưởng mới phải là một thành viên khác đang ở trong đội.',
   }
   return map[code] || 'Không thể đồng bộ dữ liệu đội.'
 }
@@ -133,7 +140,7 @@ function memberStripCls(member) {
   return 'bg-stone'
 }
 
-function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) {
+function MemberCard({ member, otherMembers = [], isAdmin = false, onFixIdentity, onRemoveMember, onSetCaptain }) {
   const strip = memberStripCls(member)
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(member.mssv || '')
@@ -142,6 +149,21 @@ function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) 
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [removeError, setRemoveError] = useState('')
+  const [successor, setSuccessor] = useState('')
+  const [appointing, setAppointing] = useState(false)
+  const [appointError, setAppointError] = useState('')
+
+  const appointCaptain = async () => {
+    try {
+      setAppointing(true)
+      setAppointError('')
+      await onSetCaptain(member.mssv)
+    } catch (err) {
+      setAppointError(explainApiError(err))
+    } finally {
+      setAppointing(false)
+    }
+  }
 
   const startEdit = () => {
     setValue(member.mssv || '')
@@ -158,7 +180,7 @@ function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) 
       setRemoving(true)
       setRemoveError('')
       // On success the drawer reloads and this card unmounts.
-      await onRemoveMember(member.mssv)
+      await onRemoveMember(member.mssv, member.is_captain ? successor : '')
     } catch (err) {
       setRemoveError(explainApiError(err) || 'Không xóa được thành viên.')
       setRemoving(false)
@@ -241,7 +263,7 @@ function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) 
           </div>
         </div>
 
-        {isAdmin && (onFixIdentity || onRemoveMember) && (
+        {isAdmin && (onFixIdentity || onRemoveMember || onSetCaptain) && (
           <div className="mt-2 border-t border-stone/40 pt-2">
             {!editing && !confirmingRemove ? (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -254,25 +276,61 @@ function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) 
                     Sửa MSSV / nối tài khoản
                   </button>
                 )}
+                {onSetCaptain && !member.is_captain && (
+                  <button
+                    type="button"
+                    onClick={appointCaptain}
+                    disabled={appointing}
+                    className="text-[11px] font-medium text-[#9A6B12]/80 underline underline-offset-2 transition hover:text-[#9A6B12] disabled:opacity-60"
+                  >
+                    {appointing ? 'Đang chỉ định...' : 'Đặt làm đội trưởng'}
+                  </button>
+                )}
                 {onRemoveMember && (
                   <button
                     type="button"
-                    onClick={() => { setRemoveError(''); setConfirmingRemove(true) }}
+                    onClick={() => {
+                      setRemoveError('')
+                      setSuccessor(otherMembers[0]?.mssv || '')
+                      setConfirmingRemove(true)
+                    }}
                     className="text-[11px] font-medium text-clay/80 underline underline-offset-2 transition hover:text-clay"
                   >
                     Xóa khỏi đội
                   </button>
                 )}
+                {appointError && <p className="w-full text-[11px] leading-relaxed text-clay">{appointError}</p>}
               </div>
             ) : confirmingRemove ? (
               <div className="space-y-1.5">
                 <p className="text-[11px] leading-relaxed text-ink/55">
                   Xóa <span className="font-semibold text-ink">{member.full_name || member.mssv}</span>
                   {member.is_captain && <span className="text-clay"> (đội trưởng)</span>} khỏi đội? Điểm và lượt điểm danh gắn với đội vẫn giữ nguyên.
-                  {member.is_captain && (
-                    <> Đội sẽ về trạng thái như mới ghép: tên đội trở lại mã đội, mở lại bầu đội trưởng cho các thành viên còn lại.</>
+                  {member.is_captain && !successor && otherMembers.length > 0 && (
+                    <> Không chọn đội trưởng mới thì đội sẽ về trạng thái như mới ghép: tên đội trở lại mã đội, mở lại bầu đội trưởng.</>
+                  )}
+                  {member.is_captain && successor && (
+                    <> Tên đội giữ nguyên, đội trưởng chuyển cho người được chọn.</>
                   )}
                 </p>
+                {member.is_captain && otherMembers.length > 0 && (
+                  <label className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink/55">
+                    Đội trưởng mới
+                    <select
+                      value={successor}
+                      onChange={e => setSuccessor(e.target.value)}
+                      disabled={removing}
+                      className="max-w-full rounded-md border border-stone bg-white px-2 py-1 text-xs text-ink outline-none focus:border-trail disabled:opacity-60"
+                    >
+                      {otherMembers.map(other => (
+                        <option key={other.mssv} value={other.mssv}>
+                          {other.full_name || other.mssv} · {other.mssv}
+                        </option>
+                      ))}
+                      <option value="">Không chọn — mở bầu lại</option>
+                    </select>
+                  </label>
+                )}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
@@ -333,6 +391,197 @@ function MemberCard({ member, isAdmin = false, onFixIdentity, onRemoveMember }) 
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const EMPTY_MEMBER_FORM = { mssv: '', full_name: '', email: '', phone: '' }
+
+function AddMemberForm({ teamCode, memberCount, onAddMember }) {
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState(EMPTY_MEMBER_FORM)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  // Set when the MSSV already belongs to another team: { code, name }.
+  const [moveFrom, setMoveFrom] = useState(null)
+
+  useEffect(() => {
+    setOpen(false)
+    setForm(EMPTY_MEMBER_FORM)
+    setError('')
+    setMoveFrom(null)
+  }, [teamCode])
+
+  const full = memberCount >= MAX_TEAM_SIZE
+  const set = (key) => (e) => {
+    const { value } = e.target
+    setForm(prev => ({ ...prev, [key]: value }))
+    if (key === 'mssv') setMoveFrom(null)
+  }
+
+  const submit = async (move = false) => {
+    const mssv = form.mssv.trim().toUpperCase()
+    if (!mssv) {
+      setError(explainApiError({ message: 'missing_mssv' }))
+      return
+    }
+    try {
+      setSaving(true)
+      setError('')
+      await onAddMember({
+        mssv,
+        full_name: form.full_name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        move,
+      })
+      setForm(EMPTY_MEMBER_FORM)
+      setMoveFrom(null)
+      setOpen(false)
+    } catch (err) {
+      const code = err?.data?.error || err?.message || ''
+      if (code.startsWith('mssv_in_other_team')) {
+        setMoveFrom({
+          code: err?.data?.source_team_code || code.split(':')[1] || '',
+          name: err?.data?.source_team_name || '',
+        })
+      } else if (code === 'participant_not_found') {
+        setError('Chưa có thí sinh với MSSV này — nhập họ tên để tạo mới.')
+      } else {
+        setError(explainApiError(err))
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const input = 'w-full rounded-md border border-stone bg-white px-2.5 py-1.5 text-sm text-ink outline-none transition focus:border-trail disabled:opacity-60'
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={full}
+        className={`${SECONDARY_BTN} mt-2 w-full`}
+      >
+        {full ? `Đội đã đủ ${MAX_TEAM_SIZE} thành viên` : '+ Thêm thành viên'}
+      </button>
+    )
+  }
+
+  return (
+    <div className={`${CARD} mt-2 space-y-2 px-4 py-3`}>
+      <p className="text-[11px] leading-relaxed text-ink/45">
+        Nhập MSSV. Thí sinh đã có hồ sơ chỉ cần MSSV; người mới cần thêm họ tên.
+        Tên đội và đội trưởng giữ nguyên.
+      </p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <input value={form.mssv} onChange={set('mssv')} disabled={saving} placeholder="MSSV *" className={`${input} font-mono`} autoFocus />
+        <input value={form.full_name} onChange={set('full_name')} disabled={saving} placeholder="Họ tên (nếu người mới)" className={input} />
+        <input value={form.email} onChange={set('email')} disabled={saving} placeholder="Email" type="email" className={input} />
+        <input value={form.phone} onChange={set('phone')} disabled={saving} placeholder="Số điện thoại" className={input} />
+      </div>
+      {moveFrom ? (
+        <div className="space-y-1.5 rounded-md bg-gold/10 px-2.5 py-2">
+          <p className="text-[11px] leading-relaxed text-[#9A6B12]">
+            MSSV này đang ở đội <span className="font-semibold">{moveFrom.code}{moveFrom.name && moveFrom.name !== moveFrom.code ? ` - ${moveFrom.name}` : ''}</span>.
+            Chuyển sang đội này? Nếu người đó là đội trưởng đội cũ, đội cũ sẽ phải bầu lại.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => submit(true)} disabled={saving} className="rounded-md bg-trail px-3 py-1 text-xs font-semibold text-white transition hover:bg-trail/90 disabled:opacity-60">
+              {saving ? 'Đang chuyển...' : 'Chuyển sang đội này'}
+            </button>
+            <button type="button" onClick={() => setMoveFrom(null)} disabled={saving} className="rounded-md border border-stone bg-white px-3 py-1 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60">
+              Huỷ
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => submit(false)} disabled={saving} className="rounded-md bg-trail px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-trail/90 disabled:opacity-60">
+            {saving ? 'Đang thêm...' : 'Thêm vào đội'}
+          </button>
+          <button type="button" onClick={() => { setOpen(false); setError('') }} disabled={saving} className="rounded-md border border-stone bg-white px-3 py-1.5 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60">
+            Huỷ
+          </button>
+        </div>
+      )}
+      {error && <p className="text-[11px] leading-relaxed text-clay">{error}</p>}
+    </div>
+  )
+}
+
+function TeamNameEditor({ team, onRename }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(team.name || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setEditing(false)
+    setValue(team.name || '')
+    setError('')
+  }, [team.id, team.name])
+
+  const save = async () => {
+    const next = value.trim()
+    if (!next || next === team.name) {
+      setEditing(false)
+      return
+    }
+    try {
+      setSaving(true)
+      setError('')
+      await onRename(next)
+      setEditing(false)
+    } catch (err) {
+      setError(explainApiError(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div className="mt-1 flex min-w-0 items-center gap-2">
+        <h2 className="truncate font-display text-xl font-bold text-ink">{team.name}</h2>
+        {onRename && (
+          <button
+            type="button"
+            onClick={() => { setValue(team.name || ''); setEditing(true) }}
+            className="shrink-0 text-[11px] font-medium text-trail/80 underline underline-offset-2 transition hover:text-trail"
+          >
+            Sửa tên
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          disabled={saving}
+          autoFocus
+          maxLength={255}
+          onKeyDown={e => {
+            if (e.key === 'Enter') save()
+            if (e.key === 'Escape') setEditing(false)
+          }}
+          className="min-w-0 flex-1 rounded-md border border-stone bg-white px-2 py-1 text-base font-semibold text-ink outline-none focus:border-trail disabled:opacity-60"
+        />
+        <button type="button" onClick={save} disabled={saving} className="rounded-md bg-trail px-3 py-1 text-xs font-semibold text-white transition hover:bg-trail/90 disabled:opacity-60">
+          {saving ? 'Đang lưu...' : 'Lưu'}
+        </button>
+        <button type="button" onClick={() => setEditing(false)} disabled={saving} className="rounded-md border border-stone bg-white px-3 py-1 text-xs font-medium text-ink/60 transition hover:bg-paper disabled:opacity-60">
+          Huỷ
+        </button>
+      </div>
+      {error && <p className="text-[11px] leading-relaxed text-clay">{error}</p>}
     </div>
   )
 }
@@ -480,7 +729,7 @@ function DeleteTeamModal({ team, deleting, error, onClose, onConfirm }) {
   )
 }
 
-function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, onFixIdentity, onRemoveMember, isAdmin: isAdminProp }) {
+function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReload, onFixIdentity, onRemoveMember, onSetCaptain, onAddMember, onRename, isAdmin: isAdminProp }) {
   const [mode, setMode] = useState('idle')
   const [note, setNote] = useState('')
   const [teamToDelete, setTeamToDelete] = useState(null)
@@ -541,9 +790,7 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReloa
                 <Badge label="Đăng ký trễ" cls="bg-clay/12 text-clay" />
               )}
             </div>
-            <h2 className="mt-1 truncate font-display text-xl font-bold text-ink">
-              {team.name}
-            </h2>
+            <TeamNameEditor team={team} onRename={isAdmin ? onRename : undefined} />
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3">
               <span className="text-sm text-ink/50">
                 Đội trưởng: <span className="font-medium text-ink/70">{team.owner || 'Chưa gán'}</span>
@@ -609,13 +856,22 @@ function TeamDrawer({ team, loading, busy, onClose, onApprove, onReject, onReloa
                         <MemberCard
                           key={member.mssv}
                           member={member}
+                          otherMembers={team.members.filter(other => other.mssv !== member.mssv)}
                           isAdmin={isAdmin}
                           onFixIdentity={onFixIdentity}
                           onRemoveMember={onRemoveMember}
+                          onSetCaptain={onSetCaptain}
                         />
                       ))
                     : <p className="px-4 py-5 text-sm italic text-ink/30">Đội chưa có thành viên.</p>}
                 </div>
+                {isAdmin && onAddMember && (
+                  <AddMemberForm
+                    teamCode={team.code}
+                    memberCount={team.members.length}
+                    onAddMember={onAddMember}
+                  />
+                )}
 
               </div>
             </>
@@ -1288,15 +1544,12 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
     }
   }
 
-  // Remove a single member from a team. Like handleFixIdentity, this stays
-  // outside withBusy so the member card can show its own inline spinner/error;
-  // a 401 still bounces to login.
-  const handleRemoveMember = async (mssv) => {
+  // Roster edits run outside withBusy so each control can show its own inline
+  // spinner/error; the list and the open drawer reload after a success, and a
+  // 401 still bounces to login.
+  const mutateSelectedTeam = async (request) => {
     try {
-      const res = await apiRequest(
-        `/teams/${selectedId}/members/${encodeURIComponent(mssv)}`,
-        { method: 'DELETE' },
-      )
+      const res = await request()
       await loadTeams()
       if (selectedId) {
         const detail = await apiRequest(`/teams/${selectedId}`)
@@ -1311,6 +1564,31 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
       throw error
     }
   }
+
+  // Removing the captain with `newCaptain` hands captaincy over and keeps the
+  // team name; without it the team re-opens its captain ballot.
+  const handleRemoveMember = (mssv, newCaptain = '') => mutateSelectedTeam(() => {
+    const query = newCaptain ? `?new_captain=${encodeURIComponent(newCaptain)}` : ''
+    return apiRequest(
+      `/teams/${selectedId}/members/${encodeURIComponent(mssv)}${query}`,
+      { method: 'DELETE' },
+    )
+  })
+
+  const handleSetCaptain = (mssv) => mutateSelectedTeam(() => apiRequest(`/teams/${selectedId}`, {
+    method: 'PATCH',
+    body: { captain_mssv: mssv },
+  }))
+
+  const handleRenameTeam = (name) => mutateSelectedTeam(() => apiRequest(`/teams/${selectedId}`, {
+    method: 'PATCH',
+    body: { name },
+  }))
+
+  const handleAddMember = (body) => mutateSelectedTeam(() => apiRequest(`/teams/${selectedId}/members`, {
+    method: 'POST',
+    body,
+  }))
 
   const loadMergeCandidates = useCallback(async () => {
     setMergeLoading(true)
@@ -1566,6 +1844,9 @@ function TeamsPage({ isAdmin: isAdminProp } = {}) {
         onReload={loadTeams}
         onFixIdentity={handleFixIdentity}
         onRemoveMember={handleRemoveMember}
+        onSetCaptain={handleSetCaptain}
+        onAddMember={handleAddMember}
+        onRename={handleRenameTeam}
         isAdmin={isAdmin}
       />
 

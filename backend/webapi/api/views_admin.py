@@ -14,7 +14,7 @@ from api.models import Account, ProgramPhase, Team, TeamMembership
 from api.services.team_service import (
     create_team, approve_team, reject_team, delete_team,
     get_team_members, add_member, remove_member, link_account_profile,
-    fix_participant_identity,
+    fix_participant_identity, admin_add_member, set_team_captain,
     registration_is_open, set_registration_open,
     get_max_registrations, set_max_registrations, get_current_registrations,
     team_name_is_duplicate,
@@ -312,8 +312,44 @@ def team_item_view(request: HttpRequest, team_key: str):
             cleaned_name = str(new_name).strip()
             if team_name_is_duplicate(cleaned_name, exclude_team=team):
                 return JsonResponse({"error": "duplicate_team_name"}, status=409)
-            team.name = cleaned_name
-            team.save(update_fields=["name", "updated_at"])
+            if cleaned_name and cleaned_name != team.name:
+                old_name = team.name
+                team.name = cleaned_name
+                team.save(update_fields=["name", "updated_at"])
+                # The bot renames the role/channels on the next reconcile.
+                if team.approval_status == Team.APPROVAL_APPROVED:
+                    Team.objects.filter(pk=team.pk).update(
+                        provision_state=Team.PROVISION_PENDING, provision_last_error=None,
+                    )
+                record_audit(
+                    actor=acc,
+                    action="team.rename",
+                    summary=f"Đổi tên đội {team.code}: {old_name} → {cleaned_name}",
+                    target_type="Team",
+                    target_id=team.id,
+                    before_data={"name": old_name},
+                    after_data={"name": cleaned_name},
+                    reversible=False,
+                )
+
+        captain_mssv = str(data.get("captain_mssv") or "").strip().upper()
+        if captain_mssv:
+            captain, captain_err = set_team_captain(team, captain_mssv)
+            if captain_err:
+                return JsonResponse({"error": "captain_not_in_team"}, status=404)
+            team.refresh_from_db()
+            record_audit(
+                actor=acc,
+                action="team.captain.set",
+                summary=(
+                    f"Chỉ định {captain.full_name or captain_mssv} ({captain_mssv}) "
+                    f"làm đội trưởng đội {team.code} - {team.name}"
+                ),
+                target_type="Team",
+                target_id=team.id,
+                after_data={"captain_mssv": captain_mssv},
+                reversible=False,
+            )
 
         new_approval_status = data.get("approval_status")
         if new_approval_status:
@@ -452,6 +488,79 @@ def team_reject_view(request: HttpRequest, team_key: str):
 
 
 @csrf_exempt
+def team_members_collection_view(request: HttpRequest, team_key: str):
+    """POST: organiser adds a member to a team, or moves one in from another team.
+
+    Works in every approval state and leaves the team's name and captain alone,
+    so fixing a roster no longer needs a merge (which forces a rename and a new
+    captain ballot). Body: ``mssv`` plus, for a participant not yet on file,
+    ``full_name`` (and optional email/phone/school/faculty). Someone already on
+    another team is refused with ``mssv_in_other_team:<code>`` unless ``move``
+    is true.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+
+    team = Team.objects.filter(code=team_key).first()
+    if not team:
+        return JsonResponse({"error": "not_found"}, status=404)
+
+    participant, add_err, source = admin_add_member(
+        team,
+        str(data.get("mssv") or ""),
+        full_name=data.get("full_name"),
+        email=data.get("email"),
+        phone=data.get("phone"),
+        school=data.get("school"),
+        faculty=data.get("faculty"),
+        move=data.get("move") is True,
+    )
+    if add_err:
+        status = {
+            "missing_mssv": 400,
+            "not_found": 404,
+            "participant_not_found": 404,
+        }.get(add_err, 409)
+        payload = {"error": add_err}
+        if source is not None:
+            payload.update({"source_team_code": source.code, "source_team_name": source.name})
+        return JsonResponse(payload, status=status)
+
+    team.refresh_from_db()
+    moved_from = f" (chuyển từ đội {source.code} - {source.name})" if source else ""
+    record_audit(
+        actor=acc,
+        action="team.member.add",
+        summary=(
+            f"Thêm thành viên {participant.full_name or participant.mssv} "
+            f"({participant.mssv}) vào đội {team.code} - {team.name}{moved_from}"
+        ),
+        target_type="Team",
+        target_id=team.id,
+        after_data={
+            "mssv": participant.mssv,
+            "full_name": participant.full_name,
+            "source_team_code": source.code if source else None,
+        },
+        reversible=False,
+    )
+    return JsonResponse({
+        "status": "added",
+        "mssv": participant.mssv,
+        "full_name": participant.full_name,
+        "source_team_code": source.code if source else None,
+    }, status=201)
+
+
+@csrf_exempt
 @transaction.atomic
 def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
     """DELETE a single member (by MSSV) from a team — admin only.
@@ -494,9 +603,10 @@ def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
         "is_captain": was_captain,
     }
 
-    success, remove_err = remove_member(team, normalized_mssv)
+    new_captain = (request.GET.get("new_captain") or "").strip().upper()
+    success, remove_err = remove_member(team, normalized_mssv, new_captain_mssv=new_captain)
     if not success:
-        status = 404 if remove_err == "not_found" else 400
+        status = {"not_found": 404, "new_captain_not_in_team": 409}.get(remove_err, 400)
         return JsonResponse({"error": remove_err or "remove_failed"}, status=status)
 
     record_audit(
@@ -505,7 +615,11 @@ def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
         summary=(
             f"Xóa thành viên {before_data['full_name'] or normalized_mssv} "
             f"({normalized_mssv}) khỏi đội {team.code} - {team_name_before}"
-            + (" (đội trưởng — mở lại bầu đội trưởng)" if was_captain else "")
+            + (
+                (f" (đội trưởng — chuyển cho {new_captain})" if new_captain
+                 else " (đội trưởng — mở lại bầu đội trưởng)")
+                if was_captain else ""
+            )
         ),
         target_type="Team",
         target_id=team.id,
@@ -517,6 +631,7 @@ def team_member_item_view(request: HttpRequest, team_key: str, mssv: str):
         "status": "removed",
         "mssv": normalized_mssv,
         "captain_removed": was_captain,
+        "new_captain_mssv": new_captain if was_captain and new_captain else None,
     })
 
 
