@@ -4,6 +4,7 @@ import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
 import { Icon } from './ui.jsx'
 import { useSearchParam, navigate, buildUrl } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
+import { explainReplayLock, attemptLabel } from './stationReplay.js'
 
 // Cheap deep-equality stand-in for the plain string/number/index answer maps
 // this panel deals with. Good enough to tell "did the team draft actually
@@ -97,6 +98,17 @@ const TRAP_LANGS = [
 
 // For the global scrolling prompt, flatten all of them so it cycles through everything
 const ALL_TRAPS = TRAP_LANGS.flat()
+
+
+function durationSeconds(closure) {
+  if (closure?.duration_seconds != null) return Number(closure.duration_seconds) || 0
+  return (Number(closure?.duration_minutes) || 0) * 60
+}
+
+function formatDuration(seconds) {
+  if (seconds % 60 !== 0 || seconds < 60) return `${seconds} giây`
+  return `${seconds / 60} phút`
+}
 
 export function InvisibleWatermark({ text }) {
   if (!text) return null
@@ -526,10 +538,10 @@ function FormSubmissionPanel({
   // so they additionally mirror to the backend draft endpoint.
   const isSurvey = Boolean(form?.is_survey)
   const stationId = form?.station_id ? String(form.station_id) : ''
-  const teamSyncEnabled = !isSurvey && Boolean(stationId)
+  const teamSyncEnabled = !isSurvey && Boolean(stationId) && !form?.requires_start
 
   const [answers, setAnswers, answersDraft] = useDraftState(
-    stationId ? `form-answers:${stationId}` : '',
+    stationId ? `form-answers:${stationId}:${form?.attempt_id ?? 'unstarted'}` : '',
     {},
   )
   // Attachments are live File objects — never persisted, never restorable.
@@ -917,29 +929,39 @@ function FormSubmissionPanel({
             <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full bg-trail/10 text-trail">
               <Icon name="clock" className="h-8 w-8" />
             </div>
-            <h2 className="text-xl font-bold text-ink">Bắt đầu làm bài</h2>
+            <h2 className="text-xl font-bold text-ink">{form?.attempts_used > 0 ? 'Chơi lại trạm' : 'Bắt đầu làm bài'}</h2>
             <p className="mt-2 text-sm leading-6 text-ink/70">
-              Trạm này có giới hạn thời gian làm bài là {closure?.duration_minutes || 0} phút.
-              <br/>
-              Thời gian sẽ bắt đầu đếm ngược ngay khi bạn nhấn nút bên dưới.
+              {form?.replay_reason
+                ? explainReplayLock(form.replay_reason)
+                : durationSeconds(closure) > 0
+                  ? `Trạm có thời gian làm bài ${formatDuration(durationSeconds(closure))}, bắt đầu khi bạn bấm nút bên dưới.`
+                  : 'Bấm nút bên dưới để bắt đầu một lượt chơi.'}
             </p>
+            {attemptLabel(form) && <p className="mt-2 text-sm text-ink/60">{attemptLabel(form)}</p>}
             <button
               type="button"
               onClick={async () => {
                 try {
                   setSubmitState('submitting')
                   await apiRequest(`/my-team/forms/${form.station_id}/start`, { method: 'POST' })
+                  answersDraft.clear()
                   onReload()
                 } catch (err) {
                   if (err?.status === 401) {
                     logoutAndRedirect('/')
                     return
                   }
-                  setSubmitMessage('Lỗi khi bắt đầu làm bài.')
+                  const code = err?.data?.error || err?.message || ''
+                  setSubmitMessage(code.startsWith('replay_locked_')
+                    ? explainReplayLock(code.slice('replay_locked_'.length))
+                    : code === 'event_not_checked_in' ? 'Đội chưa check-in sự kiện. Hãy mở mục Điểm danh sự kiện trước.'
+                    : code === 'event_insufficient_checkin' ? 'Đội chưa đủ số thành viên đã check-in để vào trạm. Mời các thành viên còn lại quét QR cá nhân.'
+                    : code === 'team_checked_out' ? 'Đội đã checkout nên không thể chơi thêm trạm.'
+                    : code === 'session_already_active' ? 'Đội đang chơi ở trạm khác. Hãy hoàn tất lượt đó trước.' : 'Chưa thể bắt đầu lượt chơi. Hãy tải lại để kiểm tra trạng thái trạm.')
                   setSubmitState('error')
                 }
               }}
-              disabled={submitState === 'submitting'}
+              disabled={submitState === 'submitting' || (form?.attempts_used > 0 && !form?.can_replay)}
               className="mt-6 inline-flex rounded-xl bg-ink px-8 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitState === 'submitting' ? 'Đang tải...' : 'Bắt đầu làm bài'}
@@ -1179,7 +1201,7 @@ export default function FormResponses() {
             {/* Keyed by the open form's id so a switch fully remounts the panel
                 below instead of leaking one form's draft state into another. */}
             <FormSubmissionPanel
-              key={selectedId}
+              key={`${selectedId}:${selectedForm.attempt_id ?? 'unstarted'}`}
               form={selectedForm}
               serverTimeOffset={serverTimeOffset}
               onReload={loadForms}

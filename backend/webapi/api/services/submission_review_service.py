@@ -52,14 +52,14 @@ def review_deadline(station, team, session):
     fixed = parse_datetime(limits.get("closesAt") or "")
     if fixed:
         deadlines.append(timezone.make_aware(fixed) if timezone.is_naive(fixed) else fixed)
-    minutes = limits.get("durationMinutes", 0)
-    if minutes:
+    seconds = limits.get("durationSeconds", 0)
+    if seconds:
         started = session.entered_at if session else None
         if not started:
             form = TeamFormSession.objects.filter(station=station, team=team).order_by("-started_at").first()
             started = form.started_at if form else None
         if started:
-            deadlines.append(started + timedelta(minutes=minutes))
+            deadlines.append(started + timedelta(seconds=seconds))
     return min(deadlines).isoformat() if deadlines else None
 
 

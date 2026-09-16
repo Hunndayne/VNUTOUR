@@ -12,13 +12,15 @@
 //      có form, QR rời trạm bị khoá 10 giây — tính từ `entered_at` chứ không
 //      phải từ lúc component mount, để tải lại trang không làm đồng hồ chạy lại.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Badge, Icon } from './ui.jsx'
 import { apiRequest, logoutAndRedirect } from './api.js'
 import { useSearchParam } from './router.js'
 import { MarkdownBlock, InvisibleWatermark, TrapPattern } from './FormResponses.jsx'
 import QuestionHistory, { QuizSummary } from './QuestionReview.jsx'
+import { canReplay, explainReplayLock, attemptLabel, withReplayState } from './stationReplay.js'
+import AttendanceCheckinPanel from './AttendanceCheckinPanel.jsx'
 
 const POLL_MS = 2000
 const EXIT_LOCK_MS = 10000
@@ -74,12 +76,28 @@ function explainError(error) {
     // Luật chơi lại (bật theo event): quét vào trạm bị chặn ở hai lý do này.
     replay_locked_incomplete: explainReplayLock('incomplete'),
     replay_locked_passed: explainReplayLock('passed'),
+    replay_locked_attempts_exhausted: explainReplayLock('attempts_exhausted'),
+    replay_locked_pending_result: explainReplayLock('pending_result'),
+    event_not_checked_in: 'Đội chưa check-in sự kiện. Hãy qua trạm check-in trước.',
+    event_insufficient_checkin: 'Đội chưa đủ số thành viên đã check-in. Hãy mở mục Điểm danh sự kiện để xem số người còn thiếu.',
+    team_checked_out: 'Đội đã checkout nên không thể chơi thêm trạm nào.',
   }
   if (code && map[code]) return map[code]
   if (typeof code === 'string' && code.startsWith('request_failed_')) {
     return 'Máy chủ đang bận. Sẽ tự thử lại sau ít giây.'
   }
   return 'Mất kết nối với máy chủ. Sẽ tự thử lại sau ít giây.'
+}
+
+function explainAttendanceError(error) {
+  const code = error?.data?.error || error?.message
+  const map = {
+    no_team: 'Bạn chưa thuộc đội nào nên chưa có QR điểm danh sự kiện.',
+    no_current_event: 'BTC chưa mở event nào để điểm danh.',
+    event_not_found: 'Không tìm thấy event đang điểm danh.',
+    forbidden: 'Tài khoản này không có quyền xem QR điểm danh.',
+  }
+  return map[code] || 'Không thể tải QR điểm danh. Kiểm tra kết nối rồi thử lại.'
 }
 
 function capacityLabel(capacity) {
@@ -103,6 +121,7 @@ function listStatusBadge(station) {
   // từ my_session/my_submission như trước để giao diện không vỡ.
   const status = station?.status
   if (status === 'active') return { label: 'Đang ở đây', cls: 'bg-[#1F7A6B]/14 text-[#1F7A6B]' }
+  if (status === 'pending') return { label: 'Chờ chấm', cls: 'bg-[#E0A23A]/20 text-[#9A6B12]' }
   if (status === 'passed') {
     const score = Number(station?.best_score) || 0
     return {
@@ -126,13 +145,6 @@ function listStatusBadge(station) {
   return { label: 'Chưa vào', cls: 'bg-[#20312B]/[0.06] text-[#20312B]/45' }
 }
 
-/** Câu giải thích khi một trạm đang bị khoá chơi lại (luật bật, xem plan/qualifying-journey-and-replay.md). */
-function explainReplayLock(reason) {
-  if (reason === 'passed') return 'Đội đã qua trạm này rồi nên không cần vào lại.'
-  if (reason === 'incomplete') return 'Đội phải đi hết tất cả các trạm khác rồi mới được quay lại trạm này.'
-  return 'Trạm này hiện đang khoá lượt chơi lại.'
-}
-
 /**
  * Máy trạng thái của một trạm đang mở.
  *
@@ -146,6 +158,8 @@ function deriveStep({ station, state, blockedStationId, lockRemaining, replayArm
   const session = state.session
   const status = session?.status || null
   const qrReady = Boolean(state.qr?.enabled && state.qr?.payload)
+
+  if (status !== 'active' && blockedStationId != null) return 'blocked'
 
   if (status === 'active') {
     if (station.has_form) {
@@ -162,14 +176,14 @@ function deriveStep({ station, state, blockedStationId, lockRemaining, replayArm
     // never automatic: showing the entry QR the instant a checkout lands lets the
     // coop's camera re-read it and check the team straight back in. The team must
     // tap "Chơi lại" (only offered when replay is unlocked), which arms this.
-    if (replayArmed && station.replay_locked === false) {
+    if (replayArmed && canReplay(station)) {
+      if (station.checkin_policy === 'free_play') return 'form'
       return qrReady ? 'entry_qr' : 'entry_disabled'
     }
     return 'closed'
   }
 
   // `null` (chưa vào) hoặc `cancelled` (CTV đã huỷ phiên): đội đang đứng ngoài.
-  if (blockedStationId != null) return 'blocked'
   // Luật chơi lại chặn NGAY TỪ LÚC quét (server sẽ trả 409), nhưng cờ này đã có
   // sẵn trong `/my-team/stations` nên báo trước cho đội khỏi mất công quét hụt.
   if (station.replay_locked) return 'replay_locked'
@@ -399,6 +413,7 @@ function StationRow({ station, onOpen }) {
           {replayNote && (
             <p className="mt-1.5 text-xs text-[#9A6B12]">{replayNote}</p>
           )}
+          {attemptLabel(station) && <p className="mt-1.5 text-xs text-ink/60">{attemptLabel(station)}</p>}
         </div>
         <Icon name="chevronR" className="mt-3 h-5 w-5 shrink-0 text-ink/25" />
       </div>
@@ -556,6 +571,7 @@ function StationStageScreen({
       )}
 
       <ConnectionNote message={pollError} />
+      {attemptLabel(station) && <p className="text-sm text-ink/65">{attemptLabel(station)}</p>}
 
       {step === 'loading' && (
         <div className={`${STATION_CARD} px-5 py-14 text-center text-base text-ink/45`}>
@@ -594,7 +610,7 @@ function StationStageScreen({
         <StatusPanel
           tone="clay"
           eyebrow="Khoá chơi lại"
-          title={station?.replay_reason === 'passed' ? 'Đã qua trạm này' : 'Đi hết trạm rồi mới được vào lại'}
+          title="Chưa thể chơi lại trạm"
           body={explainReplayLock(station?.replay_reason)}
         >
           <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
@@ -751,12 +767,12 @@ function StationStageScreen({
           tone="trail"
           eyebrow="Hoàn tất"
           title="Đã hoàn thành trạm này"
-          body={station?.replay_locked === false
-            ? 'Lượt chơi tại trạm đã đóng. Đội đã đi hết các trạm nên có thể chơi lại trạm này — bấm "Chơi lại" rồi đưa QR cho CTV quét.'
-            : 'Lượt chơi tại trạm đã được đóng. Chúc đội may mắn ở trạm tiếp theo.'}
+          body={canReplay(station)
+            ? 'Lượt chơi đã kết thúc. Đội còn lượt nên có thể bấm "Chơi lại" để bắt đầu lượt tiếp theo.'
+            : station?.replay_reason ? explainReplayLock(station.replay_reason) : 'Lượt chơi tại trạm đã được đóng.'}
         >
           <QuizSummary result={state?.submission?.quiz_result} score={state?.submission?.score} />
-          {station?.replay_locked === false && typeof onReplay === 'function' && (
+          {canReplay(station) && typeof onReplay === 'function' && (
             <button type="button" onClick={onReplay} className={`mb-3 w-full ${TRAIL_BUTTON}`}>
               <Icon name="doc" className="h-5 w-5" />
               Chơi lại trạm này
@@ -800,6 +816,10 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   const [sessionExpired, setSessionExpired] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [serverTimeOffset, setServerTimeOffset] = useState(0)
+  const [attendance, setAttendance] = useState(null)
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
+  const [attendanceError, setAttendanceError] = useState('')
+  const attendanceRequestRef = useRef(0)
 
   const stations = useMemo(() => listPayload?.stations || [], [listPayload])
 
@@ -836,10 +856,49 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     }
   }, [])
 
+  const loadAttendance = useCallback(async ({ clear = false } = {}) => {
+    const requestId = ++attendanceRequestRef.current
+    if (clear) setAttendance(null)
+    setAttendanceLoading(true)
+    try {
+      const payload = await apiRequest('/my/checkin-qr')
+      if (requestId !== attendanceRequestRef.current) return
+      setAttendance(payload || null)
+      setAttendanceError('')
+    } catch (error) {
+      if (requestId !== attendanceRequestRef.current) return
+      setAttendance(null)
+      if (error?.status === 401) {
+        setSessionExpired(true)
+        return
+      }
+      setAttendanceError(explainAttendanceError(error))
+    } finally {
+      if (requestId === attendanceRequestRef.current) setAttendanceLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadStations()
     loadGlobalSession()
   }, [loadStations, loadGlobalSession])
+
+  // Check-in is event-level and may be open while the team is browsing a
+  // station. Poll it independently so a successful scan removes that member's
+  // QR without affecting the existing team entry/exit QR state.
+  useEffect(() => {
+    if (view !== 'attendance' || sessionExpired) return undefined
+    let cancelled = false
+    const refresh = () => {
+      if (!cancelled) void loadAttendance()
+    }
+    void loadAttendance({ clear: true })
+    const timer = window.setInterval(refresh, POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [view, sessionExpired, loadAttendance])
 
   // Poll đúng 2 giây, và chỉ khi đang mở một trạm. `inFlight` là biến cục bộ của
   // từng lần chạy effect nên đổi trạm là reset sạch, không có cờ dùng chung để
@@ -898,8 +957,8 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   }, [openStationId, sessionExpired])
 
   const station = useMemo(
-    () => stations.find((item) => item.station_id === openStationId) || null,
-    [stations, openStationId],
+    () => withReplayState(stations.find((item) => item.station_id === openStationId) || null, stationState),
+    [stations, openStationId, stationState],
   )
 
   // Mốc hết khoá 10 giây, tính từ `entered_at` của phiên chứ không phải từ lúc
@@ -950,9 +1009,10 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   // Once a re-entry actually lands (a fresh active session), disarm — otherwise
   // the next checkout would auto-show the entry QR again and reopen the loop.
   const sessionStatus = stationState?.session?.status
+  const replayAllowed = canReplay(station)
   useEffect(() => {
-    if (sessionStatus === 'active') setReplayArmed(false)
-  }, [sessionStatus])
+    if (sessionStatus === 'active' || !replayAllowed) setReplayArmed(false)
+  }, [sessionStatus, replayAllowed])
 
   const openStation = (stationId) => {
     // Không mang theo payload của trạm cũ: QR xoay sau mỗi lần quét nên một mã
@@ -987,12 +1047,17 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
       ? 'relative w-full'
       : 'relative mx-auto w-full max-w-2xl px-4 pb-20 pt-3 sm:px-6'}
     >
-      <nav aria-label="Chạy trạm" className="mb-5 flex gap-2 border-b border-stone pb-3">
-        {[['stations', 'Làm bài ở trạm'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => setView(key)} aria-current={view === key ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${view === key ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
+      <nav aria-label="Chạy trạm" className="mb-5 flex flex-wrap gap-2 border-b border-stone pb-3">
+        {[['stations', 'Làm bài ở trạm'], ['attendance', 'Điểm danh sự kiện'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => setView(key)} aria-current={view === key ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${view === key ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
       </nav>
-      {view === 'history' ? <QuestionHistory /> : sessionExpired ? (
-          <SessionExpiredCard />
-        ) : openStationId == null ? (
+      {sessionExpired ? <SessionExpiredCard /> : view === 'history' ? <QuestionHistory /> : view === 'attendance' ? (
+        <AttendanceCheckinPanel
+          data={attendance}
+          loading={attendanceLoading}
+          error={attendanceError}
+          onRefresh={() => loadAttendance({ clear: true })}
+        />
+      ) : openStationId == null ? (
           <StationListScreen
             payload={listPayload}
             loading={listLoading}
@@ -1028,7 +1093,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   if (embedded) {
     return (
       <>
-        {view !== 'history' && <InvisibleWatermark text={listPayload?.team_code} />}
+        {view === 'stations' && <InvisibleWatermark text={listPayload?.team_code} />}
         {body}
       </>
     )

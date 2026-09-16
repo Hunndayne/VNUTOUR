@@ -2,26 +2,29 @@
 Station views — config CRUD + session enter/exit (§9.5, §9.7).
 """
 
+from django.db import transaction
 from django.db.models import F
 from django.http import JsonResponse, HttpRequest
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, Station, SubEvent, StationSession, StationAssignment, StationSubmission
+from api.models import Account, Station, StationSession, StationAssignment, StationSubmission
 from api.services.station_service import (
     create_station, update_station, delete_station,
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
     enter_station, exit_station, list_recent_sessions, set_session_score,
-    set_submission_score,
+    set_submission_score, _lock_attempt_scope,
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from api.services.submission_config_service import normalize_config, public_config
 from api.services.audit_service import record_audit
 from api.services import scan_token_service
 from api.services.assignment_service import is_collab_assigned
-from api.services.checkin_service import scan_event_checkin
+from api.services.checkin_service import scan_event_checkin, checkout_event
+from api.services.attendance_service import checkin_response
 from api.services.program_service import get_current_sub_event
-from .views_shared import _json_body, _auth_or_401, _require_role, _require_master_admin, is_admin
+from api.services.result_lock_service import results_are_locked
+from .views_shared import _json_body, _require_role, _require_master_admin, is_admin
 
 
 def _stored_submission_config(config):
@@ -74,7 +77,25 @@ def _station_scoring_dict(s: Station) -> dict:
         "scoring_mode": s.scoring_mode,
         "pass_threshold": s.pass_threshold,
         "pass_points": s.pass_points,
+        "max_attempts": s.max_attempts,
     }
+
+
+def _clean_max_attempts(data: dict, required: bool = False):
+    if not required and "max_attempts" not in data:
+        return {}, None
+    value = data.get("max_attempts")
+    if value in (None, ""):
+        return {"max_attempts": None}, None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return {}, "invalid_max_attempts"
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return {}, "invalid_max_attempts"
+    if parsed < 1 or parsed > 2147483647:
+        return {}, "invalid_max_attempts"
+    return {"max_attempts": parsed}, None
 
 
 @csrf_exempt
@@ -197,6 +218,7 @@ def _checkout_submission(session):
 
 
 @csrf_exempt
+@transaction.atomic
 def submission_grade_view(request: HttpRequest, submission_id: int):
     """PATCH: chấm bài nộp (admin, hoặc collab được phân công trạm của bài nộp đó)."""
     acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
@@ -215,6 +237,11 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
     ).filter(id=submission_id).first()
     if not submission:
         return JsonResponse({"error": "submission_not_found"}, status=404)
+
+    _lock_attempt_scope(submission.team_id, submission.station_id)
+    submission.refresh_from_db()
+    if results_are_locked():
+        return JsonResponse({"error": "results_locked"}, status=409)
 
     if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
         collab=acc, station=submission.station, active=True,
@@ -237,6 +264,31 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
         submission.is_correct = data.get("is_correct")
     submission.save()
 
+    # In pass/fail mode the explicit correct/incorrect verdict is the session
+    # outcome.  Keeping those in sync makes replay rights update immediately
+    # after a coop regrades either direction.
+    if (
+        submission.station_session_id
+        and submission.station.scoring_mode == Station.SCORING_PASS_FAIL
+        and isinstance(submission.is_correct, bool)
+    ):
+        updated, sync_error = set_session_score(
+            submission.station_session_id,
+            acc,
+            outcome=(
+                StationSession.OUTCOME_PASSED
+                if submission.is_correct
+                else StationSession.OUTCOME_FAILED
+            ),
+            note=data.get("note"),
+        )
+        if sync_error:
+            # Returning does not roll back @atomic; undo the submission save too.
+            transaction.set_rollback(True)
+            status = 409 if sync_error == "results_locked" else 400
+            return JsonResponse({"error": sync_error}, status=status)
+
+    submission.refresh_from_db()
     return JsonResponse(_serialize_submission(submission, presign=False))
 
 
@@ -271,9 +323,11 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
                 "id": s.id, "code": s.code, "name": s.name,
                 "location": s.location, "order": s.order,
                 "active": s.active,
+                "kind": s.kind,
                 "checkin_policy": s.checkin_policy,
                 "capacity_mode": s.capacity_mode,
                 "max_concurrent_teams": s.max_concurrent_teams,
+                "max_attempts": s.max_attempts,
                 "submission_config": station_config(s),
                 **_station_scoring_dict(s),
             }
@@ -304,6 +358,12 @@ def station_create_view(request: HttpRequest, event_id: int):
     scoring_kwargs, err = _clean_scoring_kwargs(data, require_defaults=True)
     if err:
         return JsonResponse({"error": err}, status=400)
+    attempt_kwargs, err = _clean_max_attempts(data, required=True)
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    kind = data.get("kind", Station.KIND_PLAY)
+    if kind not in dict(Station.KIND_CHOICES):
+        return JsonResponse({"error": "invalid_kind"}, status=400)
 
     cfg = _stored_submission_config(data.get("submission_config"))
     if cfg and "bank" in cfg and cfg["bank"].get("itemIds"):
@@ -320,11 +380,13 @@ def station_create_view(request: HttpRequest, event_id: int):
             location=data.get("location"),
             order=data.get("order", 0),
             active=data.get("active", True),
+            kind=kind,
             checkin_policy=data.get("checkin_policy", "staff_scan"),
             capacity_mode=data.get("capacity_mode", "unlimited"),
             max_concurrent_teams=data.get("max_concurrent_teams"),
             submission_config=cfg,
             **scoring_kwargs,
+            **attempt_kwargs,
         )
     except ValueError as exc:
         if str(exc) == "duplicate_station_code":
@@ -353,10 +415,17 @@ def station_detail_view(request: HttpRequest, station_id: int):
                   "capacity_mode", "max_concurrent_teams", "submission_config"):
             if f in data:
                 kwargs[f] = data[f]
+        if "kind" in data:
+            if data["kind"] not in dict(Station.KIND_CHOICES):
+                return JsonResponse({"error": "invalid_kind"}, status=400)
+            kwargs["kind"] = data["kind"]
         if "submission_config" in kwargs:
             cfg = _stored_submission_config(kwargs["submission_config"])
             if cfg and "bank" in cfg and cfg["bank"].get("itemIds"):
-                from api.models import QuestionBankItem, Station
+                # Import only what is not already module-level: re-importing
+                # Station here would make it a local for the whole function and
+                # break the `kind` check above with UnboundLocalError.
+                from api.models import QuestionBankItem
                 # We need the station's sub_event_id
                 st = Station.objects.get(id=station_id)
                 valid_ids = list(QuestionBankItem.objects.filter(
@@ -370,6 +439,10 @@ def station_detail_view(request: HttpRequest, station_id: int):
         if err:
             return JsonResponse({"error": err}, status=400)
         kwargs.update(scoring_kwargs)
+        attempt_kwargs, err = _clean_max_attempts(data)
+        if err:
+            return JsonResponse({"error": err}, status=400)
+        kwargs.update(attempt_kwargs)
         station = update_station(station_id, **kwargs)
         return JsonResponse({
             "id": station.id, "code": station.code, "name": station.name,
@@ -448,6 +521,12 @@ def station_enter_view(request: HttpRequest):
             "checkin_qr_phase_mismatch": 403,
             "replay_locked_incomplete": 409,
             "replay_locked_passed": 409,
+            "replay_locked_attempts_exhausted": 409,
+            "replay_locked_pending_result": 409,
+            "event_not_checked_in": 409,
+            "event_insufficient_checkin": 409,
+            "team_checked_out": 409,
+            "station_not_playable": 400,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
@@ -570,16 +649,12 @@ def station_scan_view(request: HttpRequest):
                 "already_checked_in": 409, "event_not_found": 404,
                 "phase_not_found": 404, "team_not_in_phase": 403,
                 "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
+                "personal_qr_required": 400, "invalid_personal_qr": 400,
+                "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+                "team_checked_out": 409,
             }
             return JsonResponse({"error": err}, status=status_map.get(err, 400))
-        return JsonResponse({
-            "kind": "event",
-            "id": checkin.id,
-            "team_code": checkin.team.code,
-            "team_name": checkin.team.name,
-            "event_name": checkin.sub_event.name,
-            "checked_in_at": checkin.created_at.isoformat(),
-        }, status=201)
+        return JsonResponse(checkin_response(checkin), status=201)
 
     # ── Station QR: the code names the station and the direction ─────────
     station = Station.objects.select_related("sub_event__phase").filter(id=station_id).first()
@@ -589,6 +664,58 @@ def station_scan_view(request: HttpRequest):
     # Only a coop posted to this station may scan it; admins scan anywhere.
     if not is_admin(acc) and not is_collab_assigned(acc.id, station.id):
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    # -- Gate stations: check-in / checkout record the team at the event --
+    if station.kind == Station.KIND_CHECKIN:
+        checkin, err = scan_event_checkin(
+            qr_token=token,
+            phase_key=station.sub_event.phase.key,
+            event_id=station.sub_event_id,
+            scanner=acc,
+            ip=request.META.get("REMOTE_ADDR"),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
+        )
+        if err:
+            status_map = {
+                "team_not_found": 404, "qr_already_used": 409, "team_not_approved": 403,
+                "already_checked_in": 409, "event_not_found": 404,
+                "phase_not_found": 404, "team_not_in_phase": 403,
+                "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
+                "personal_qr_required": 400, "invalid_personal_qr": 400,
+                "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+                "team_checked_out": 409,
+            }
+            return JsonResponse({"error": err}, status=status_map.get(err, 400))
+        response = checkin_response(checkin)
+        response["station_name"] = station.name
+        return JsonResponse(response, status=201)
+    if station.kind == Station.KIND_CHECKOUT:
+        checkin, err = checkout_event(token, station, acc)
+        if err:
+            status_map = {
+                "team_not_found": 404, "qr_already_used": 409, "team_not_approved": 403,
+                "event_not_checked_in": 409, "already_checked_out": 409,
+                "session_already_active": 409, "team_not_in_phase": 403,
+            }
+            return JsonResponse({"error": err}, status=status_map.get(err, 400))
+        record_audit(
+            actor=acc,
+            action="checkin.checkout",
+            summary=f"Team {checkin.team.code} checkout at {station.code}",
+            target_type="EventCheckIn",
+            target_id=checkin.id,
+            after_data={"checked_out_at": checkin.checked_out_at.isoformat()},
+            reversible=True,
+        )
+        return JsonResponse({
+            "kind": "checkout",
+            "id": checkin.id,
+            "team_code": checkin.team.code,
+            "team_name": checkin.team.name,
+            "event_name": station.sub_event.name,
+            "station_name": station.name,
+            "checked_out_at": checkin.checked_out_at.isoformat(),
+        }, status=201)
 
     is_exit = direction == "out"
     if is_exit:
@@ -617,6 +744,9 @@ def station_scan_view(request: HttpRequest):
             "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
             "session_not_found": 404,
             "replay_locked_incomplete": 409, "replay_locked_passed": 409,
+            "replay_locked_attempts_exhausted": 409, "replay_locked_pending_result": 409,
+            "event_not_checked_in": 409, "event_insufficient_checkin": 409,
+            "team_checked_out": 409, "station_not_playable": 400,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 

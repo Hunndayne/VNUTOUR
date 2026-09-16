@@ -4,6 +4,7 @@ import { FIXED_PHASES, SUB_EVENT_TYPE_META, createSubEvent, getPhaseInfo } from 
 import { buildUrl, navigate, useLocation, useSearchParam } from './router.js'
 import { DraftNotice, useDraftState } from './drafts.jsx'
 import QuestionBankPanel from './QuestionBankPanel.jsx'
+import { normalizeMinCheckinMembers } from './attendanceCheckin.js'
 
 const PHASE_KEYS = FIXED_PHASES.map(phase => phase.key)
 
@@ -202,10 +203,15 @@ function SubEventEditor({ initialEvent, submitLabel, onSave, onCancel, canEdit, 
       setError('Event cần có tên trước khi lưu.')
       return
     }
+    if (form.requireCheckin && form.checkinMode === 'individual' && (!Number.isInteger(Number(form.minCheckinMembers)) || Number(form.minCheckinMembers) < 1)) {
+      setError('Số thành viên tối thiểu để vào trạm phải là số nguyên từ 1 trở lên.')
+      return
+    }
     onSave({
       ...form,
       name: form.name.trim(),
       note: form.note.trim(),
+      minCheckinMembers: normalizeMinCheckinMembers(form.minCheckinMembers),
     })
     // Đã lưu lên server nên không còn gì để khôi phục nữa.
     draft.clear()
@@ -285,6 +291,76 @@ function SubEventEditor({ initialEvent, submitLabel, onSave, onCancel, canEdit, 
                 </span>
               </span>
             </label>
+            <label className="mt-3 flex items-start gap-2 text-sm text-ink/65">
+              <input
+                type="checkbox"
+                checked={Boolean(form.replayAfterPass)}
+                disabled={!canEdit}
+                onChange={(event) => set('replayAfterPass', event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20 disabled:cursor-not-allowed disabled:opacity-40"
+              />
+              <span>
+                Đã đạt trạm vẫn được chơi tiếp các lượt còn lại
+                <span className="mt-0.5 block text-xs font-normal text-ink/40">
+                  Tắt: đội đạt trạm là khoá. Bật: chỉ khoá khi hết lượt, điểm giữ lượt cao nhất.
+                </span>
+              </span>
+            </label>
+            <label className="mt-3 flex items-start gap-2 text-sm text-ink/65">
+              <input
+                type="checkbox"
+                checked={Boolean(form.requireCheckin)}
+                disabled={!canEdit}
+                onChange={(event) => set('requireCheckin', event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20 disabled:cursor-not-allowed disabled:opacity-40"
+              />
+              <span>
+                Bắt buộc check-in trước khi vào trạm
+                <span className="mt-0.5 block text-xs font-normal text-ink/40">
+                  Đội phải quét ở trạm check-in (hoặc cổng sự kiện) rồi mới được vào các trạm chơi.
+                </span>
+              </span>
+            </label>
+            {(
+              <div className="mt-3 max-w-sm">
+                <label className={FIELD_LABEL} htmlFor="event-checkin-mode">Cách check-in sự kiện</label>
+                <select
+                  id="event-checkin-mode"
+                  value={form.checkinMode === 'individual' ? 'individual' : 'team'}
+                  disabled={!canEdit}
+                  onChange={(event) => set('checkinMode', event.target.value)}
+                  className={FIELD_INPUT}
+                >
+                  <option value="team">Theo đội (một QR đội)</option>
+                  <option value="individual">Theo từng thành viên (QR riêng)</option>
+                </select>
+                <p className="mt-1.5 text-xs leading-5 text-ink/40">
+                  Chế độ theo đội dùng QR đội như trước. Chế độ từng thành viên chỉ ghi nhận người đang có QR.
+                </p>
+              </div>
+            )}
+            {form.requireCheckin && form.checkinMode === 'individual' && (
+              <div className="mt-3 max-w-sm">
+                <label className={FIELD_LABEL} htmlFor="event-min-checkin-members">
+                  Số thành viên check-in tối thiểu để vào trạm
+                </label>
+                <input
+                  id="event-min-checkin-members"
+                  type="number"
+                  min="1"
+                  max="2147483647"
+                  step="1"
+                  inputMode="numeric"
+                  value={form.minCheckinMembers ?? 1}
+                  disabled={!canEdit}
+                  onChange={(event) => set('minCheckinMembers', event.target.value)}
+                  className={FIELD_INPUT}
+                />
+                <p className="mt-1.5 text-xs leading-5 text-ink/40">
+                  Mỗi thành viên có QR riêng. Khi đủ X người đã check-in sự kiện, đội mới được vào trạm.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -499,6 +575,10 @@ function EventManagementPage({
                   // adminProgram.js createSubEvent() chưa mang field này (không được sửa
                   // ở đây) — thêm tay để form luật chơi lại có chỗ bám.
                   replayAfterAll: false,
+                  replayAfterPass: false,
+                  requireCheckin: false,
+                  checkinMode: 'team',
+                  minCheckinMembers: 1,
                 }}
                 submitLabel="Tạo event"
                 onSave={(draft) => {
@@ -519,6 +599,18 @@ function EventManagementPage({
                   replayAfterAll: selectedSubEvent.replay_after_all
                     ?? selectedSubEvent.replayAfterAll
                     ?? false,
+                  replayAfterPass: selectedSubEvent.replay_after_pass
+                    ?? selectedSubEvent.replayAfterPass
+                    ?? false,
+                  requireCheckin: selectedSubEvent.require_checkin
+                    ?? selectedSubEvent.requireCheckin
+                    ?? false,
+                  checkinMode: selectedSubEvent.checkin_mode === 'individual' || selectedSubEvent.checkinMode === 'individual'
+                    ? 'individual'
+                    : 'team',
+                  minCheckinMembers: normalizeMinCheckinMembers(
+                    selectedSubEvent.min_checkin_members ?? selectedSubEvent.minCheckinMembers,
+                  ),
                 }}
                 submitLabel="Lưu event"
                 onSave={(draft) => {

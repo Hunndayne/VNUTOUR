@@ -166,6 +166,16 @@ def _limits(config: dict) -> dict:
         duration_minutes = max(0, int(limits.get("durationMinutes") or 0))
     except (TypeError, ValueError):
         duration_minutes = 0
+    # Seconds are the source of truth; configs saved before seconds existed
+    # only carry minutes.
+    try:
+        raw_seconds = limits.get("durationSeconds")
+        duration_seconds = (
+            max(0, int(raw_seconds)) if raw_seconds not in (None, "") else duration_minutes * 60
+        )
+    except (TypeError, ValueError):
+        duration_seconds = duration_minutes * 60
+    duration_minutes = duration_seconds // 60
 
     return {
         "maxSubmissions": max_submissions,
@@ -174,6 +184,7 @@ def _limits(config: dict) -> dict:
         "opensAt": _clean_str(limits.get("opensAt")),
         "closesAt": _clean_str(limits.get("closesAt")),
         "durationMinutes": duration_minutes,
+        "durationSeconds": duration_seconds,
     }
 
 

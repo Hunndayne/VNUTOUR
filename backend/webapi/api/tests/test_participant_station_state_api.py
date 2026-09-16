@@ -22,7 +22,9 @@ from api.services.auth_service import generate_session
 # Four of the eight decide whether the per-station QR is live: there is no global
 # BTC toggle any more, so visibility is "a sub-event is running and this team is
 # eligible for this live station" — settled here in one roster query.
-EXPECTED_POLL_QUERIES = 8
+# Four additional batched reads refresh replay rights; count stays independent
+# of the number of stations (the second cost test guards against N+1 queries).
+EXPECTED_POLL_QUERIES = 12
 
 
 class StationStateTestBase(TestCase):

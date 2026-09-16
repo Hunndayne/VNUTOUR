@@ -105,6 +105,9 @@ class StationAnswerReviewTests(FormsApiTestBase):
         self.session.delete()
         self.station.checkin_policy = Station.POLICY_FREE_PLAY
         self.station.save()
+        started = self.client.post(f'/api/my-team/forms/{self.station.id}/start',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(started.status_code, 200, started.content)
         self.submit_answers()
         self.assertTrue(self.history()[0]["review"]["available"])
         response = self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]}})

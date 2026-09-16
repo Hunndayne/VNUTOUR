@@ -15,6 +15,7 @@ from api.models import (
 )
 from .views_shared import _json_body, _auth_or_401, _require_role, is_admin
 from api.services.audit_service import record_audit
+from api.services.attendance_service import recorded_checkins
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def overview_view(request: HttpRequest):
             phase = ProgramPhase.objects.get(key=phase_key)
             events = SubEvent.objects.filter(phase=phase)
             for event in events:
-                checkins = EventCheckIn.objects.filter(
+                checkins = recorded_checkins().filter(
                     sub_event=event, status=EventCheckIn.STATUS_ACTIVE,
                 ).count()
                 sessions = StationSession.objects.filter(
@@ -95,7 +96,7 @@ def activity_view(request: HttpRequest):
         return err
 
     # Recent checkins
-    recent_checkins = EventCheckIn.objects.select_related("team", "sub_event").order_by(
+    recent_checkins = recorded_checkins().select_related("team", "sub_event").order_by(
         "-created_at",
     )[:10]
 

@@ -194,9 +194,9 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         self.assertFalse(ScoreEntry.objects.filter(team=self.team).exists())
 
     def test_submit_with_auto_score_writes_score_entry(self):
-        # Submission-keyed autoScore is the free-play path (no station session):
-        # the ScoreEntry is pinned to the submission and re-scoring updates it in
-        # place. Scan-gated stations score through the session best-of instead.
+        # Free-play now starts a tracked attempt and uses the same best-score
+        # aggregation as scan-gated stations. Edits before review release stay
+        # on that attempt; a zero result removes its score entry.
         self.session.delete()
         self.station.checkin_policy = Station.POLICY_FREE_PLAY
         self.station.submission_config = {
@@ -212,6 +212,10 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         }
         self.station.save()
 
+        started = self.client.post(f'/api/my-team/forms/{self.station.id}/start',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(started.status_code, 200, started.content)
+
         response = self._submit({
             "response_payload": {"quiz": [{"id": "q1", "selectedOption": 1}]},
         })
@@ -224,12 +228,13 @@ class ParticipantFormsApiTests(FormsApiTestBase):
         self.assertEqual(entry.kind, ScoreEntry.KIND_STATION)
 
         # Nộp lại với đáp án sai: cùng entry được cập nhật về 0, không nhân đôi
-        self._submit({
+        updated = self._submit({
             "response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]},
         })
+        self.assertEqual(updated.status_code, 201, updated.content)
         entries = ScoreEntry.objects.filter(team=self.team)
-        self.assertEqual(entries.count(), 1)
-        self.assertEqual(entries.first().points, 0)
+        self.assertEqual(entries.count(), 0)
+        self.assertEqual(StationSubmission.objects.filter(team=self.team).count(), 1)
 
     def test_scan_gated_submit_requires_active_checkin(self):
         # No coop scan (no active session) => the form cannot be submitted.

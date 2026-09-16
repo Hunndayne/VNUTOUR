@@ -312,6 +312,12 @@ class ProgramPhase(models.Model):
 # =====================================================================
 
 class SubEvent(models.Model):
+    CHECKIN_TEAM = "team"
+    CHECKIN_INDIVIDUAL = "individual"
+    CHECKIN_MODE_CHOICES = [
+        (CHECKIN_TEAM, "Team"),
+        (CHECKIN_INDIVIDUAL, "Individual"),
+    ]
     TYPE_WORKFLOW = "workflow"
     TYPE_SOCIAL = "social"
     TYPE_STATION_RUN = "station_run"
@@ -345,12 +351,26 @@ class SubEvent(models.Model):
     # that station. Off by default so every other event keeps today's
     # unlimited-replay behaviour.
     replay_after_all = models.BooleanField(default=False)
+    # Thể lệ vòng loại 2026: a team that already passed may still spend its
+    # remaining attempts. Off keeps the historical "passed locks replay" rule.
+    replay_after_pass = models.BooleanField(default=False)
+    # When on, a team must be checked in at the event (check-in station or the
+    # event gate) before any play station accepts it.
+    require_checkin = models.BooleanField(default=False)
+    checkin_mode = models.CharField(
+        max_length=10, choices=CHECKIN_MODE_CHOICES, default=CHECKIN_TEAM,
+    )
+    min_checkin_members = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "sub_event"
         ordering = ["phase", "order"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(min_checkin_members__gte=1),
+                                   name="subevent_min_checkin_members_positive"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.phase.key})"
@@ -459,9 +479,21 @@ class Station(models.Model):
         (SCORING_SCORE_ONLY, "Chỉ nhập điểm"),
     ]
 
+    # A check-in/checkout station only records the team's arrival/finish at the
+    # event; it is never part of the play journey.
+    KIND_PLAY = "play"
+    KIND_CHECKIN = "checkin"
+    KIND_CHECKOUT = "checkout"
+    KIND_CHOICES = [
+        (KIND_PLAY, "Trạm chơi"),
+        (KIND_CHECKIN, "Trạm check-in"),
+        (KIND_CHECKOUT, "Trạm checkout"),
+    ]
+
     sub_event = models.ForeignKey(
         SubEvent, on_delete=models.CASCADE, related_name="stations",
     )
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=KIND_PLAY)
     code = models.CharField(max_length=50)
     name = models.CharField(max_length=255)
     location = models.CharField(max_length=255, null=True, blank=True)
@@ -480,6 +512,9 @@ class Station(models.Model):
     )
     pass_threshold = models.IntegerField(default=0)
     pass_points = models.IntegerField(default=0)
+    # Total plays allowed for one team at this station.  None preserves the
+    # historical unlimited-attempt behaviour; 1 means the initial play only.
+    max_attempts = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -488,6 +523,10 @@ class Station(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["sub_event", "code"], name="uq_station_event_code",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_attempts__isnull=True) | models.Q(max_attempts__gte=1),
+                name="ck_station_max_attempts_positive",
             ),
         ]
         ordering = ["sub_event", "order"]
@@ -558,6 +597,15 @@ class EventCheckIn(models.Model):
     ip = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.TextField(null=True, blank=True)
     meta = models.JSONField(null=True, blank=True)
+    checked_out_at = models.DateTimeField(null=True, blank=True)
+    checked_out_by = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="scanned_checkouts",
+    )
+    checkout_station = models.ForeignKey(
+        "Station", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="checkouts",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -578,6 +626,20 @@ class EventCheckIn(models.Model):
 # =====================================================================
 # 11. StationSession
 # =====================================================================
+
+class EventAttendance(models.Model):
+    """One person actually scanned at an event; team headers alone are not attendance."""
+    checkin = models.ForeignKey(EventCheckIn, on_delete=models.CASCADE, related_name="attendances")
+    participant = models.ForeignKey(Participant, on_delete=models.PROTECT, related_name="event_attendances")
+    scanner = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, related_name="scanned_attendances")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "event_attendance"
+        constraints = [
+            models.UniqueConstraint(fields=["checkin", "participant"], name="uq_checkin_participant"),
+        ]
+
 
 class StationSession(models.Model):
     STATUS_ACTIVE = "active"

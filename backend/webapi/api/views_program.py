@@ -148,6 +148,10 @@ def sub_event_create_view(request: HttpRequest, phase_key: str):
             end_date=data.get("end_date") or None,
             uses_stations=bool(data.get("uses_stations")),
             replay_after_all=bool(data.get("replay_after_all")),
+            replay_after_pass=bool(data.get("replay_after_pass")),
+            require_checkin=bool(data.get("require_checkin")),
+            checkin_mode=data.get("checkin_mode", SubEvent.CHECKIN_TEAM),
+            min_checkin_members=data.get("min_checkin_members", 1),
             note=data.get("note"),
             order=data.get("order", 0),
         )
@@ -155,9 +159,17 @@ def sub_event_create_view(request: HttpRequest, phase_key: str):
             "id": se.id, "phase_key": phase_key, "name": se.name,
             "type": se.type, "uses_stations": se.uses_stations,
             "replay_after_all": se.replay_after_all,
+            "replay_after_pass": se.replay_after_pass,
+            "require_checkin": se.require_checkin,
+            "checkin_mode": se.checkin_mode,
+            "min_checkin_members": se.min_checkin_members,
         }, status=201)
     except ProgramPhase.DoesNotExist:
         return JsonResponse({"error": "phase_not_found"}, status=404)
+    except ValueError as exc:
+        if str(exc) in {"invalid_checkin_mode", "invalid_min_checkin_members"}:
+            return JsonResponse({"error": str(exc)}, status=400)
+        raise
 
 
 @csrf_exempt
@@ -175,7 +187,9 @@ def sub_event_detail_view(request: HttpRequest, event_id: int):
         try:
             kwargs = {}
             for f in ("name", "type", "start_date", "end_date", "uses_stations",
-                      "replay_after_all", "note", "order"):
+                      "replay_after_all", "replay_after_pass", "require_checkin",
+                      "checkin_mode", "min_checkin_members",
+                      "note", "order"):
                 if f in data:
                     kwargs[f] = data[f]
             se = update_sub_event(event_id, **kwargs)
@@ -183,12 +197,16 @@ def sub_event_detail_view(request: HttpRequest, event_id: int):
                 "id": se.id, "name": se.name, "type": se.type,
                 "uses_stations": se.uses_stations,
                 "replay_after_all": se.replay_after_all,
+                "replay_after_pass": se.replay_after_pass,
+                "require_checkin": se.require_checkin,
+                "checkin_mode": se.checkin_mode,
+                "min_checkin_members": se.min_checkin_members,
             })
         except SubEvent.DoesNotExist:
             return JsonResponse({"error": "not_found"}, status=404)
         except ValueError as exc:
-            if str(exc) == "missing_name":
-                return JsonResponse({"error": "missing_name"}, status=400)
+            if str(exc) in {"missing_name", "invalid_checkin_mode", "invalid_min_checkin_members"}:
+                return JsonResponse({"error": str(exc)}, status=400)
             raise
 
     if request.method == "DELETE":
