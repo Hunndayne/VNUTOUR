@@ -31,10 +31,11 @@ resources:
 components:
   - ../../components/prod-config
   - ../../components/backend-ops
-  - ../../components/images
   - ../../components/db-patroni
   - ../../components/failover-workloads
   - ../../components/site-failover
+  # Set image tags after all workloads are added, including bot and email-worker.
+  - ../../components/images
 
 patches:
   # A replica must NOT run Django migrations — it is read-only and receives all
