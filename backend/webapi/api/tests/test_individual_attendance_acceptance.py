@@ -13,7 +13,7 @@ from api.services.auth_service import generate_session
 from api.tests.test_station_journey_replay import StationJourneyTestBase
 
 
-class IndividualAttendanceAcceptanceTests(StationJourneyTestBase):
+class IndividualAttendanceTestBase(StationJourneyTestBase):
     def setUp(self):
         super().setUp()
         self.event.require_checkin = True
@@ -56,6 +56,8 @@ class IndividualAttendanceAcceptanceTests(StationJourneyTestBase):
     def _scan(self, code):
         return self._request(self.admin, "/api/station-scan", {"code": code})
 
+
+class IndividualAttendanceAcceptanceTests(IndividualAttendanceTestBase):
     def test_distinct_personal_scans_unlock_only_their_team_at_threshold(self):
         qa, qb, qc = [self._qr(account) for account in (self.a, self.b, self.c)]
         self.assertNotEqual(qa["payload"], qb["payload"])
@@ -187,18 +189,14 @@ class IndividualAttendanceAcceptanceTests(StationJourneyTestBase):
         self.assertEqual(self._request(self.admin, "/api/my/checkin-qr").status_code, 403)
         self.assertEqual(EventAttendance.objects.count(), 0)
 
-    def test_forged_stale_disabled_or_wrong_mode_qrs_cannot_record_presence(self):
+    def test_forged_rotated_or_wrong_mode_qrs_cannot_record_presence(self):
         code = self._qr(self.a)["payload"]
         self.assertEqual(self._scan(code + "tampered").status_code, 400)
         self.assertEqual(self._scan(self.team.code).json()["error"], "personal_qr_required")
         SystemSetting.objects.filter(key="checkin_qr").update(value={
             "enabled": False, "phase_key": self.phase.key, "rotated_at": "new",
         })
-        self.assertFalse(self._qr(self.a)["enabled"])
-        self.assertEqual(self._scan(code).json()["error"], "checkin_qr_disabled")
-        SystemSetting.objects.filter(key="checkin_qr").update(value={
-            "enabled": True, "phase_key": self.phase.key, "rotated_at": "new",
-        })
+        self.assertTrue(self._qr(self.a)["enabled"])
         self.assertEqual(self._scan(code).json()["error"], "invalid_personal_qr")
         self.assertEqual(EventAttendance.objects.count(), 0)
 

@@ -21,7 +21,7 @@ from .views_shared import _json_body, _auth_or_401, _require_role
 
 @csrf_exempt
 def checkin_qr_view(request: HttpRequest):
-    """GET: current QR check-in toggle state. POST: bật/tắt (admin) + xoay token."""
+    """GET: event QR availability. POST: legacy optional token rotation."""
     acc, err = _require_role(request, Account.ROLE_ADMIN)
     if err:
         return err
@@ -64,10 +64,9 @@ def my_checkin_qr_view(request: HttpRequest):
 
     team = membership.team
     state = attendance_state(team, event, participant.id)
-    toggle = get_checkin_qr_state()
     roster_allowed = team_eligible_for_event(team, event)
     enabled = bool(
-        toggle["enabled"] and toggle.get("phase_key") == event.phase.key and roster_allowed and
+        roster_allowed and
         team.approval_status == team.APPROVAL_APPROVED and not state["checked_in"] and
         not state["checked_out"]
     )
@@ -142,6 +141,7 @@ def event_checkin_scan_view(request: HttpRequest):
             "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
             "personal_qr_required": 400, "invalid_personal_qr": 400,
             "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+            "no_current_event": 409,
             "team_checked_out": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
@@ -318,6 +318,7 @@ def checkin_legacy_view(request: HttpRequest):
             "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
             "personal_qr_required": 400, "invalid_personal_qr": 400,
             "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+            "no_current_event": 409,
             "team_checked_out": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))

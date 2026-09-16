@@ -49,10 +49,6 @@ def resolve_personal_qr(code, event):
     except signing.BadSignature:
         return None, "invalid_personal_qr"
     state = get_checkin_qr_state()
-    if not state["enabled"]:
-        return None, "checkin_qr_disabled"
-    if state["phase_key"] != event.phase.key:
-        return None, "checkin_qr_phase_mismatch"
     if payload.get("event_id") != event.id:
         return None, "checkin_qr_event_mismatch"
     if payload.get("epoch") != state["rotated_at"]:

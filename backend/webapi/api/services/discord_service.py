@@ -539,7 +539,7 @@ def get_bot_runtime_status() -> dict:
 
 
 def get_qr_delivery_payloads() -> dict:
-    """Return QR payloads currently allowed by the web's QR toggle."""
+    """Return team QR payloads while an event is running."""
     from api.services.checkin_qr_service import get_checkin_qr_state
     from api.services.program_service import get_current_phase
 

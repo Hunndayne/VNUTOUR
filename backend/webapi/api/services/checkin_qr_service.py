@@ -1,9 +1,8 @@
 """
-Check-in QR service — admin toggle + per-phase token rotation.
+Check-in QR availability follows the running event.
 
-Mỗi đội có một qr_token dùng cho mọi trạm. Admin "bật" điểm danh sẽ xoay token
-cho toàn bộ đội trong roster của phase hiện tại (mỗi lần bật là một QR khác nhau,
-ảnh QR cũ hết hiệu lực). QR chỉ hiển thị cho đội thuộc phase hiện tại.
+The legacy admin endpoint can still rotate tokens, but its saved enabled/phase
+flags no longer control attendance.
 """
 
 from __future__ import annotations
@@ -11,21 +10,22 @@ from __future__ import annotations
 from django.utils import timezone
 
 from api.models import SystemSetting, PhaseRoster, Team
-from api.services.program_service import get_current_phase
+from api.services.program_service import get_current_phase, get_current_sub_event
 from api.services.team_service import rotate_qr_token
 
 CHECKIN_QR_KEY = "checkin_qr"
 
 
 def get_checkin_qr_state() -> dict:
-    """Return current toggle state: {enabled, phase_key, rotated_at}."""
+    """Return event availability and the optional token rotation epoch."""
     setting = SystemSetting.objects.filter(key=CHECKIN_QR_KEY).first()
     value = setting.value if setting else None
     if not isinstance(value, dict):
         value = {}
+    event = get_current_sub_event()
     return {
-        "enabled": bool(value.get("enabled")),
-        "phase_key": value.get("phase_key") or None,
+        "enabled": event is not None,
+        "phase_key": event.phase.key if event else None,
         "rotated_at": value.get("rotated_at") or None,
     }
 
@@ -35,16 +35,14 @@ def _save_state(state: dict) -> None:
 
 
 def set_checkin_qr(enabled: bool):
-    """Toggle the team check-in QR.
+    """Compatibility endpoint for optional token rotation.
 
     On enable: rotate qr_token for every approved team in the current phase roster.
+    Disabling is a no-op: only closing the event closes attendance.
     Returns (state, rotated_count, error_code).
     """
     if not enabled:
-        state = get_checkin_qr_state()
-        state["enabled"] = False
-        _save_state(state)
-        return state, 0, None
+        return get_checkin_qr_state(), 0, None
 
     phase = get_current_phase()
     if not phase:
@@ -64,17 +62,12 @@ def set_checkin_qr(enabled: bool):
         "rotated_at": timezone.now().isoformat(),
     }
     _save_state(state)
-    return state, rotated, None
+    return get_checkin_qr_state(), rotated, None
 
 
 def team_qr_visible(team) -> bool:
-    """QR is visible only when enabled AND the team is in the current phase roster."""
-    state = get_checkin_qr_state()
-    if not state["enabled"]:
-        return False
-    phase = get_current_phase()
-    if not phase:
-        return False
-    if state.get("phase_key") and state["phase_key"] != phase.key:
-        return False
-    return PhaseRoster.objects.filter(phase=phase, team=team).exists()
+    """Use the running event and the same roster rule as attendance scans."""
+    from api.services.attendance_service import team_eligible_for_event
+
+    event = get_current_sub_event()
+    return bool(event and team_eligible_for_event(team, event))

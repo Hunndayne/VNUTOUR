@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from api.models import (
     Account, Participant, Team, TeamMembership,
-    ProgramPhase, SubEvent, PhaseRoster, EventCheckIn,
+    ProgramPhase, SubEvent, PhaseRoster, EventCheckIn, SystemSetting,
 )
 from api.services.auth_service import generate_session
 
@@ -27,6 +27,7 @@ class EventCheckinApiTests(TestCase):
             phase=self.phase, name="Cong su kien",
             type=SubEvent.TYPE_STATION_RUN, uses_stations=True, order=1,
         )
+        SystemSetting.objects.create(key="current_sub_event_id", value=self.event.id)
         self.team = Team.objects.create(
             code="T0001", name="Team A", approval_status=Team.APPROVAL_APPROVED, qr_token="t1",
         )

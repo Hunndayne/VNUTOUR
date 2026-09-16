@@ -14,8 +14,8 @@ from api.models import (
     Account, Team, ProgramPhase, SubEvent, EventCheckIn, EventAttendance,
     PhaseRoster, TeamMembership,
 )
-from api.services.attendance_service import recorded_checkins, resolve_personal_qr
-from api.services.checkin_qr_service import get_checkin_qr_state
+from api.services.attendance_service import recorded_checkins, resolve_personal_qr, team_eligible_for_event
+from api.services.program_service import get_current_sub_event
 from api.services import scan_token_service
 
 
@@ -39,18 +39,18 @@ def scan_event_checkin(
     except SubEvent.DoesNotExist:
         return None, "event_not_found"
 
+    current_event = get_current_sub_event()
+    if current_event is None:
+        return None, "no_current_event"
+    if current_event.id != sub_event.id:
+        return None, "checkin_qr_event_mismatch"
+
     if sub_event.checkin_mode == SubEvent.CHECKIN_TEAM:
         if str(qr_token).startswith("p:"):
             return None, "team_qr_required"
         team, resolve_error = scan_token_service.resolve_team(qr_token)
         if not team:
             return None, resolve_error
-        if str(qr_token or "").strip().lower().startswith("t:"):
-            qr_state = get_checkin_qr_state()
-            if not qr_state["enabled"]:
-                return None, "checkin_qr_disabled"
-            if qr_state.get("phase_key") != phase.key:
-                return None, "checkin_qr_phase_mismatch"
         membership = None
     else:
         membership, resolve_error = resolve_personal_qr(str(qr_token or "").strip(), sub_event)
@@ -69,12 +69,8 @@ def scan_event_checkin(
     if team.approval_status != Team.APPROVAL_APPROVED:
         return None, "team_not_approved"
 
-    # Check if team is in this phase's roster (if roster exists for this phase)
-    roster_exists = PhaseRoster.objects.filter(phase=phase).exists()
-    if roster_exists:
-        in_roster = PhaseRoster.objects.filter(phase=phase, team=team).exists()
-        if not in_roster:
-            return None, "team_not_in_phase"
+    if not team_eligible_for_event(team, sub_event):
+        return None, "team_not_in_phase"
 
     if sub_event.checkin_mode == SubEvent.CHECKIN_TEAM:
         existing = EventCheckIn.objects.filter(

@@ -35,10 +35,9 @@ class ScanTokenTestBase(TestCase):
             approval_status=Team.APPROVAL_APPROVED, qr_token="tok-original",
         )
         PhaseRoster.objects.create(phase=self.phase, team=self.team)
-        # The QR gate only lets `t:` scans through while check-in is switched on.
+        # Event attendance follows the running event without a separate toggle.
         SystemSetting.objects.update_or_create(
-            key="checkin_qr",
-            defaults={"value": {"enabled": True, "phase_key": self.phase.key}},
+            key="current_sub_event_id", defaults={"value": self.event.id},
         )
 
     def _qr(self):

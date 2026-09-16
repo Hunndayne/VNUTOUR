@@ -50,7 +50,7 @@ document.getElementById('run').onclick=async()=>{
  await check('Checkout hides QR and shows team closure',async()=>{await mount();fixture.checked_out=true;fixture.enabled=false;delete fixture.payload;await refresh();assert(!qr(),'Checkout QR still shown');assert(text().includes('Đội đã checkout'),'Checkout status absent')});
  await check('Team mode shows shared team QR copy',async()=>{await mount('team');assert(qr(),'Team QR absent');assert(text().includes('QR check-in đội'),'Wrong mode');assert(!text().includes('Nguyễn An'),'Personal identity in team QR');assert(!text().includes('0/2'),'Individual threshold in team mode')});
  await check('No threshold does not invent a one-member requirement',async()=>{await mount();fixture.required_count=0;fixture.eligible=true;await refresh();assert(!text().includes('0/1')&&!text().includes('Chưa đủ điều kiện'),'Invented threshold')});
- await check('Disabled toggle removes previous QR',async()=>{await mount();fixture.enabled=false;delete fixture.payload;await refresh();assert(!qr(),'Disabled QR remained');assert(text().includes('chưa mở'),'Disabled status absent')});
+ await check('Unavailable attendance removes previous QR',async()=>{await mount();fixture.enabled=false;delete fixture.payload;await refresh();assert(!qr(),'Unavailable QR remained');assert(text().includes('Chưa có QR điểm danh'),'Unavailable status absent')});
  await check('Failed refresh clears stale QR; retry restores current state',async()=>{await mount();failure=true;await refresh();assert(!qr(),'Stale QR visible offline');assert(text().includes('Chưa tải được'),'Error absent');failure=false;click('Thử lại');await delay(150);assert(qr(),'Retry failed')});
  output.textContent+='DONE\\n';document.getElementById('run').disabled=false;
 };

@@ -88,7 +88,7 @@ export function AttendanceCheckinPanel({ data, loading, error, onRefresh }) {
 
   if (status === 'disabled' || status === 'unavailable') {
     return (
-      <Panel tone="gold" eyebrow="Điểm danh sự kiện" title="Điểm danh chưa mở" body="BTC chưa mở QR điểm danh cho event hiện tại. Màn hình sẽ tự cập nhật khi điểm danh được bật.">
+      <Panel tone="gold" eyebrow="Điểm danh sự kiện" title="Chưa có QR điểm danh" body="QR tự mở theo sự kiện đang diễn ra khi đội đã được duyệt và thuộc danh sách tham gia. Màn hình sẽ tự cập nhật theo trạng thái sự kiện.">
         {summary}
       </Panel>
     )

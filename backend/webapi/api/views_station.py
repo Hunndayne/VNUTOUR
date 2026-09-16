@@ -651,6 +651,7 @@ def station_scan_view(request: HttpRequest):
                 "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
                 "personal_qr_required": 400, "invalid_personal_qr": 400,
                 "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+                "no_current_event": 409,
                 "team_checked_out": 409,
             }
             return JsonResponse({"error": err}, status=status_map.get(err, 400))
@@ -683,6 +684,7 @@ def station_scan_view(request: HttpRequest):
                 "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
                 "personal_qr_required": 400, "invalid_personal_qr": 400,
                 "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+                "no_current_event": 409,
                 "team_checked_out": 409,
             }
             return JsonResponse({"error": err}, status=status_map.get(err, 400))

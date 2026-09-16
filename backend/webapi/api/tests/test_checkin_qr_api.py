@@ -4,7 +4,7 @@ from django.test import TestCase
 
 from api.models import (
     Account, Participant, Team, TeamMembership,
-    ProgramPhase, PhaseRoster, SubEvent,
+    ProgramPhase, PhaseRoster, SubEvent, SystemSetting,
 )
 from api.services.auth_service import generate_session
 
@@ -36,6 +36,7 @@ class CheckinQrApiTests(TestCase):
             name="Check-in event",
             type=SubEvent.TYPE_WORKFLOW,
         )
+        SystemSetting.objects.create(key="current_sub_event_id", value=self.event.id)
         self.collab = Account.objects.create(
             username="collab", email="collab@example.com",
             password_hash="x", role=Account.ROLE_COLLAB,
@@ -45,12 +46,13 @@ class CheckinQrApiTests(TestCase):
         token = generate_session(account)
         return self.client.get("/api/my-team/qr", HTTP_AUTHORIZATION=f"Bearer {token}")
 
-    def test_qr_hidden_when_disabled(self):
+    def test_qr_hidden_when_no_event_is_running(self):
+        SystemSetting.objects.filter(key="current_sub_event_id").delete()
         resp = self._qr(self.member_account)
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.json()["enabled"])
 
-    def test_enable_rotates_token_and_shows_qr(self):
+    def test_legacy_endpoint_can_still_rotate_tokens(self):
         admin_token = generate_session(self.admin)
         toggle = self.client.post(
             "/api/admin/checkin-qr",
@@ -75,7 +77,11 @@ class CheckinQrApiTests(TestCase):
         # Đội chỉ ở roster qualifying; phase hiện tại chuyển sang final → không hiện QR.
         self.phase.is_current = False
         self.phase.save(update_fields=["is_current"])
-        ProgramPhase.objects.create(key="final", label="Final", order=2, is_current=True)
+        phase = ProgramPhase.objects.create(key="final", label="Final", order=2, is_current=True)
+        event = SubEvent.objects.create(phase=phase, name="Final event")
+        other = Team.objects.create(code="T0002", name="Finalist", approval_status=Team.APPROVAL_APPROVED)
+        PhaseRoster.objects.create(phase=phase, team=other)
+        SystemSetting.objects.filter(key="current_sub_event_id").update(value=event.id)
 
         admin_token = generate_session(self.admin)
         self.client.post(
@@ -98,7 +104,9 @@ class CheckinQrApiTests(TestCase):
         )
         self.assertIn(resp.status_code, (401, 403))
 
-    def test_disabled_qr_token_cannot_be_scanned(self):
+    def test_qr_token_can_be_scanned_without_a_global_toggle(self):
+        qr = self._qr(self.member_account)
+        self.assertTrue(qr.json()["enabled"])
         token = generate_session(self.collab)
         response = self.client.post(
             "/api/event-checkins/scan",
@@ -110,10 +118,9 @@ class CheckinQrApiTests(TestCase):
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"], "checkin_qr_disabled")
+        self.assertEqual(response.status_code, 201, response.content)
 
-    def test_disabling_qr_invalidates_previously_visible_payload(self):
+    def test_legacy_disable_cannot_close_attendance_for_a_running_event(self):
         admin_token = generate_session(self.admin)
         self.client.post(
             "/api/admin/checkin-qr",
@@ -142,5 +149,4 @@ class CheckinQrApiTests(TestCase):
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"], "checkin_qr_disabled")
+        self.assertEqual(response.status_code, 201, response.content)
