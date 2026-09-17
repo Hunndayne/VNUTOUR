@@ -59,6 +59,17 @@ def resolve_personal_qr(code, event):
     return (membership, None) if membership else (None, "participant_not_in_team")
 
 
+def required_attendance_count(team, event):
+    """Require the configured minimum, capped at the team's actual size."""
+    if not event.require_checkin:
+        return 0
+    if event.checkin_mode == event.CHECKIN_TEAM:
+        return 1
+    member_count = TeamMembership.objects.filter(team=team).count()
+    # An empty team cannot satisfy attendance without anyone checking in.
+    return min(event.min_checkin_members, max(1, member_count))
+
+
 def attendance_state(team, event, participant_id=None):
     checkin = EventCheckIn.objects.filter(
         team=team, sub_event=event, status=EventCheckIn.STATUS_ACTIVE,
@@ -73,15 +84,13 @@ def attendance_state(team, event, participant_id=None):
     else:
         count = rows.values("participant_id").distinct().count()
     checked_out = bool(checkin and checkin.checked_out_at)
+    required = required_attendance_count(team, event)
     return {
         "checked_in_count": count,
-        "required_count": (
-            0 if not event.require_checkin else
-            event.min_checkin_members if event.checkin_mode == event.CHECKIN_INDIVIDUAL else 1
-        ),
+        "required_count": required,
         "eligible": not checked_out and (
             not event.require_checkin or
-            (team_checked_in if event.checkin_mode == event.CHECKIN_TEAM else count >= event.min_checkin_members)
+            (team_checked_in if event.checkin_mode == event.CHECKIN_TEAM else count >= required)
         ),
         "checked_out": checked_out,
         "checked_in": (

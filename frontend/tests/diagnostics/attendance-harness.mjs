@@ -17,7 +17,7 @@ window.attendanceDiagnosticRequest=async path=>{
     if(failure)throw new Error('Offline fixture');
     return JSON.parse(JSON.stringify(fixture));
   }
-  if(path==='/my-team/stations') return {team_code:'TEST',stations:[],total_stations:0};
+  if(path==='/my-team/stations') return {team_code:'TEST',current_sub_event_id:1,stations:[],total_stations:0};
   if(path.startsWith('/my-team/station-state')) return {session:null,qr:{enabled:false}};
   throw new Error('Unexpected API '+path);
 };
@@ -38,6 +38,7 @@ document.getElementById('run').onclick=async()=>{
  const output=document.getElementById('results');output.textContent='';
  document.getElementById('run').disabled=true;
  async function check(name,fn){try{await fn();output.textContent+='PASS: '+name+'\\n'}catch(e){output.textContent+='FAIL: '+name+' — '+e.message+'\\n'}}
+ await check('Attendance opens from station list and returns there',async()=>{await mount();click('Về danh sách trạm');await delay(150);assert(!qr(),'QR remained on list');assert(text().includes('Các trạm đang mở'),'List absent');assert(!document.querySelector('nav').textContent.includes('Điểm danh sự kiện'),'Old attendance tab remained');assert(!text().includes('Chưa có trạm nào đang mở'),'Event-only list incorrectly empty');click('Điểm danh sự kiện');await delay(150);assert(qr(),'Attendance card did not open QR')});
  await check('Personal QR shows own identity and 0/2',async()=>{await mount();assert(qr(),'QR absent');assert(text().includes('Nguyễn An')&&text().includes('SV001'),'Identity absent');assert(text().includes('0/2'),'Count absent')});
  await check('Polling hides QR after this member checks in',async()=>{
    const before=attendanceCalls;fixture.checked_in=true;fixture.checked_in_count=1;delete fixture.payload;

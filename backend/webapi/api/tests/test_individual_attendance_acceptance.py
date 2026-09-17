@@ -81,7 +81,38 @@ class IndividualAttendanceAcceptanceTests(IndividualAttendanceTestBase):
         own = self._qr(self.a)
         self.assertTrue(own["checked_in"])
         self.assertFalse(own.get("payload"))
-        self.assertEqual(self._enter(self.play, team=self.other).status_code, 409)
+        # The other team has just one member; that member's scan is sufficient.
+        self.assertEqual(self._enter(self.play, team=self.other).status_code, 201)
+
+    def test_small_team_requires_all_its_members_instead_of_event_minimum(self):
+        self.event.min_checkin_members = 5
+        self.event.save()
+        self.assertEqual(self._qr(self.a)["required_count"], 2)
+        first = self._scan(self._qr(self.a)["payload"])
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(first.json()["required_count"], 2)
+        self.assertFalse(first.json()["eligible"])
+        self.assertEqual(self._enter(self.play).status_code, 409)
+        self.assertEqual(self._request(self.a, f"/api/my-team/forms/{self.free.id}/start", {}).status_code, 409)
+
+        second = self._scan(self._qr(self.b)["payload"])
+        self.assertEqual(second.status_code, 201, second.content)
+        self.assertEqual(second.json()["checked_in_count"], 2)
+        self.assertTrue(second.json()["eligible"])
+        self.assertEqual(self._qr(self.a)["required_count"], 2)
+        self.assertTrue(self._qr(self.a)["eligible"])
+        self.assertEqual(self._request(self.a, f"/api/my-team/forms/{self.free.id}/start", {}).status_code, 200)
+        self.assertEqual(self._exit(self.free, account=self.admin).status_code, 200)
+        self.assertEqual(self._enter(self.play).status_code, 201)
+
+    def test_large_team_still_only_requires_configured_minimum(self):
+        self._member("D", self.team)
+        self.assertEqual(self._qr(self.a)["required_count"], 2)
+        self._scan(self._qr(self.a)["payload"])
+        self.assertEqual(self._enter(self.play).status_code, 409)
+        self._scan(self._qr(self.b)["payload"])
+        self.assertTrue(self._qr(self.a)["eligible"])
+        self.assertEqual(self._enter(self.play).status_code, 201)
 
     def test_team_checkout_does_not_require_personal_attendance(self):
         response = self._scan(f"{self.team.code}|s:{self.checkout.id}|d:in")

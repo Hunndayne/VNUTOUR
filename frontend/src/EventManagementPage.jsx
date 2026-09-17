@@ -357,7 +357,7 @@ function SubEventEditor({ initialEvent, submitLabel, onSave, onCancel, canEdit, 
                   className={FIELD_INPUT}
                 />
                 <p className="mt-1.5 text-xs leading-5 text-ink/40">
-                  Mỗi thành viên có QR riêng. Khi đủ X người đã check-in sự kiện, đội mới được vào trạm.
+                  Mỗi thành viên có QR riêng. Đội được vào trạm khi đủ số người này đã điểm danh sự kiện. Nếu đội có ít thành viên hơn, cần tất cả thành viên của đội điểm danh.
                 </p>
               </div>
             )}

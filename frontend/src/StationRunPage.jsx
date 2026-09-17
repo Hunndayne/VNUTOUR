@@ -421,8 +421,9 @@ function StationRow({ station, onOpen }) {
   )
 }
 
-function StationListScreen({ payload, loading, error, activeStationId, onOpen, onRefresh }) {
+function StationListScreen({ payload, loading, error, activeStationId, onOpen, onOpenAttendance, onRefresh }) {
   const stations = payload?.stations || []
+  const hasEvent = payload?.current_sub_event_id != null
   const activeStation = stations.find((item) => item.station_id === activeStationId) || null
   const hasJourneyStats = Boolean(payload) && typeof payload.total_stations === 'number' && payload.total_stations > 0
   // Chỉ cộng điểm khi payload thật sự mang best_score — payload cũ (backend chưa
@@ -485,7 +486,26 @@ function StationListScreen({ payload, loading, error, activeStationId, onOpen, o
         </div>
       )}
 
-      {payload && stations.length === 0 && !error && (
+      {hasEvent && !error && (
+        <button
+          type="button"
+          onClick={onOpenAttendance}
+          className={`${STATION_CARD} w-full px-4 py-4 text-left transition hover:bg-[#F3F4F1] active:scale-[0.995] sm:px-5`}
+        >
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E0A23A]/20 text-[#9A6B12]">
+              <Icon name="users" className="h-6 w-6" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="text-lg font-semibold leading-snug text-ink">Điểm danh sự kiện</span>
+              <p className="mt-1 text-sm leading-6 text-ink/60">Mở QR để CTV ghi nhận tham gia sự kiện.</p>
+            </div>
+            <Icon name="chevronR" className="mt-3 h-5 w-5 shrink-0 text-ink/25" />
+          </div>
+        </button>
+      )}
+
+      {payload && stations.length === 0 && !hasEvent && !error && (
         <div className={`${STATION_CARD} px-5 py-12 text-center`}>
           <h2 className="font-display text-xl font-bold text-ink">Chưa có trạm nào đang mở</h2>
           <p className="mx-auto mt-3 max-w-sm text-base leading-7 text-ink/55">
@@ -904,7 +924,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   // từng lần chạy effect nên đổi trạm là reset sạch, không có cờ dùng chung để
   // một request chậm của trạm cũ mở khoá cho trạm mới.
   useEffect(() => {
-    if (openStationId == null || sessionExpired) return undefined
+    if (view !== 'stations' || openStationId == null || sessionExpired) return undefined
 
     let cancelled = false
     let inFlight = false
@@ -954,7 +974,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [openStationId, sessionExpired])
+  }, [view, openStationId, sessionExpired])
 
   const station = useMemo(
     () => withReplayState(stations.find((item) => item.station_id === openStationId) || null, stationState),
@@ -1030,6 +1050,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     setPollError('')
     setReplayArmed(false)
     setStationParam('', { replace: true })
+    setView('stations', { replace: true })
     loadStations()
     loadGlobalSession()
   }
@@ -1048,15 +1069,21 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
       : 'relative mx-auto w-full max-w-2xl px-4 pb-20 pt-3 sm:px-6'}
     >
       <nav aria-label="Chạy trạm" className="mb-5 flex flex-wrap gap-2 border-b border-stone pb-3">
-        {[['stations', 'Làm bài ở trạm'], ['attendance', 'Điểm danh sự kiện'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => setView(key)} aria-current={view === key ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${view === key ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
+        {[['stations', 'Danh sách trạm'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => key === 'stations' ? backToList() : setView(key)} aria-current={(view === key || (key === 'stations' && view === 'attendance')) ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${(view === key || (key === 'stations' && view === 'attendance')) ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
       </nav>
       {sessionExpired ? <SessionExpiredCard /> : view === 'history' ? <QuestionHistory /> : view === 'attendance' ? (
-        <AttendanceCheckinPanel
-          data={attendance}
-          loading={attendanceLoading}
-          error={attendanceError}
-          onRefresh={() => loadAttendance({ clear: true })}
-        />
+        <div className="space-y-4">
+          <button type="button" onClick={backToList} className={SECONDARY_BUTTON}>
+            <Icon name="chevronR" className="h-5 w-5 rotate-180" />
+            Về danh sách trạm
+          </button>
+          <AttendanceCheckinPanel
+            data={attendance}
+            loading={attendanceLoading}
+            error={attendanceError}
+            onRefresh={() => loadAttendance({ clear: true })}
+          />
+        </div>
       ) : openStationId == null ? (
           <StationListScreen
             payload={listPayload}
@@ -1064,6 +1091,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
             error={listError}
             activeStationId={activeStationId}
             onOpen={openStation}
+            onOpenAttendance={() => setView('attendance')}
             onRefresh={() => {
               loadStations()
               loadGlobalSession()

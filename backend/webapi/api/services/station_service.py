@@ -421,6 +421,7 @@ def _assemble_replay_state(
 def event_gate_error(team: Team, sub_event: SubEvent) -> Optional[str]:
     """Check-in requirement and checkout lock for entering any play station."""
     from api.models import EventAttendance, EventCheckIn, TeamMembership
+    from api.services.attendance_service import required_attendance_count
     checkin = EventCheckIn.objects.filter(
         team=team, sub_event=sub_event, status=EventCheckIn.STATUS_ACTIVE,
     ).only("id", "checked_out_at", "meta").first()
@@ -433,7 +434,7 @@ def event_gate_error(team: Team, sub_event: SubEvent) -> Optional[str]:
             checkin=checkin,
             participant_id__in=TeamMembership.objects.filter(team=team).values("participant_id"),
         ).values("participant_id").distinct().count()
-        if attendance_count < sub_event.min_checkin_members:
+        if attendance_count < required_attendance_count(team, sub_event):
             return "event_insufficient_checkin" if attendance_count else "event_not_checked_in"
     elif sub_event.require_checkin and (
         checkin is None or (checkin.meta or {}).get("checkout_only")
