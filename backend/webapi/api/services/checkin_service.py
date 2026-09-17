@@ -273,6 +273,7 @@ def checkout_event(
     qr_token: str,
     station,
     scanner: Account,
+    *, sub_event=None,
 ) -> Tuple[Optional[EventCheckIn], Optional[str]]:
     """Record that a team finished its journey at a checkout station.
 
@@ -287,7 +288,9 @@ def checkout_event(
     if team.approval_status != Team.APPROVAL_APPROVED:
         return None, "team_not_approved"
 
-    sub_event = station.sub_event
+    sub_event = station.sub_event if station is not None else sub_event
+    if sub_event is None:
+        return None, "event_not_found"
     phase = sub_event.phase
     if PhaseRoster.objects.filter(phase=phase).exists() and not PhaseRoster.objects.filter(
         phase=phase, team=team,

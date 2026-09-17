@@ -20,7 +20,7 @@ import { useSearchParam } from './router.js'
 import { MarkdownBlock, InvisibleWatermark, TrapPattern } from './FormResponses.jsx'
 import QuestionHistory, { QuizSummary } from './QuestionReview.jsx'
 import { canReplay, explainReplayLock, attemptLabel, withReplayState } from './stationReplay.js'
-import AttendanceCheckinPanel from './AttendanceCheckinPanel.jsx'
+import AttendanceCheckinPanel, { EventCheckoutPanel } from './AttendanceCheckinPanel.jsx'
 
 const POLL_MS = 2000
 const EXIT_LOCK_MS = 10000
@@ -428,7 +428,7 @@ function StationRow({ station, onOpen }) {
   )
 }
 
-function StationListScreen({ payload, loading, error, activeStationId, onOpen, onOpenAttendance, onRefresh }) {
+function StationListScreen({ payload, loading, error, activeStationId, onOpen, onOpenAttendance, onOpenCheckout, onRefresh }) {
   const stations = payload?.stations || []
   const hasEvent = payload?.current_sub_event_id != null
   const activeStation = stations.find((item) => item.station_id === activeStationId) || null
@@ -528,6 +528,13 @@ function StationListScreen({ payload, loading, error, activeStationId, onOpen, o
       {stations.map((station) => (
         <StationRow key={station.station_id} station={station} onOpen={onOpen} />
       ))}
+      {hasEvent && !error && !(payload?.checkout_stations?.length) && (
+        <button type="button" onClick={onOpenCheckout}
+          className={`${STATION_CARD} w-full px-5 py-4 text-left transition hover:bg-[#F3F4F1]`}>
+          <p className="text-lg font-semibold text-ink">Checkout sự kiện</p>
+          <p className="mt-1 text-sm leading-6 text-ink/60">Mở QR để CTV ghi nhận đội kết thúc sự kiện.</p>
+        </button>
+      )}
       {(payload?.checkout_stations || []).map((station) => (
         <button key={station.station_id} type="button" onClick={() => onOpen(station.station_id)}
           className={`${STATION_CARD} w-full px-5 py-4 text-left transition hover:bg-[#F3F4F1]`}>
@@ -956,7 +963,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   // station. Poll it independently so a successful scan removes that member's
   // QR without affecting the existing team entry/exit QR state.
   useEffect(() => {
-    if (view !== 'attendance' || sessionExpired) return undefined
+    if (!['attendance', 'checkout'].includes(view) || sessionExpired) return undefined
     let cancelled = false
     const refresh = () => {
       if (!cancelled) void loadAttendance()
@@ -1118,20 +1125,25 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
       : 'relative mx-auto w-full max-w-2xl px-4 pb-20 pt-3 sm:px-6'}
     >
       <nav aria-label="Chạy trạm" className="mb-5 flex flex-wrap gap-2 border-b border-stone pb-3">
-        {[['stations', 'Danh sách trạm'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => key === 'stations' ? backToList() : setView(key)} aria-current={(view === key || (key === 'stations' && view === 'attendance')) ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${(view === key || (key === 'stations' && view === 'attendance')) ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
+        {[['stations', 'Danh sách trạm'], ['history', 'Lịch sử câu hỏi']].map(([key, label]) => <button key={key} type="button" onClick={() => key === 'stations' ? backToList() : setView(key)} aria-current={(view === key || (key === 'stations' && ['attendance', 'checkout'].includes(view))) ? 'page' : undefined} className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold ${(view === key || (key === 'stations' && ['attendance', 'checkout'].includes(view))) ? 'bg-ink text-white' : 'bg-white text-ink/70'}`}>{label}</button>)}
       </nav>
-      {sessionExpired ? <SessionExpiredCard /> : view === 'history' ? <QuestionHistory /> : view === 'attendance' ? (
+      {sessionExpired ? <SessionExpiredCard /> : view === 'history' ? <QuestionHistory /> : ['attendance', 'checkout'].includes(view) ? (
         <div className="space-y-4">
           <button type="button" onClick={backToList} className={SECONDARY_BUTTON}>
             <Icon name="chevronR" className="h-5 w-5 rotate-180" />
             Về danh sách trạm
           </button>
-          <AttendanceCheckinPanel
+          {view === 'checkout' ? <EventCheckoutPanel
             data={attendance}
             loading={attendanceLoading}
             error={attendanceError}
             onRefresh={() => loadAttendance({ clear: true })}
-          />
+          /> : <AttendanceCheckinPanel
+            data={attendance}
+            loading={attendanceLoading}
+            error={attendanceError}
+            onRefresh={() => loadAttendance({ clear: true })}
+          />}
         </div>
       ) : openStationId == null ? (
           <StationListScreen
@@ -1141,6 +1153,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
             activeStationId={activeStationId}
             onOpen={openStation}
             onOpenAttendance={() => setView('attendance')}
+            onOpenCheckout={() => setView('checkout')}
             onRefresh={() => {
               loadStations()
               loadGlobalSession()

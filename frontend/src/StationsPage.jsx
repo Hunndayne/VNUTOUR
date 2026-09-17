@@ -3582,7 +3582,7 @@ function StationsPage({
         </div>
       ) : null}
 
-      {selectedEvent && stations.some(station => station.kind === 'checkout') && (
+      {selectedEvent && (
         <CheckoutPanel eventId={selectedEvent.id} />
       )}
     </div>

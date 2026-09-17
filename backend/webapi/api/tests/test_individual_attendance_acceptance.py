@@ -58,6 +58,45 @@ class IndividualAttendanceTestBase(StationJourneyTestBase):
 
 
 class IndividualAttendanceAcceptanceTests(IndividualAttendanceTestBase):
+    def test_event_checkout_works_without_a_configured_station(self):
+        self.checkout.delete()
+        code = self._qr(self.a)["checkout"]["payload"]
+        self.assertTrue(code.startswith("x:"))
+        response = self._request(self.collab, "/api/station-scan", {"code": code})
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["kind"], "checkout")
+        checkin = EventCheckIn.objects.get(team=self.team, sub_event=self.event)
+        self.assertIsNotNone(checkin.checked_out_at)
+        self.assertIsNone(checkin.checkout_station_id)
+        self.assertFalse(self._qr(self.a)["checkout"]["enabled"])
+        self.assertEqual(self._scan(code).status_code, 409)
+        self.assertEqual(self._enter(self.play).json()["error"], "team_checked_out")
+
+    def test_event_checkout_rejects_tampering_wrong_event_and_active_play(self):
+        self.checkout.delete()
+        code = self._qr(self.a)["checkout"]["payload"]
+        self.assertEqual(self._scan(code + "broken").status_code, 400)
+        self._scan(self._qr(self.a)["payload"])
+        self._scan(self._qr(self.b)["payload"])
+        self.assertEqual(self._enter(self.play).status_code, 201)
+        self.assertFalse(self._qr(self.a)["checkout"]["enabled"])
+        self.assertEqual(self._scan(code).json()["error"], "session_already_active")
+        SystemSetting.objects.filter(key="current_sub_event_id").update(value="")
+        self.assertEqual(self._scan(code).json()["error"], "no_current_event")
+
+    def test_event_checkout_qr_cannot_bypass_configured_gate_or_change_event(self):
+        self.checkout.active = False
+        self.checkout.save(update_fields=["active"])
+        code = self._qr(self.a)["checkout"]["payload"]
+        self.assertEqual(self._request(self.a, "/api/station-scan", {"code": code}).status_code, 403)
+        self.checkout.active = True
+        self.checkout.save(update_fields=["active"])
+        self.assertFalse(self._qr(self.a)["checkout"]["enabled"])
+        self.assertEqual(self._scan(code).json()["error"], "checkout_station_required")
+        other_event = SubEvent.objects.create(phase=self.phase, name="Next event")
+        SystemSetting.objects.filter(key="current_sub_event_id").update(value=str(other_event.id))
+        self.assertEqual(self._scan(code).json()["error"], "checkout_qr_event_mismatch")
+
     def test_unchecked_team_cannot_get_entry_qr_or_form_questions(self):
         for station in (self.play, self.free):
             state = self._request(self.a, f"/api/my-team/station-state?station_id={station.id}").json()

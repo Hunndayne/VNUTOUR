@@ -112,6 +112,9 @@ function explainScanError(error) {
     event_insufficient_checkin: 'Đội chưa đủ số thành viên đã check-in để vào trạm. Mời thêm thành viên quét QR cá nhân.',
     team_checked_out: 'Đội đã checkout, không được chơi thêm trạm nào.',
     already_checked_out: 'Đội này đã checkout rồi.',
+    invalid_checkout_qr: 'QR checkout sự kiện không hợp lệ hoặc hết hạn. Mời đội mở lại QR checkout.',
+    checkout_qr_event_mismatch: 'QR checkout này thuộc sự kiện khác. Mời đội mở QR của sự kiện hiện tại.',
+    checkout_station_required: 'Event có trạm checkout riêng. Mời đội mở trạm Checkout trong danh sách trạm.',
     station_not_playable: 'Đây là trạm check-in/checkout, không phải trạm chơi.',
   }
   return map[code] || 'Không thể xử lý mã vừa quét.'

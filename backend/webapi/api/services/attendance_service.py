@@ -6,6 +6,25 @@ from api.models import EventAttendance, EventCheckIn, PhaseRoster, TeamMembershi
 from api.services.checkin_qr_service import get_checkin_qr_state
 
 QR_SALT = "vnutour.personal-event-checkin.v1"
+CHECKOUT_QR_SALT = "vnutour.event-checkout.v1"
+
+
+def event_checkout_qr(team, event):
+    return "x:" + signing.dumps({
+        "event_id": event.id, "token": f"t:{team.qr_token}",
+    }, salt=CHECKOUT_QR_SALT, compress=True)
+
+
+def resolve_event_checkout_qr(code, event):
+    try:
+        payload = signing.loads(code[2:], salt=CHECKOUT_QR_SALT, max_age=86400)
+    except signing.BadSignature:
+        return None, "invalid_checkout_qr"
+    if not isinstance(payload, dict) or not isinstance(payload.get("token"), str):
+        return None, "invalid_checkout_qr"
+    if payload.get("event_id") != event.id:
+        return None, "checkout_qr_event_mismatch"
+    return payload["token"], None
 
 
 def team_eligible_for_event(team, event) -> bool:

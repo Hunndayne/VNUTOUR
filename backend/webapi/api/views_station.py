@@ -628,6 +628,38 @@ def station_scan_view(request: HttpRequest):
     if not raw_code:
         return JsonResponse({"error": "missing_fields"}, status=400)
 
+    if raw_code.startswith("x:"):
+        from api.services.attendance_service import resolve_event_checkout_qr, team_eligible_for_event
+        event = get_current_sub_event()
+        if event is None:
+            return JsonResponse({"error": "no_current_event"}, status=409)
+        token, error = resolve_event_checkout_qr(raw_code, event)
+        if error:
+            return JsonResponse({"error": error}, status=400 if error == "invalid_checkout_qr" else 409)
+        # Do not bypass assignments when the event has configured checkout gates.
+        if Station.objects.filter(sub_event=event, kind=Station.KIND_CHECKOUT, active=True).exists():
+            return JsonResponse({"error": "checkout_station_required"}, status=409)
+        team, error = scan_token_service.resolve_team(token)
+        if error:
+            return JsonResponse({"error": error}, status=409)
+        if not team_eligible_for_event(team, event):
+            return JsonResponse({"error": "team_not_in_phase"}, status=403)
+        checkin, error = checkout_event(token, None, acc, sub_event=event)
+        if error:
+            return JsonResponse({"error": error}, status=403 if error == "team_not_approved" else 409)
+        record_audit(
+            actor=acc, action="checkin.checkout",
+            summary=f"Team {checkin.team.code} checkout at event {event.name}",
+            target_type="EventCheckIn", target_id=checkin.id,
+            after_data={"checked_out_at": checkin.checked_out_at.isoformat()}, reversible=True,
+        )
+        return JsonResponse({
+            "kind": "checkout", "id": checkin.id,
+            "team_code": checkin.team.code, "team_name": checkin.team.name,
+            "event_name": event.name, "station_name": "Checkout sự kiện",
+            "checked_out_at": checkin.checked_out_at.isoformat(),
+        }, status=201)
+
     token, station_id, direction = scan_token_service.parse_scan(raw_code)
 
     # ── Event-gate QR: no station named in the code ──────────────────────

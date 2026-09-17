@@ -116,4 +116,28 @@ export function AttendanceCheckinPanel({ data, loading, error, onRefresh }) {
   )
 }
 
+export function EventCheckoutPanel({ data, loading, error, onRefresh }) {
+  if (!data && !error) return <div className={`${CARD} px-5 py-14 text-center text-ink/45`}>Đang lấy QR checkout sự kiện...</div>
+  const checkout = data?.checkout
+  const ready = !error && !data?.checked_out && checkout?.enabled && checkout?.payload
+  const title = error ? 'Chưa tải được QR checkout'
+    : data?.checked_out ? 'Đội đã checkout sự kiện'
+      : ready ? 'Đưa QR checkout sự kiện cho CTV' : 'Chưa có QR checkout sự kiện'
+  const body = error || (data?.checked_out ? 'Đã ghi nhận đội kết thúc sự kiện.'
+    : checkout?.blocked_reason === 'session_already_active' ? 'Hoàn thành và rời trạm đang chơi trước khi checkout sự kiện.'
+      : ready ? 'CTV quét mã này để ghi nhận đội kết thúc sự kiện. Sau checkout, đội không thể chơi thêm trạm.'
+        : 'QR mở theo sự kiện hiện tại cho đội đã được duyệt. Nếu event có trạm checkout riêng, hãy mở trạm đó trong danh sách.')
+  return (
+    <Panel tone={error ? 'clay' : 'trail'} eyebrow="Checkout sự kiện" title={title} body={body}>
+      {!error && <p className="text-sm text-ink/65">{data?.team_code} · {data?.event_name}</p>}
+      {ready && <div className="mt-5 flex justify-center"><div className="rounded-2xl border-2 border-ink/10 bg-white p-4">
+        <QRCodeSVG value={checkout.payload} size={280} level="M" className="h-auto w-full max-w-[280px]" />
+      </div></div>}
+      <button type="button" disabled={loading} onClick={onRefresh} className={`mt-5 w-full ${SECONDARY_BUTTON}`}>
+        {error ? 'Thử lại' : 'Làm mới trạng thái checkout'}
+      </button>
+    </Panel>
+  )
+}
+
 export default AttendanceCheckinPanel

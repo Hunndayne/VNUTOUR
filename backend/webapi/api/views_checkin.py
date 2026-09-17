@@ -5,14 +5,14 @@ Event check-in views — §9.6 (canonical + legacy compat aliases).
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, EventCheckIn, Participant, TeamMembership
+from api.models import Account, EventCheckIn, Participant, TeamMembership, Station, StationSession
 from api.services.checkin_service import (
     scan_event_checkin, list_event_checkins,
     get_checkin_stats, reset_checkin, undo_checkout, list_checkouts,
 )
 from api.services.checkin_qr_service import get_checkin_qr_state, set_checkin_qr
 from api.services.attendance_service import (
-    attendance_state, checkin_response, personal_qr, team_eligible_for_event,
+    attendance_state, checkin_response, personal_qr, team_eligible_for_event, event_checkout_qr,
 )
 from api.services.program_service import get_current_sub_event
 from api.services.audit_service import record_audit
@@ -80,8 +80,28 @@ def my_checkin_qr_view(request: HttpRequest):
                 rotate_qr_token(team)
                 team.refresh_from_db(fields=["qr_token"])
             payload = f"t:{team.qr_token}"
+    # An event always has a checkout gate, even without a configured station.
+    # Configured gates keep their station assignment and QR scan permissions.
+    checkout_enabled = bool(
+        roster_allowed and team.approval_status == team.APPROVAL_APPROVED and
+        not state["checked_out"] and
+        not Station.objects.filter(sub_event=event, kind=Station.KIND_CHECKOUT, active=True).exists()
+    )
+    checkout_blocked = checkout_enabled and StationSession.objects.filter(
+        team=team, sub_event=event, status=StationSession.STATUS_ACTIVE,
+    ).exists()
+    checkout_enabled = checkout_enabled and not checkout_blocked
+    if checkout_enabled and not team.qr_token:
+        from api.services.team_service import rotate_qr_token
+        rotate_qr_token(team)
+        team.refresh_from_db(fields=["qr_token"])
     return JsonResponse({
         "enabled": enabled,
+        "checkout": {
+            "enabled": checkout_enabled,
+            "payload": event_checkout_qr(team, event) if checkout_enabled else None,
+            "blocked_reason": "session_already_active" if checkout_blocked else None,
+        },
         "payload": payload,
         "qr_payload": payload,
         "checkin_mode": event.checkin_mode,

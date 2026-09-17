@@ -30,6 +30,7 @@ function click(label){const button=[...document.querySelectorAll('#app button')]
 async function mount(mode='individual'){
  failure=false;stationFixture=null;checkoutFixture=null;openedForms=0;
  fixture={mode,enabled:true,payload:'fixture-not-a-real-qr',participant_name:'Nguyễn An',mssv:'SV001',team_code:'T0001',event_name:'Chạy trạm',checked_in:false,checked_out:false,checked_in_count:0,required_count:2,eligible:false};
+ fixture.checkout={enabled:true,payload:'fixture-event-checkout'};
  history.replaceState(null,'','/');
  root.render(<StationRunPage key={++generation} embedded onOpenForm={()=>openedForms++}/>);
  await delay(150);click('Điểm danh sự kiện');await delay(150);
@@ -39,6 +40,19 @@ document.getElementById('run').onclick=async()=>{
  const output=document.getElementById('results');output.textContent='';
  document.getElementById('run').disabled=true;
  async function check(name,fn){try{await fn();output.textContent+='PASS: '+name+'\\n'}catch(e){output.textContent+='FAIL: '+name+' — '+e.message+'\\n'}}
+ await check('Checkout card and working QR exist without a configured checkout station',async()=>{
+   await mount();click('Về danh sách trạm');await delay(150);
+   assert(text().includes('Checkout sự kiện'),'Default checkout card absent');click('Checkout sự kiện');await delay(150);
+   assert(text().includes('Đưa QR checkout sự kiện cho CTV')&&qr(),'Default checkout QR absent');
+   fixture.checkout={enabled:false,payload:null,blocked_reason:'session_already_active'};await delay(2200);
+   assert(!qr()&&text().includes('Hoàn thành và rời trạm'),'Active play did not hide checkout QR');
+   fixture.checkout={enabled:true,payload:'fixture-event-checkout'};await delay(2200);assert(qr(),'Checkout not restored');
+   failure=true;click('Làm mới trạng thái checkout');await delay(150);assert(!qr()&&text().includes('Chưa tải được QR checkout'),'Stale QR after failure');
+   failure=false;click('Thử lại');await delay(150);assert(qr(),'Checkout retry failed');
+   fixture.checked_out=true;fixture.checkout={enabled:false,payload:null};await delay(2200);
+   assert(text().includes('Đội đã checkout sự kiện')&&!qr(),'Default checkout QR remained after scan');
+   click('Về danh sách trạm');await delay(150);assert(text().includes('Các trạm đang mở'),'Back to list failed');
+ });
  await check('Event checkout appears separately, shows QR and closes after scan',async()=>{
    await mount();checkoutFixture={station_id:9,station_name:'Trạm về đích',station_code:'OUT',kind:'checkout'};
    fixture.eligible=true;click('Về danh sách trạm');await delay(150);
