@@ -10,14 +10,14 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import StationRunPage from ${JSON.stringify(page)};
 const root=createRoot(document.getElementById('app'));
-let fixture, stationFixture=null, failure=false, generation=0, attendanceCalls=0, openedForms=0;
+let fixture, stationFixture=null, checkoutFixture=null, failure=false, generation=0, attendanceCalls=0, openedForms=0;
 window.attendanceDiagnosticRequest=async path=>{
   if(path==='/my/checkin-qr') {
     attendanceCalls++;
     if(failure)throw new Error('Offline fixture');
     return JSON.parse(JSON.stringify(fixture));
   }
-  if(path==='/my-team/stations') return {team_code:'TEST',current_sub_event_id:1,stations:stationFixture?[stationFixture]:[],total_stations:0};
+  if(path==='/my-team/stations') return {team_code:'TEST',current_sub_event_id:1,stations:stationFixture?[stationFixture]:[],checkout_stations:checkoutFixture?[checkoutFixture]:[],total_stations:0};
   if(path.startsWith('/my-team/station-state')) return {session:null,qr:{enabled:fixture.eligible,payload:fixture.eligible?'t:test|s:1|d:in':null},attendance:JSON.parse(JSON.stringify(fixture))};
   throw new Error('Unexpected API '+path);
 };
@@ -28,7 +28,7 @@ const formButton=()=>[...document.querySelectorAll('#app button')].some(b=>b.tex
 const assert=(ok,message)=>{if(!ok)throw new Error(message)};
 function click(label){const button=[...document.querySelectorAll('#app button')].find(b=>b.textContent.includes(label));if(!button)throw Error('Missing '+label);button.click()}
 async function mount(mode='individual'){
- failure=false;stationFixture=null;openedForms=0;
+ failure=false;stationFixture=null;checkoutFixture=null;openedForms=0;
  fixture={mode,enabled:true,payload:'fixture-not-a-real-qr',participant_name:'Nguyễn An',mssv:'SV001',team_code:'T0001',event_name:'Chạy trạm',checked_in:false,checked_out:false,checked_in_count:0,required_count:2,eligible:false};
  history.replaceState(null,'','/');
  root.render(<StationRunPage key={++generation} embedded onOpenForm={()=>openedForms++}/>);
@@ -39,6 +39,15 @@ document.getElementById('run').onclick=async()=>{
  const output=document.getElementById('results');output.textContent='';
  document.getElementById('run').disabled=true;
  async function check(name,fn){try{await fn();output.textContent+='PASS: '+name+'\\n'}catch(e){output.textContent+='FAIL: '+name+' — '+e.message+'\\n'}}
+ await check('Event checkout appears separately, shows QR and closes after scan',async()=>{
+   await mount();checkoutFixture={station_id:9,station_name:'Trạm về đích',station_code:'OUT',kind:'checkout'};
+   fixture.eligible=true;click('Về danh sách trạm');await delay(150);
+   assert(text().includes('Checkout sự kiện'),'Checkout card absent');click('Trạm về đích');await delay(150);
+   assert(text().includes('Đưa QR checkout sự kiện cho CTV')&&qr(),'Checkout QR absent');
+   assert(!formButton()&&!text().includes('Đã chơi'),'Checkout treated as play');
+   fixture.checked_out=true;fixture.eligible=false;await delay(2200);
+   assert(text().includes('Đội đã checkout sự kiện')&&!qr(),'Checkout QR remained after scan');
+ });
  await check('Free-play stays locked at 0/2 and 1/2, opens after 2/2',async()=>{
    await mount();stationFixture={station_id:1,station_name:'Trạm thử',station_code:'S1',checkin_policy:'free_play',has_form:true};
    click('Về danh sách trạm');await delay(150);click('Trạm thử');await delay(150);

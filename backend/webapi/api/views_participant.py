@@ -1509,6 +1509,7 @@ def my_team_stations_view(request: HttpRequest):
         "current_phase": current_phase_key,
         "current_sub_event_id": current_event.id if current_event else None,
         "stations": [],
+        "checkout_stations": [],
     }
     # Between events there is simply nothing to show. The app polls this endpoint,
     # so an empty list beats an error the client would have to special-case.
@@ -1532,8 +1533,17 @@ def my_team_stations_view(request: HttpRequest):
         return JsonResponse(payload)
 
     stations = list(
-        Station.objects.filter(sub_event=current_event, active=True, kind=Station.KIND_PLAY).order_by("order", "id")
+        Station.objects.filter(sub_event=current_event, active=True,
+                               kind__in=[Station.KIND_PLAY, Station.KIND_CHECKOUT]).order_by("order", "id")
     )
+    payload["checkout_stations"] = [
+        {"station_id": station.id, "station_code": station.code,
+         "station_name": station.name, "station_location": station.location,
+         "kind": station.kind}
+        for station in stations if station.kind == Station.KIND_CHECKOUT
+    ]
+    # Event checkout is visible, but never counts as a play/replay attempt.
+    stations = [station for station in stations if station.kind == Station.KIND_PLAY]
     station_ids = [station.id for station in stations]
 
     # Four grouped queries rather than one (or more) per station.
@@ -2257,13 +2267,15 @@ def my_team_station_state_view(request: HttpRequest):
 
     replay_payload = {}
     attendance = None
+    is_event_checkout = False
     if station_id is not None:
         item = None
         station_for_replay = Station.objects.select_related("sub_event__phase").filter(
             id=station_id, active=True,
         ).first()
         if station_for_replay is not None:
-            if station_for_replay.kind == Station.KIND_PLAY:
+            is_event_checkout = station_for_replay.kind == Station.KIND_CHECKOUT
+            if station_for_replay.kind == Station.KIND_PLAY or is_event_checkout:
                 attendance = attendance_state(team, station_for_replay.sub_event)
             event_stations = list(
                 Station.objects.filter(sub_event=station_for_replay.sub_event, active=True)
@@ -2324,7 +2336,13 @@ def my_team_station_state_view(request: HttpRequest):
     if team.approval_status == Team.APPROVAL_APPROVED:
         enabled = _team_qr_enabled_for_event(team, station_id)
         inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
-        if attendance is not None and not attendance["eligible"] and not inside:
+        if is_event_checkout:
+            if attendance["checked_out"] or StationSession.objects.filter(
+                team=team, sub_event=station_for_replay.sub_event,
+                status=StationSession.STATUS_ACTIVE,
+            ).exists():
+                enabled = False
+        elif attendance is not None and not attendance["eligible"] and not inside:
             enabled = False
         if enabled:
             if not team.qr_token:
@@ -2334,7 +2352,7 @@ def my_team_station_state_view(request: HttpRequest):
             direction = None
             if station_id is not None:
                 inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
-                direction = "out" if inside else "in"
+                direction = "out" if inside or is_event_checkout else "in"
                 payload = f"{payload}|s:{station_id}|d:{direction}"
             qr = {"enabled": True, "payload": payload, "direction": direction}
 

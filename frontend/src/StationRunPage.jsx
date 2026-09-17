@@ -159,7 +159,9 @@ function deriveStep({ station, state, blockedStationId, lockRemaining, replayArm
   const status = session?.status || null
   const qrReady = Boolean(state.qr?.enabled && state.qr?.payload)
 
+  if (station.kind === 'checkout' && state.attendance?.checked_out) return 'event_checked_out'
   if (status !== 'active' && blockedStationId != null) return 'blocked'
+  if (station.kind === 'checkout') return qrReady ? 'event_checkout_qr' : 'event_checkout_disabled'
 
   const attendanceBlocked = state.attendance?.eligible === false
   if (status === 'active') {
@@ -526,6 +528,15 @@ function StationListScreen({ payload, loading, error, activeStationId, onOpen, o
       {stations.map((station) => (
         <StationRow key={station.station_id} station={station} onOpen={onOpen} />
       ))}
+      {(payload?.checkout_stations || []).map((station) => (
+        <button key={station.station_id} type="button" onClick={() => onOpen(station.station_id)}
+          className={`${STATION_CARD} w-full px-5 py-4 text-left transition hover:bg-[#F3F4F1]`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-trail">Checkout sự kiện</p>
+          <p className="mt-1 text-lg font-semibold text-ink">{station.station_name}</p>
+          {station.station_location && <p className="mt-1 text-sm text-ink/60">{station.station_location}</p>}
+          <p className="mt-1 text-sm leading-6 text-ink/60">Mở QR để CTV ghi nhận đội kết thúc sự kiện.</p>
+        </button>
+      ))}
     </div>
   )
 }
@@ -597,7 +608,22 @@ function StationStageScreen({
       )}
 
       <ConnectionNote message={pollError} />
-      {attemptLabel(station) && <p className="text-sm text-ink/65">{attemptLabel(station)}</p>}
+      {station?.kind !== 'checkout' && attemptLabel(station) && <p className="text-sm text-ink/65">{attemptLabel(station)}</p>}
+
+      {step === 'event_checkout_qr' && (
+        <StatusPanel tone="trail" eyebrow="Checkout sự kiện" title="Đưa QR checkout sự kiện cho CTV"
+          body="CTV quét mã này để ghi nhận đội kết thúc sự kiện. Sau checkout, đội không thể chơi thêm trạm.">
+          <QrBlock payload={payload} teamCode={teamCode} hint="Quét xong màn hình sẽ tự cập nhật trạng thái checkout." />
+        </StatusPanel>
+      )}
+      {step === 'event_checked_out' && (
+        <StatusPanel tone="trail" eyebrow="Checkout sự kiện" title="Đội đã checkout sự kiện"
+          body="Đã ghi nhận đội kết thúc sự kiện." />
+      )}
+      {step === 'event_checkout_disabled' && (
+        <StatusPanel tone="gold" eyebrow="Checkout sự kiện" title="Chưa có QR checkout sự kiện"
+          body="Hoàn thành và rời trạm đang chơi trước khi checkout. QR chỉ mở khi trạm thuộc sự kiện hiện tại và đội được phép tham gia." />
+      )}
 
       {step === 'loading' && (
         <div className={`${STATION_CARD} px-5 py-14 text-center text-base text-ink/45`}>
@@ -864,7 +890,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
   const [attendanceError, setAttendanceError] = useState('')
   const attendanceRequestRef = useRef(0)
 
-  const stations = useMemo(() => listPayload?.stations || [], [listPayload])
+  const stations = useMemo(() => [...(listPayload?.stations || []), ...(listPayload?.checkout_stations || [])], [listPayload])
 
   const loadStations = useCallback(async () => {
     setListLoading(true)
