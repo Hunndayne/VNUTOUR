@@ -849,6 +849,9 @@ function FormSubmissionPanel({
         time_closed: 'Biểu mẫu đã hết giờ làm bài.',
       }
       const messageMap = {
+        event_not_checked_in: 'Đội chưa điểm danh sự kiện. Hãy hoàn thành điểm danh trước khi làm bài.',
+        event_insufficient_checkin: 'Đội chưa đủ thành viên điểm danh sự kiện để làm bài.',
+        team_checked_out: 'Đội đã checkout sự kiện nên không thể nộp bài.',
         team_not_approved: 'Đội của bạn chưa được duyệt nên chưa thể gửi bài.',
         team_not_in_phase: 'Đội của bạn không thuộc phase của biểu mẫu này.',
         form_not_found: 'Biểu mẫu này không còn khả dụng.',
@@ -1200,7 +1203,20 @@ export default function FormResponses() {
 
             {/* Keyed by the open form's id so a switch fully remounts the panel
                 below instead of leaking one form's draft state into another. */}
-            <FormSubmissionPanel
+            {selectedForm.attendance?.eligible === false ? (
+              <section className={`${CARD} px-6 py-8 text-center`}>
+                <h2 className="text-xl font-semibold text-ink">
+                  {selectedForm.attendance.checked_out ? 'Đội đã checkout sự kiện' : 'Chưa đủ điểm danh để làm bài'}
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-ink/65">
+                  {selectedForm.attendance.checked_out
+                    ? 'Đội đã kết thúc sự kiện nên không thể tiếp tục làm bài.'
+                    : `Đội đã điểm danh ${selectedForm.attendance.checked_in_count}/${selectedForm.attendance.required_count}. Hoàn thành điểm danh sự kiện trước khi mở bài.`}
+                </p>
+                <a href="/stations?stationView=attendance" className="mt-5 inline-flex rounded-xl bg-ink px-5 py-3 font-semibold text-white">Đi đến điểm danh sự kiện</a>
+                <button type="button" onClick={() => loadForms()} className="mt-3 block w-full px-4 py-3 text-sm font-semibold text-trail">Kiểm tra lại điểm danh</button>
+              </section>
+            ) : <FormSubmissionPanel
               key={`${selectedId}:${selectedForm.attempt_id ?? 'unstarted'}`}
               form={selectedForm}
               serverTimeOffset={serverTimeOffset}
@@ -1218,7 +1234,7 @@ export default function FormResponses() {
                   }
                 }))
               }}
-            />
+            />}
           </main>
         </div>
       </div>

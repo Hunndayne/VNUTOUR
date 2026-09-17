@@ -24,7 +24,8 @@ from api.services.auth_service import generate_session
 # eligible for this live station" — settled here in one roster query.
 # Four additional batched reads refresh replay rights; count stays independent
 # of the number of stations (the second cost test guards against N+1 queries).
-EXPECTED_POLL_QUERIES = 12
+# One additional event-attendance read prevents offering entry before check-in.
+EXPECTED_POLL_QUERIES = 13
 
 
 class StationStateTestBase(TestCase):

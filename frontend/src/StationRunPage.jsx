@@ -161,8 +161,10 @@ function deriveStep({ station, state, blockedStationId, lockRemaining, replayArm
 
   if (status !== 'active' && blockedStationId != null) return 'blocked'
 
+  const attendanceBlocked = state.attendance?.eligible === false
   if (status === 'active') {
     if (station.has_form) {
+      if (attendanceBlocked && !hasSubmitted(state.submission)) return 'attendance_required'
       if (!hasSubmitted(state.submission)) return 'form'
       if (!station.checkout_after_submit) return 'done_no_checkout'
       return qrReady ? 'exit_qr' : 'exit_disabled'
@@ -177,11 +179,14 @@ function deriveStep({ station, state, blockedStationId, lockRemaining, replayArm
     // coop's camera re-read it and check the team straight back in. The team must
     // tap "Chơi lại" (only offered when replay is unlocked), which arms this.
     if (replayArmed && canReplay(station)) {
+      if (attendanceBlocked) return 'attendance_required'
       if (station.checkin_policy === 'free_play') return 'form'
       return qrReady ? 'entry_qr' : 'entry_disabled'
     }
     return 'closed'
   }
+
+  if (attendanceBlocked) return 'attendance_required'
 
   // `null` (chưa vào) hoặc `cancelled` (CTV đã huỷ phiên): đội đang đứng ngoài.
   // Luật chơi lại chặn NGAY TỪ LÚC quét (server sẽ trả 409), nhưng cờ này đã có
@@ -536,6 +541,7 @@ function StationStageScreen({
   pollError,
   onBack,
   onOpenForm,
+  onOpenAttendance,
   onReplay,
   serverTimeOffset = 0,
 }) {
@@ -623,6 +629,23 @@ function StationStageScreen({
           <button type="button" onClick={onBack} className={`mt-4 w-full ${PRIMARY_BUTTON}`}>
             Về danh sách trạm
           </button>
+        </StatusPanel>
+      )}
+
+      {step === 'attendance_required' && (
+        <StatusPanel
+          tone="gold"
+          eyebrow="Điểm danh sự kiện"
+          title={state.attendance?.checked_out ? 'Đội đã checkout sự kiện' : 'Chưa đủ điểm danh để chơi trạm'}
+          body={state.attendance?.checked_out
+            ? 'Đội đã kết thúc sự kiện nên không thể bắt đầu hoặc tiếp tục làm bài.'
+            : `Đội đã điểm danh ${state.attendance?.checked_in_count ?? 0}/${state.attendance?.required_count ?? 0}. Hoàn thành điểm danh sự kiện trước khi vào trạm.`}
+        >
+          {!state.attendance?.checked_out && (
+            <button type="button" onClick={onOpenAttendance} className={`w-full ${PRIMARY_BUTTON}`}>
+              Đi đến điểm danh sự kiện
+            </button>
+          )}
         </StatusPanel>
       )}
 
@@ -1109,6 +1132,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
             pollError={pollError}
             onBack={backToList}
             onOpenForm={handleOpenForm}
+            onOpenAttendance={() => setView('attendance')}
             onReplay={() => setReplayArmed(true)}
             serverTimeOffset={serverTimeOffset}
           />

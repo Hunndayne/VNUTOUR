@@ -58,6 +58,52 @@ class IndividualAttendanceTestBase(StationJourneyTestBase):
 
 
 class IndividualAttendanceAcceptanceTests(IndividualAttendanceTestBase):
+    def test_unchecked_team_cannot_get_entry_qr_or_form_questions(self):
+        for station in (self.play, self.free):
+            state = self._request(self.a, f"/api/my-team/station-state?station_id={station.id}").json()
+            self.assertFalse(state.get("attendance", {}).get("eligible", True))
+            self.assertEqual(state["attendance"]["required_count"], 2)
+            self.assertFalse(state["qr"]["enabled"])
+        forms = self._request(self.a, "/api/my-team/forms").json()["accessible_forms"]
+        form = next(f for f in forms if f["station_id"] == self.free.id)
+        self.assertEqual(form["submission_config"]["items"], [])
+        self.assertEqual(form["closure"]["reason"], "event_not_checked_in")
+        self.assertEqual(self._request(self.a, f"/api/my-team/forms/{self.free.id}/start", {}).status_code, 409)
+        self.assertEqual(self._enter(self.play).status_code, 409)
+
+        self._scan(self._qr(self.a)["payload"])
+        partial = self._request(self.a, f"/api/my-team/station-state?station_id={self.free.id}").json()
+        self.assertFalse(partial["attendance"]["eligible"])
+        self.assertEqual(partial["attendance"]["checked_in_count"], 1)
+        self.assertFalse(partial["qr"]["enabled"])
+        self._scan(self._qr(self.b)["payload"])
+        ready = self._request(self.a, f"/api/my-team/station-state?station_id={self.free.id}").json()
+        self.assertTrue(ready["attendance"]["eligible"])
+        self.assertTrue(ready["qr"]["enabled"])
+        forms = self._request(self.a, "/api/my-team/forms").json()["accessible_forms"]
+        form = next(f for f in forms if f["station_id"] == self.free.id)
+        self.assertEqual(len(form["submission_config"]["items"]), 1)
+
+    def test_existing_attempt_cannot_bypass_revoked_event_attendance(self):
+        from api.models import StationSession
+        self._scan(self._qr(self.a)["payload"])
+        self._scan(self._qr(self.b)["payload"])
+        self.play.submission_config = {"items": [{"id": "q", "type": "text", "label": "Answer"}]}
+        self.play.save()
+        self.assertEqual(self._enter(self.play).status_code, 201)
+        EventCheckIn.objects.filter(team=self.team).update(status=EventCheckIn.STATUS_REVERTED)
+        state = self._request(self.a, f"/api/my-team/station-state?station_id={self.play.id}").json()
+        self.assertFalse(state["attendance"]["eligible"])
+        self.assertTrue(state["qr"]["enabled"])
+        self.assertEqual(state["qr"]["direction"], "out")
+        for endpoint in ("start", "submit"):
+            response = self._request(self.a, f"/api/my-team/forms/{self.play.id}/{endpoint}", {
+                "response_payload": {"form": [{"id": "q", "value": "answer"}]},
+            })
+            self.assertEqual(response.status_code, 409, response.content)
+            self.assertEqual(response.json()["error"], "event_not_checked_in")
+        self.assertTrue(StationSession.objects.filter(team=self.team, status="active").exists())
+
     def test_distinct_personal_scans_unlock_only_their_team_at_threshold(self):
         qa, qb, qc = [self._qr(account) for account in (self.a, self.b, self.c)]
         self.assertNotEqual(qa["payload"], qb["payload"])

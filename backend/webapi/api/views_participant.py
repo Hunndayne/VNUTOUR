@@ -25,9 +25,9 @@ from api.services.checkin_qr_service import team_qr_visible
 
 from api.services.station_service import (
     get_event_replay_state, set_session_score, set_submission_score,
-    start_free_play_station, _lock_attempt_scope,
+    start_free_play_station, _lock_attempt_scope, event_gate_error,
 )
-from api.services.attendance_service import team_eligible_for_event
+from api.services.attendance_service import attendance_state, team_eligible_for_event
 from api.services.submission_storage_service import (
     delete_stored_object, save_submission_files, save_payment_proof, proof_file_response,
 )
@@ -402,6 +402,20 @@ def _station_form_payload(station: Station, team: Team | None = None, replay: di
     from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
     event = station.sub_event
+    gate_error = event_gate_error(team, event) if team is not None else None
+    if gate_error:
+        # Do not draw or send questions to a team that cannot play yet, even
+        # when a participant opens /form directly or has a stale station session.
+        return {
+            "station_id": station.id, "station_code": station.code,
+            "station_name": station.name, "station_location": station.location,
+            "event_id": event.id, "event_name": event.name,
+            "phase_key": phase.key, "phase_label": phase.label,
+            "submission_config": public_submission_config(None),
+            "closure": {"closed": True, "reason": gate_error},
+            "attendance": attendance_state(team, event),
+            "is_survey": _is_survey_station(station),
+        }
     # Drawing here (rather than only on submit) is what pins the question set:
     # whichever member opens the form first fixes it for the whole team.
     closure = _form_closure_state(station, team)
@@ -1754,6 +1768,10 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
     if not station.active:
         return JsonResponse({"error": "station_inactive"}, status=409)
 
+    gate_error = event_gate_error(team, station.sub_event)
+    if gate_error:
+        return JsonResponse({"error": gate_error}, status=409)
+
     closure = _form_closure_state(station, team)
     if closure["closed"] and closure.get("reason") != "not_started":
         return JsonResponse({"error": "form_closed"}, status=403)
@@ -1818,6 +1836,10 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     team, station = _lock_attempt_scope(team.id, station.id)
     if not station.active:
         return JsonResponse({"error": "station_inactive"}, status=409)
+
+    gate_error = event_gate_error(team, station.sub_event)
+    if gate_error:
+        return JsonResponse({"error": gate_error}, status=409)
 
     current_phase = ProgramPhase.objects.filter(is_current=True).first()
     current_phase_key = current_phase.key if current_phase else None
@@ -2014,6 +2036,10 @@ def my_team_form_draft_view(request: HttpRequest, station_id: int):
     station = _team_form_station_or_none(team, station_id)
     if not station:
         return JsonResponse({"error": "form_not_found"}, status=404)
+
+    gate_error = event_gate_error(team, station.sub_event)
+    if gate_error:
+        return JsonResponse({"error": gate_error}, status=409)
 
     is_survey = _is_survey_station(station)
 
@@ -2230,12 +2256,15 @@ def my_team_station_state_view(request: HttpRequest):
             return JsonResponse({"error": "invalid_station_id"}, status=400)
 
     replay_payload = {}
+    attendance = None
     if station_id is not None:
         item = None
         station_for_replay = Station.objects.select_related("sub_event__phase").filter(
             id=station_id, active=True,
         ).first()
         if station_for_replay is not None:
+            if station_for_replay.kind == Station.KIND_PLAY:
+                attendance = attendance_state(team, station_for_replay.sub_event)
             event_stations = list(
                 Station.objects.filter(sub_event=station_for_replay.sub_event, active=True)
                 .order_by("order", "id")
@@ -2294,6 +2323,9 @@ def my_team_station_state_view(request: HttpRequest):
     qr = {"enabled": False}
     if team.approval_status == Team.APPROVAL_APPROVED:
         enabled = _team_qr_enabled_for_event(team, station_id)
+        inside = bool(session and session["status"] == StationSession.STATUS_ACTIVE)
+        if attendance is not None and not attendance["eligible"] and not inside:
+            enabled = False
         if enabled:
             if not team.qr_token:
                 rotate_qr_token(team)
@@ -2323,6 +2355,7 @@ def my_team_station_state_view(request: HttpRequest):
             "quiz_result": (submission["response_payload"] or {}).get("quiz_result"),
         } if submission else None,
         "qr": qr,
+        "attendance": attendance,
         "server_now": timezone.now().isoformat(),
         **replay_payload,
     })

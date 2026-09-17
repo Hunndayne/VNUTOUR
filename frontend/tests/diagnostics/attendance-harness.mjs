@@ -10,27 +10,28 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import StationRunPage from ${JSON.stringify(page)};
 const root=createRoot(document.getElementById('app'));
-let fixture, failure=false, generation=0, attendanceCalls=0;
+let fixture, stationFixture=null, failure=false, generation=0, attendanceCalls=0, openedForms=0;
 window.attendanceDiagnosticRequest=async path=>{
   if(path==='/my/checkin-qr') {
     attendanceCalls++;
     if(failure)throw new Error('Offline fixture');
     return JSON.parse(JSON.stringify(fixture));
   }
-  if(path==='/my-team/stations') return {team_code:'TEST',current_sub_event_id:1,stations:[],total_stations:0};
-  if(path.startsWith('/my-team/station-state')) return {session:null,qr:{enabled:false}};
+  if(path==='/my-team/stations') return {team_code:'TEST',current_sub_event_id:1,stations:stationFixture?[stationFixture]:[],total_stations:0};
+  if(path.startsWith('/my-team/station-state')) return {session:null,qr:{enabled:fixture.eligible,payload:fixture.eligible?'t:test|s:1|d:in':null},attendance:JSON.parse(JSON.stringify(fixture))};
   throw new Error('Unexpected API '+path);
 };
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const text=()=>document.getElementById('app').textContent;
 const qr=()=>!!document.querySelector('#app svg');
+const formButton=()=>[...document.querySelectorAll('#app button')].some(b=>b.textContent.includes('Mở phần thi của trạm'));
 const assert=(ok,message)=>{if(!ok)throw new Error(message)};
 function click(label){const button=[...document.querySelectorAll('#app button')].find(b=>b.textContent.includes(label));if(!button)throw Error('Missing '+label);button.click()}
 async function mount(mode='individual'){
- failure=false;
+ failure=false;stationFixture=null;openedForms=0;
  fixture={mode,enabled:true,payload:'fixture-not-a-real-qr',participant_name:'Nguyễn An',mssv:'SV001',team_code:'T0001',event_name:'Chạy trạm',checked_in:false,checked_out:false,checked_in_count:0,required_count:2,eligible:false};
  history.replaceState(null,'','/');
- root.render(<StationRunPage key={++generation} embedded/>);
+ root.render(<StationRunPage key={++generation} embedded onOpenForm={()=>openedForms++}/>);
  await delay(150);click('Điểm danh sự kiện');await delay(150);
 }
 async function refresh(){click('Làm mới trạng thái điểm danh');await delay(150)}
@@ -38,6 +39,20 @@ document.getElementById('run').onclick=async()=>{
  const output=document.getElementById('results');output.textContent='';
  document.getElementById('run').disabled=true;
  async function check(name,fn){try{await fn();output.textContent+='PASS: '+name+'\\n'}catch(e){output.textContent+='FAIL: '+name+' — '+e.message+'\\n'}}
+ await check('Free-play stays locked at 0/2 and 1/2, opens after 2/2',async()=>{
+   await mount();stationFixture={station_id:1,station_name:'Trạm thử',station_code:'S1',checkin_policy:'free_play',has_form:true};
+   click('Về danh sách trạm');await delay(150);click('Trạm thử');await delay(150);
+   assert(text().includes('Chưa đủ điểm danh để chơi trạm'),'Missing attendance gate');assert(!formButton(),'Form offered before attendance');
+   fixture.checked_in_count=1;await delay(2200);assert(!formButton(),'Form offered at 1/2');
+   fixture.checked_in_count=2;fixture.eligible=true;await delay(2200);assert(formButton(),'Form not unlocked at 2/2');
+   click('Mở phần thi của trạm');assert(openedForms===1,'Form action did not run');
+ });
+ await check('Scan-gated station hides entry QR and links to event attendance',async()=>{
+   await mount();stationFixture={station_id:1,station_name:'Trạm quét',station_code:'S1',checkin_policy:'staff_scan',has_form:true};
+   click('Về danh sách trạm');await delay(150);click('Trạm quét');await delay(150);
+   assert(!qr(),'Entry QR shown before event attendance');assert(!formButton(),'Form offered before scan');
+   click('Đi đến điểm danh sự kiện');await delay(150);assert(text().includes('QR điểm danh cá nhân'),'Wrong attendance destination');
+ });
  await check('Attendance opens from station list and returns there',async()=>{await mount();click('Về danh sách trạm');await delay(150);assert(!qr(),'QR remained on list');assert(text().includes('Các trạm đang mở'),'List absent');assert(!document.querySelector('nav').textContent.includes('Điểm danh sự kiện'),'Old attendance tab remained');assert(!text().includes('Chưa có trạm nào đang mở'),'Event-only list incorrectly empty');click('Điểm danh sự kiện');await delay(150);assert(qr(),'Attendance card did not open QR')});
  await check('Personal QR shows own identity and 0/2',async()=>{await mount();assert(qr(),'QR absent');assert(text().includes('Nguyễn An')&&text().includes('SV001'),'Identity absent');assert(text().includes('0/2'),'Count absent')});
  await check('Polling hides QR after this member checks in',async()=>{
