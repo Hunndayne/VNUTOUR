@@ -5,9 +5,13 @@ on:
     branches: [main, staging]
     paths:
       - "k8s/**"
+      - ".github/workflows/bootstrap-argocd.yml"
+      - ".github/workflows/ci-infra.yml"
   pull_request:
     paths:
       - "k8s/**"
+      - ".github/workflows/bootstrap-argocd.yml"
+      - ".github/workflows/ci-infra.yml"
 
 concurrency:
   group: ci-infra-${{ github.ref }}
@@ -63,6 +67,12 @@ jobs:
             "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
           tar -xzf kustomize.tar.gz -C /usr/local/bin/
           chmod +x /usr/local/bin/kustomize
+
+      - name: Test ArgoCD UI bootstrap safety
+        run: |
+          bash k8s/argocd/ui/deploy.sh --prepare-tools
+          shellcheck k8s/argocd/ui/deploy.sh k8s/argocd/ui/bootstrap.sh
+          python3 -m unittest discover -s k8s/argocd/ui/test -p 'test_*.py' -v
 
       - name: Install kubeconform
         run: |
