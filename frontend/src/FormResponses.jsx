@@ -733,10 +733,16 @@ function FormSubmissionPanel({
   }
 
   const handleSubmitRef = useRef(null)
+  // Auto-submit fires once. A rejected attempt flips submitState to 'error',
+  // which re-ran this effect and resubmitted ~3x/s forever against a form the
+  // server had already closed.
+  const autoSubmitTriedRef = useRef(false)
 
   useEffect(() => {
+    if (autoSubmitTriedRef.current) return
     if (timeStatus === 'closed' && closure?.reason !== 'not_started' && !mySubmission && submitState !== 'success' && submitState !== 'submitting') {
       if (handleSubmitRef.current) {
+        autoSubmitTriedRef.current = true
         handleSubmitRef.current(true) // skip validation
       }
     }
@@ -863,6 +869,13 @@ function FormSubmissionPanel({
         attachment_not_allowed: 'Biểu mẫu này không nhận file đính kèm.',
       }
       setSubmitMessage(messageMap[code] || 'Không gửi được bài nộp. Vui lòng thử lại.')
+      // A closed station form can never take this bài: send the team back to
+      // the station screen, which offers the exit QR for this case.
+      if (code === 'form_closed' && stationId && !isSurvey) {
+        window.setTimeout(() => {
+          navigate(buildUrl('/stations', { station: stationId }))
+        }, 2500)
+      }
     }
   }
 

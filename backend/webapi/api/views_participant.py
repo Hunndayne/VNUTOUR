@@ -2316,6 +2316,23 @@ def my_team_station_state_view(request: HttpRequest):
         "station_id", "status", "submitted_at", "score", "response_payload",
     ).first()
 
+    # A form that stopped accepting answers (timer ran out, closed by BTC...)
+    # before the team submitted must not trap them inside the station: the
+    # screen offers the exit QR instead of sending them back to a dead form.
+    form_closed_reason = None
+    if (
+        session and station_id is not None
+        and session["status"] == StationSession.STATUS_ACTIVE
+        and not (submission and submission["status"] in (
+            StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED,
+        ))
+    ):
+        form_station = station_for_replay  # already loaded above for this station_id
+        if form_station is not None and form_station.submission_config:
+            closure = _form_closure_state(form_station, team)
+            if closure["closed"] and closure["reason"] != "not_started":
+                form_closed_reason = closure["reason"]
+
     def stamp(value):
         return value.isoformat() if value else None
 
@@ -2374,6 +2391,8 @@ def my_team_station_state_view(request: HttpRequest):
         } if submission else None,
         "qr": qr,
         "attendance": attendance,
+        "form_closed": form_closed_reason is not None,
+        "form_closed_reason": form_closed_reason,
         "server_now": timezone.now().isoformat(),
         **replay_payload,
     })

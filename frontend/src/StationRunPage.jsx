@@ -169,6 +169,10 @@ function deriveStep({ station, state, blockedStationId, lockRemaining, replayArm
   if (status === 'active') {
     if (station.has_form) {
       if (attendanceBlocked && !hasSubmitted(state.submission)) return 'attendance_required'
+      // Form closed (timer ran out, BTC closed it) before a submission: the
+      // team cannot answer any more, so let them leave instead of stranding
+      // them on a form that rejects every submit.
+      if (!hasSubmitted(state.submission) && state.form_closed) return qrReady ? 'exit_qr' : 'exit_disabled'
       if (!hasSubmitted(state.submission)) return 'form'
       if (!station.checkout_after_submit) return 'done_no_checkout'
       return qrReady ? 'exit_qr' : 'exit_disabled'
@@ -792,7 +796,9 @@ function StationStageScreen({
           tone="trail"
           eyebrow="Bước cuối"
           title="Đưa QR rời trạm cho CTV"
-          body="Xong phần thi thì nhờ CTV quét mã này để đóng lượt và đi trạm tiếp theo."
+          body={state?.form_closed && !hasSubmitted(state?.submission)
+            ? 'Bài làm của trạm đã đóng (hết giờ) nên không nộp được nữa. Nhờ CTV quét mã này để đóng lượt và đi trạm tiếp theo.'
+            : 'Xong phần thi thì nhờ CTV quét mã này để đóng lượt và đi trạm tiếp theo.'}
         >
           <QrBlock
             payload={payload}

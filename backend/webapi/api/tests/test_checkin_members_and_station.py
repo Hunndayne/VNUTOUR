@@ -1,4 +1,5 @@
 """Checked-in member names on scans, and the auto-created check-in station."""
+from django.utils import timezone
 from api.models import ProgramPhase, Station, SubEvent
 from api.services.program_service import create_sub_event, update_sub_event
 from api.tests.test_individual_attendance_acceptance import IndividualAttendanceTestBase
@@ -68,3 +69,44 @@ class AutoCheckinStationTests(IndividualAttendanceTestBase):
         self._checkin_stations(event).update(active=False)
         update_sub_event(event.id, name="Tắt 2")
         self.assertEqual(self._checkin_stations(event).count(), 1)
+
+
+class ExpiredFormDoesNotTrapTeamTests(IndividualAttendanceTestBase):
+    """A 60s station form that ran out before a submit must still let the team leave."""
+
+    def setUp(self):
+        super().setUp()
+        self.event.require_checkin = False
+        self.event.save()
+        self.timed = Station.objects.create(
+            sub_event=self.event, code="T", name="Timed",
+            submission_config={
+                "items": [{"id": "q", "type": "text", "label": "Answer"}],
+                "limits": {"durationSeconds": 60},
+            },
+        )
+
+    def _state(self):
+        response = self._request(self.a, f"/api/my-team/station-state?station_id={self.timed.id}")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def test_open_form_is_not_reported_closed(self):
+        self.assertEqual(self._enter(self.timed).status_code, 201)
+        state = self._state()
+        self.assertFalse(state["form_closed"])
+
+    def test_expired_form_offers_exit_qr_and_exit_works(self):
+        from datetime import timedelta
+        from api.models import StationSession
+        self.assertEqual(self._enter(self.timed).status_code, 201)
+        StationSession.objects.filter(team=self.team, station=self.timed).update(
+            entered_at=timezone.now() - timedelta(minutes=5),
+        )
+        state = self._state()
+        self.assertTrue(state["form_closed"])
+        self.assertEqual(state["form_closed_reason"], "time_closed")
+        self.assertTrue(state["qr"]["payload"].endswith("|d:out"))
+        response = self._scan(state["qr"]["payload"])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["kind"], "exit")
