@@ -42,10 +42,24 @@ tar --version
 dpkg-query -W apache2-utils # htpasswd does not have a --version option.
 shellcheck --version
 
-# Workflow uses this step to prepare tools before passing Secrets.
-if [[ ${1:-} == --prepare-tools ]]; then
-  exit 0
-fi
+# Workflow uses --prepare-tools to install and verify tools before passing Secrets.
+if [[ ${1:-} == --prepare-tools ]]; then exit 0; fi
+
+# --verify reads login.json from a session saved by --deploy; skips payload and SSH.
+if [[ ${1:-} == --verify ]]; then
+  : "${ARGOCD_HOSTNAME:?Missing ARGOCD_HOSTNAME}"
+  if [[ ${GITHUB_ACTIONS:-false} == true ]]; then
+    printf '::add-mask::%s\n' "$ARGOCD_HOSTNAME"
+  fi
+  SESSION_DIR="${RUNNER_TEMP:-/tmp}/argocd-session"
+  work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/argocd-verify.XXXXXXXX")
+  trap 'rm -rf -- "$work"' EXIT
+  if [[ ! -f "$SESSION_DIR/login.json" ]]; then
+    echo '--verify requires a session from --deploy; login.json not found.' >&2
+    exit 1
+  fi
+  cp "$SESSION_DIR/login.json" "$work/login.json"
+else
 
 # 2. Get variables from GitHub Variables/Secrets.
 : "${ARGOCD_HOSTNAME:?Missing ARGOCD_HOSTNAME}"
@@ -142,6 +156,16 @@ tar -czf - -C "$work/payload" . |
     -o NumberOfPasswordPrompts=1 \
     -o ConnectTimeout=15 \
     "$VPS_SSH_USER@$VPS_SSH_HOST" "$remote_commands"
+
+  # --deploy: persist login.json for the verify step, then exit cleanly.
+  if [[ "${1:-}" == --deploy ]]; then
+    SESSION_DIR="${RUNNER_TEMP:-/tmp}/argocd-session"
+    mkdir -p "$SESSION_DIR"
+    chmod 700 "$SESSION_DIR"
+    cp "$work/login.json" "$SESSION_DIR/login.json"
+    exit 0
+  fi
+fi  # end if [[ "${1:-}" == --verify ]]; else
 
 # 7. Check HTTPS, redirect, and authentication. Do not print tokens/passwords to the log.
 url="https://$ARGOCD_HOSTNAME"
