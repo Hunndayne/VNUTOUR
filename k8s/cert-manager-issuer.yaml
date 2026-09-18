@@ -1,11 +1,6 @@
-# Deliberately unnumbered: this is a cluster-level prerequisite applied once
-# after cert-manager itself is installed, not part of the ordered 00-15 apply.
-#
-# Two issuers because Let's Encrypt rate-limits the production endpoint to five
-# failures per account per hostname per hour. Getting DNS or the port forward
-# wrong burns that budget quickly, and the wait is an hour with the site
-# serving a self-signed certificate. Point the Ingress at letsencrypt-staging
-# first, confirm a certificate is issued at all, then switch to prod.
+# Shared ClusterIssuers for services on the same cluster (ArgoCD, future Grafana).
+# Render acme@example.invalid from ACME_EMAIL before applying; the ArgoCD bootstrap pipeline does this after cert-manager is installed on the VPS.
+# Staging is for ACME troubleshooting only; its certificates are not trusted by browsers. Production Certificates reference letsencrypt-prod.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -13,16 +8,14 @@ metadata:
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: tranthanhhung1641@gmail.com
+    email: acme@example.invalid
     privateKeySecretRef:
       name: letsencrypt-staging-account
     solvers:
-      # HTTP-01 works here only because the router forwards port 80 inward.
-      # It is also why port 80 has to stay open even though the site redirects
-      # everything to HTTPS — renewals every 60 days need the same path.
+      # Public port 80 must reach the solver for issuance AND renewal.
       - http01:
           ingress:
-            class: nginx
+            ingressClassName: nginx
 
 ---
 apiVersion: cert-manager.io/v1
@@ -32,10 +25,10 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: tranthanhhung1641@gmail.com
+    email: acme@example.invalid
     privateKeySecretRef:
       name: letsencrypt-prod-account
     solvers:
       - http01:
           ingress:
-            class: nginx
+            ingressClassName: nginx
