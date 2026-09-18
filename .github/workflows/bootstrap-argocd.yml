@@ -34,6 +34,15 @@ jobs:
           bash -n k8s/argocd/ui/deploy.sh k8s/argocd/ui/bootstrap.sh
           shellcheck k8s/argocd/ui/deploy.sh k8s/argocd/ui/bootstrap.sh
 
+      - name: Setup SSH known_hosts
+        env:
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$VPS_SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
       - name: Bootstrap over SSH and verify HTTPS authentication
         env:
           ARGOCD_HOSTNAME: ${{ secrets.ARGOCD_HOSTNAME || vars.ARGOCD_HOSTNAME }}
