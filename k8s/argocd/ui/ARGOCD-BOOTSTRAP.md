@@ -80,14 +80,14 @@ ArgoCD tham chiếu `letsencrypt-prod`; Grafana sau này có thể dùng cùng C
 
 Hai script chạy **từ trên xuống, không có hàm tự định nghĩa**. Mỗi khối lệnh có comment đánh số:
 
-- `deploy.sh` chạy trên runner: kiểm tra/cài công cụ thiếu → đọc Variables/Secrets → tạo manifest và patch tạm → gửi qua SSH → kiểm tra HTTPS và đăng nhập.
+- `deploy.sh` chạy trên runner với hai chế độ tách biệt trong CI: `--deploy` (kiểm tra công cụ → đọc Variables/Secrets → tạo manifest và patch tạm → gửi qua SSH → lưu `login.json` vào session) và `--verify` (đọc session → kiểm tra HTTPS và đăng nhập). Hai chế độ chạy ở hai step riêng để theo dõi từng giai đoạn độc lập.
 - `bootstrap.sh` chạy trên VPS: kiểm tra k3s → kiểm tra/cài jq và curl → `k3s kubectl get` resource → chuẩn bị cert-manager → dry-run → `patch` → restart → apply Certificate/Ingress.
 
 Kiểm tra công cụ bằng `command -v`; chỉ khi chưa có mới chạy `apt-get install --no-upgrade`. Công cụ đã có được giữ nguyên và in `--version` để xem trong log. Không còn hàm phân tích/so sánh phiên bản chung. Script dùng `k3s kubectl` có sẵn, không cài kubectl riêng hay cài lại cụm. Runner Ubuntu cần curl hỗ trợ `--retry-all-errors` (7.71 trở lên).
 
 cert-manager đã có thì kiểm tra CRD, deployment và rollout; thiếu một phần sẽ dừng trước bước patch. Chỉ khi chưa có cả CRD và deployment mới cài v1.21.2, với điều kiện Kubernetes 1.33–1.36 theo [bảng hỗ trợ](https://cert-manager.io/docs/releases/). Với bản cert-manager có sẵn, version image hiện trong `get deployments -o wide`; server dry-run kiểm tra manifest có được API chấp nhận hay không.
 
-Workflow vẫn gọi `bash k8s/argocd/ui/deploy.sh --prepare-tools` trước khi truyền Secrets. Khi chạy đầy đủ, script kiểm tra lại công cụ; nếu đã đủ thì không gọi apt.
+Workflow gọi `deploy.sh --bootstrap` (sau bước cài công cụ riêng) rồi `deploy.sh --verify` ở step kế tiếp. Khi chạy `--bootstrap`, script kiểm tra lại công cụ bằng `command -v`; nếu đã đủ thì không gọi apt. Flag `--prepare-tools` vẫn giữ trong script để hỗ trợ chạy độc lập và dừng trước khi truyền Secrets.
 
 Để đọc/chạy thủ công trên VPS, dùng payload **đã render**, gồm `bootstrap.sh`, `cluster-issuers.yaml`, `certificate.yaml`, `ingress.yaml`, `password.json`, `cm.json`, `params.json`. Không dùng YAML placeholder trực tiếp:
 
@@ -109,22 +109,25 @@ Các lệnh Kubernetes hiển thị trạng thái resource bình thường. Riê
 
 ## Luồng triển khai ArgoCD UI
 
-[deploy.sh](deploy.sh) chạy trên **GitHub runner**, gửi payload qua SSH và gọi [bootstrap.sh](bootstrap.sh) trên **VPS**. Khi bootstrap hoàn tất, runner tiếp tục kiểm tra URL public. Hai script thực hiện một luồng duy nhất:
+[deploy.sh](deploy.sh) chạy trên **GitHub runner** ở hai step riêng: `--bootstrap` gửi payload qua SSH và gọi [bootstrap.sh](bootstrap.sh) trên **VPS**; `--verify` đọc session và kiểm tra URL public sau khi bootstrap hoàn tất. Hai script thực hiện một luồng duy nhất:
 
-1. **Runner chuẩn bị:** kiểm tra/cài công cụ thiếu và in phiên bản. Với `--prepare-tools`, dừng tại đây. Khi chạy đầy đủ, kiểm tra Variables/Secrets do workflow truyền vào, tạo thư mục tạm, điền hostname/email vào manifest và tạo các patch. Mật khẩu UI được băm bcrypt; `login.json` chứa mật khẩu rõ chỉ giữ trên runner để kiểm tra đăng nhập.
-2. **SSH sang VPS:** xác minh host key bằng `known_hosts`, đăng nhập bằng mật khẩu, gửi và giải nén payload. Chạy `bootstrap.sh` bằng root hoặc `sudo -n`, dùng kubeconfig `/etc/rancher/k3s/k3s.yaml`.
+Step **`[SSH] Bootstrap ArgoCD on VPS`** — `deploy.sh --bootstrap`:
+
+1. **Runner chuẩn bị:** kiểm tra/cài công cụ thiếu và in phiên bản. Kiểm tra Variables/Secrets do workflow truyền vào, tạo thư mục tạm, điền hostname/email vào manifest và tạo các patch. Mật khẩu UI được băm bcrypt; `login.json` được lưu vào `$RUNNER_TEMP/argocd-session/` để bước verify đọc sau.
+2. **SSH sang VPS:** xác minh host key bằng file `known_hosts` tự tạo từ `VPS_SSH_KNOWN_HOSTS`, đăng nhập bằng mật khẩu, gửi và giải nén payload. Chạy `bootstrap.sh` bằng root hoặc `sudo -n`, dùng kubeconfig `/etc/rancher/k3s/k3s.yaml`.
 3. **VPS kiểm tra hạ tầng:** kiểm tra k3s, jq/curl, NGINX và ArgoCD; chỉ cài jq/curl nếu thiếu. Kiểm tra Service ClusterIP port 443 và flag/env xung đột. cert-manager đã có thì kiểm tra CRD/rollout; chưa có cả CRD lẫn deployment thì cài v1.21.2 sau khi xác nhận Kubernetes 1.33–1.36. Bản cài thiếu một phần sẽ dừng trước khi patch.
 4. **VPS áp dụng cấu hình:** server dry-run manifest → apply ClusterIssuer dùng chung và đợi Ready → merge patch mật khẩu, URL/auth và đường dẫn vào Secret/ConfigMap → restart ArgoCD → apply Certificate, đợi TLS Ready → apply Ingress UI. Giữ RBAC, SSO và các key khác. HTTP-01 dùng Ingress solver riêng trong lúc cấp chứng chỉ.
-5. **Runner xác minh:** kiểm tra HTTPS hợp lệ, HTTP chuyển sang HTTPS, API ẩn danh trả 401/403, đăng nhập admin và dùng token đọc Applications. Sau đó thông báo thành công và dọn file tạm.
+
+Step **`[HTTPS] Verify ArgoCD authentication`** — `deploy.sh --verify`:
+
+1. **Runner xác minh:** đọc `login.json` từ `$RUNNER_TEMP/argocd-session/`. Kiểm tra HTTPS hợp lệ, HTTP chuyển sang HTTPS, API ẩn danh trả 401/403, đăng nhập admin và dùng token đọc Applications. Thông báo thành công và dọn file tạm.
 
 ```mermaid
 flowchart TD
-    subgraph Runner["GitHub runner — deploy.sh"]
-        A["Kiểm tra công cụ<br/>Thiếu thì cài; in phiên bản"] --> B{"Có --prepare-tools?"}
-        B -- Có --> C["Kết thúc bước chuẩn bị"]
-        B -- Không --> D["Kiểm tra biến đầu vào<br/>Tạo thư mục tạm"]
+    subgraph Bootstrap["Step: [SSH] Bootstrap ArgoCD on VPS — deploy.sh --bootstrap"]
+        A["Kiểm tra công cụ<br/>Thiếu thì cài; in phiên bản"] --> D["Kiểm tra biến đầu vào<br/>Tạo thư mục tạm"]
         D --> E["Điền hostname/email vào manifest<br/>Băm mật khẩu và tạo patch"]
-        E --> F["Xác minh host key, đăng nhập SSH<br/>Gửi payload; giữ login.json trên runner"]
+        E --> F["Xác minh host key, đăng nhập SSH<br/>Gửi payload qua tar | SSH"]
     end
 
     subgraph VPS["VPS — bootstrap.sh"]
@@ -143,8 +146,10 @@ flowchart TD
         P --> Q["SSH dọn payload trên VPS<br/>Trả kết quả về runner"]
     end
 
-    subgraph Verify["Trở lại GitHub runner — deploy.sh"]
-        Q --> R["Kiểm tra HTTPS và redirect<br/>API từ chối truy cập ẩn danh"]
+    Q --> S1[/"RUNNER_TEMP/argocd-session/login.json"/]
+
+    subgraph Verify["Step: [HTTPS] Verify ArgoCD authentication — deploy.sh --verify"]
+        S1 --> R["Đọc login.json từ session<br/>Kiểm tra HTTPS và redirect"]
         R --> S["Đăng nhập admin lấy token<br/>Dùng token đọc Applications"]
         S --> T["Thông báo thành công<br/>Dọn file tạm trên runner"]
     end
