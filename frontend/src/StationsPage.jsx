@@ -300,6 +300,137 @@ function CheckoutPanel({ eventId }) {
   )
 }
 
+// Trạm check-in không có phiên chơi riêng — điểm danh QR ghi nhận theo cả sự
+// kiện, nên log của trạm này chính là toàn bộ lượt điểm danh của event.
+function CheckinLogPanel({ eventId }) {
+  const [rows, setRows] = useState([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState(() => new Set())
+
+  const load = useCallback(async () => {
+    if (!eventId) return
+    setLoading(true)
+    setError('')
+    try {
+      const data = await apiRequest(`/event-checkins?event_id=${encodeURIComponent(eventId)}&limit=200`)
+      setRows(Array.isArray(data?.items) ? data.items : [])
+    } catch (err) {
+      setError(err?.message || 'Không tải được danh sách điểm danh.')
+    } finally {
+      setLoading(false)
+    }
+  }, [eventId])
+
+  useEffect(() => {
+    void load()
+    const timer = setInterval(() => { void load() }, 12000)
+    return () => clearInterval(timer)
+  }, [load])
+
+  const sorted = useMemo(() => (
+    [...rows].sort((left, right) => (
+      new Date(right.checked_in_at || 0).getTime() - new Date(left.checked_in_at || 0).getTime()
+    ))
+  ), [rows])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return sorted
+    return sorted.filter(row => {
+      if ((row.team_name || '').toLowerCase().includes(q)) return true
+      if ((row.team_code || '').toLowerCase().includes(q)) return true
+      return (row.members_detail || []).some(member => (
+        (member.full_name || '').toLowerCase().includes(q) || (member.mssv || '').toLowerCase().includes(q)
+      ))
+    })
+  }, [sorted, query])
+
+  const toggle = (id) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  return (
+    <div className={`${CARD} overflow-hidden`}>
+      <div className="flex items-center justify-between gap-3 border-b border-stone px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-ink">Nhật ký điểm danh</p>
+          <p className="text-xs text-ink/45">Điểm danh QR tính theo cả sự kiện, không riêng trạm này.</p>
+        </div>
+        <button type="button" onClick={() => void load()} disabled={loading}
+          className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-50">
+          {loading ? 'Đang tải…' : 'Tải lại'}
+        </button>
+      </div>
+      <div className="border-b border-stone px-4 py-2.5">
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Tìm theo tên đội, mã đội hoặc thành viên..."
+          className="w-full rounded-lg border border-stone bg-paper px-3 py-1.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+        />
+      </div>
+      {error && <p className="px-4 py-2 text-xs text-clay" role="alert">{error}</p>}
+      <div className="max-h-[28rem] divide-y divide-stone/50 overflow-y-auto">
+        {filtered.map(row => {
+          const isOpen = expanded.has(row.id)
+          const checkedInMembers = (row.members_detail || []).filter(member => member.checked_in)
+          const totalMembers = row.members_detail?.length ?? 0
+          return (
+            <div key={row.id} className="px-4 py-3">
+              <button
+                type="button"
+                onClick={() => toggle(row.id)}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink">
+                    {row.team_name} <span className="font-mono text-xs font-normal text-ink/45">{row.team_code}</span>
+                  </p>
+                  <p className="mt-0.5 text-xs text-ink/50">
+                    {row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString('vi-VN') : '-'}
+                    {' · '}{row.checked_in_count ?? checkedInMembers.length}/{totalMembers} thành viên
+                    {row.scanner ? ` · CTV ${row.scanner}` : ''}
+                  </p>
+                </div>
+                <Icon name="chevronR" className={`h-4 w-4 shrink-0 text-ink/30 transition ${isOpen ? 'rotate-90' : ''}`} />
+              </button>
+              {isOpen && (
+                <div className="mt-2 space-y-1.5 rounded-lg bg-paper px-3 py-2">
+                  {checkedInMembers.length > 0 ? checkedInMembers.map(member => (
+                    <div key={member.mssv} className="flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <span className="font-medium text-ink">{member.full_name}</span>
+                        <span className="ml-1.5 font-mono text-ink/40">{member.mssv}</span>
+                      </div>
+                      <span className="shrink-0 font-mono text-ink/45">
+                        {member.checked_in_at ? new Date(member.checked_in_at).toLocaleTimeString('vi-VN') : ''}
+                      </span>
+                    </div>
+                  )) : (
+                    <p className="text-xs italic text-ink/35">Không có thành viên nào được ghi nhận.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+        {!loading && filtered.length === 0 && (
+          <p className="px-4 py-8 text-center text-xs text-ink/40">
+            {rows.length === 0 ? 'Chưa có đội nào điểm danh.' : 'Không tìm thấy đội phù hợp.'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function DurationInput({ seconds, onChange }) {
   // Keep the chosen unit locally so typing "1" in minutes does not flip to seconds.
   const [unit, setUnit] = useState(() => (seconds > 0 && seconds % 60 === 0 ? 'minutes' : 'seconds'))
@@ -2033,7 +2164,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </select>
           <p className="mt-1 text-xs leading-5 text-ink/45">
             {form.kind === 'checkin'
-              ? 'CTV quét QR đội để check-in sự kiện. Không có câu hỏi, điểm hay số lượt.'
+              ? 'CTV quét QR đội để check-in sự kiện. Không có câu hỏi, điểm hay số lượt. Sự kiện bật "yêu cầu điểm danh" sẽ tự có sẵn trạm này (mã CHECKIN).'
               : form.kind === 'checkout'
                 ? 'CTV quét QR đội để ghi thời điểm hoàn thành. Đội đã checkout không được chơi thêm trạm nào.'
                 : 'Trạm có nhiệm vụ, chấm điểm và giới hạn lượt chơi.'}
@@ -2884,23 +3015,26 @@ function StationErrorBanner({ message }) {
 /** Cột phải của trang sửa trạm: số liệu vận hành, phân công CTV, đội đang ở/đã xong. */
 function StationOpsColumn({ station, phase, selectedEvent }) {
   const totalScore = sumStationScore(station)
+  const isCheckinStation = station.kind === 'checkin'
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2">
-        <div className={`${CARD} px-3 py-2.5`}>
-          <p className="font-mono text-lg font-bold leading-none text-gold">{station.teamsHere.length}</p>
-          <p className="mt-1 text-[11px] text-ink/40">Đang ở đây</p>
+      {!isCheckinStation && (
+        <div className="grid grid-cols-3 gap-2">
+          <div className={`${CARD} px-3 py-2.5`}>
+            <p className="font-mono text-lg font-bold leading-none text-gold">{station.teamsHere.length}</p>
+            <p className="mt-1 text-[11px] text-ink/40">Đang ở đây</p>
+          </div>
+          <div className={`${CARD} px-3 py-2.5`}>
+            <p className="font-mono text-lg font-bold leading-none text-trail">{station.teamsDone.length}</p>
+            <p className="mt-1 text-[11px] text-ink/40">Đã hoàn thành</p>
+          </div>
+          <div className={`${CARD} px-3 py-2.5`}>
+            <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
+            <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
+          </div>
         </div>
-        <div className={`${CARD} px-3 py-2.5`}>
-          <p className="font-mono text-lg font-bold leading-none text-trail">{station.teamsDone.length}</p>
-          <p className="mt-1 text-[11px] text-ink/40">Đã hoàn thành</p>
-        </div>
-        <div className={`${CARD} px-3 py-2.5`}>
-          <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
-          <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
-        </div>
-      </div>
+      )}
 
       <StationFlowOverview station={station} />
 
@@ -2912,42 +3046,48 @@ function StationOpsColumn({ station, phase, selectedEvent }) {
         embedded
       />
 
-      <div>
-        <SectionTitle title={`Đang ở đây · ${station.teamsHere.length} đội`} />
-        <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
-          {station.teamsHere.length > 0 ? station.teamsHere.map(team => (
-            <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{team.name}</p>
-                <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
-              </div>
-              <span className="shrink-0 font-mono text-xs text-gold">{team.arrivedAt}</span>
+      {isCheckinStation ? (
+        <CheckinLogPanel eventId={selectedEvent?.id} />
+      ) : (
+        <>
+          <div>
+            <SectionTitle title={`Đang ở đây · ${station.teamsHere.length} đội`} />
+            <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
+              {station.teamsHere.length > 0 ? station.teamsHere.map(team => (
+                <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink">{team.name}</p>
+                    <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
+                  </div>
+                  <span className="shrink-0 font-mono text-xs text-gold">{team.arrivedAt}</span>
+                </div>
+              )) : (
+                <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
+              )}
             </div>
-          )) : (
-            <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
-          )}
-        </div>
-      </div>
+          </div>
 
-      <div>
-        <SectionTitle title={`Đã hoàn thành · ${station.teamsDone.length} đội`} />
-        <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
-          {station.teamsDone.length > 0 ? station.teamsDone.map(team => (
-            <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{team.name}</p>
-                <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
-                <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
-              </div>
+          <div>
+            <SectionTitle title={`Đã hoàn thành · ${station.teamsDone.length} đội`} />
+            <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
+              {station.teamsDone.length > 0 ? station.teamsDone.map(team => (
+                <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink">{team.name}</p>
+                    <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
+                    <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
+                  </div>
+                </div>
+              )) : (
+                <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
+              )}
             </div>
-          )) : (
-            <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

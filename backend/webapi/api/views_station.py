@@ -21,7 +21,7 @@ from api.services.audit_service import record_audit
 from api.services import scan_token_service
 from api.services.assignment_service import is_collab_assigned
 from api.services.checkin_service import scan_event_checkin, checkout_event
-from api.services.attendance_service import checkin_response
+from api.services.attendance_service import checkin_response, checked_in_members
 from api.services.program_service import get_current_sub_event
 from api.services.result_lock_service import results_are_locked
 from .views_shared import _json_body, _require_role, _require_master_admin, is_admin
@@ -658,6 +658,7 @@ def station_scan_view(request: HttpRequest):
             "team_code": checkin.team.code, "team_name": checkin.team.name,
             "event_name": event.name, "station_name": "Checkout sự kiện",
             "checked_out_at": checkin.checked_out_at.isoformat(),
+            "checked_in_members": checked_in_members(checkin.team, event),
         }, status=201)
 
     token, station_id, direction = scan_token_service.parse_scan(raw_code)
@@ -749,6 +750,7 @@ def station_scan_view(request: HttpRequest):
             "event_name": station.sub_event.name,
             "station_name": station.name,
             "checked_out_at": checkin.checked_out_at.isoformat(),
+            "checked_in_members": checked_in_members(checkin.team, station.sub_event),
         }, status=201)
 
     is_exit = direction == "out"
@@ -806,6 +808,8 @@ def station_scan_view(request: HttpRequest):
         "score": session.score,
         **_station_scoring_dict(session.station),
         "submission": _checkout_submission(session) if is_exit else None,
+        # Lets the coop see who is actually here before waving the team in.
+        "checked_in_members": checked_in_members(session.team, station.sub_event),
     }, status=200 if is_exit else 201)
 
 

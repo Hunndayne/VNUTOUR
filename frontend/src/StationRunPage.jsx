@@ -2,7 +2,7 @@
 //
 // Thí sinh mở danh sách trạm của event đang chạy, bấm vào một trạm rồi đưa
 // điện thoại cho CTV quét. Không có websocket, nên khi một trạm đang mở thì
-// màn hình poll `/my-team/station-state` mỗi 2 giây để biết CTV đã quét chưa.
+// màn hình poll `/my-team/station-state` mỗi 5 giây để biết CTV đã quét chưa.
 //
 // Hai điều dễ sai đã được vá cứng ở đây:
 //   1. QR xoay sau mỗi lần quét thành công (mã cũ bị backend trả 409), nên
@@ -22,13 +22,15 @@ import QuestionHistory, { QuizSummary } from './QuestionReview.jsx'
 import { canReplay, explainReplayLock, attemptLabel, withReplayState } from './stationReplay.js'
 import AttendanceCheckinPanel, { EventCheckoutPanel } from './AttendanceCheckinPanel.jsx'
 
-const POLL_MS = 2000
+// 5 giây một nhịp: QR điểm danh/checkout được ký lại mỗi lần tải nên ảnh QR đổi
+// theo nhịp poll — cần đủ lâu để camera của CTV kịp bắt nét trước khi mã đổi.
+const POLL_MS = 5000
 const EXIT_LOCK_MS = 10000
 const CLOCK_TICK_MS = 250
-// Khi trạm đang mở mà đội chưa có phiên ở đây, cứ 3 nhịp poll (~6 giây) mới hỏi
+// Khi trạm đang mở mà đội chưa có phiên ở đây, cứ 2 nhịp poll (~10 giây) mới hỏi
 // thêm một lần "đội đang mở phiên ở trạm nào" — đủ nhanh để cảnh báo, không
 // nhân đôi số request suốt cả buổi.
-const GLOBAL_CHECK_EVERY = 3
+const GLOBAL_CHECK_EVERY = 2
 // Một lần rớt mạng giữa sân là chuyện thường; chỉ báo khi hỏng liên tiếp.
 const ERROR_AFTER_FAILURES = 2
 
@@ -976,7 +978,7 @@ export default function StationRunPage({ onOpenForm, embedded = false }) {
     }
   }, [view, sessionExpired, loadAttendance])
 
-  // Poll đúng 2 giây, và chỉ khi đang mở một trạm. `inFlight` là biến cục bộ của
+  // Poll đúng POLL_MS (5 giây), và chỉ khi đang mở một trạm. `inFlight` là biến cục bộ của
   // từng lần chạy effect nên đổi trạm là reset sạch, không có cờ dùng chung để
   // một request chậm của trạm cũ mở khoá cho trạm mới.
   useEffect(() => {

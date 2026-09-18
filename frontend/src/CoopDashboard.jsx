@@ -191,6 +191,7 @@ function buildStationView(station) {
     name: station.name || '',
     location: station.location || '',
     active: station.active !== false,
+    kind: station.kind || 'play',
     checkinPolicy: station.checkin_policy || 'staff_scan',
     capacityMode: station.capacity_mode || 'unlimited',
     maxConcurrentTeams: Number(station.max_concurrent_teams) || 0,
@@ -199,6 +200,29 @@ function buildStationView(station) {
     passThreshold: station.pass_threshold ?? null,
     passPoints: station.pass_points ?? null,
   }
+}
+
+function CheckedInMembers({ members }) {
+  const list = Array.isArray(members) ? members : []
+  if (list.length === 0) {
+    return <p className="mt-2 text-xs text-ink/50">Chưa có thành viên nào điểm danh.</p>
+  }
+  return (
+    <div className="mt-2 rounded-xl border border-stone/60 bg-paper/40 p-2.5">
+      <p className="text-xs font-semibold text-ink/70">Thành viên đã điểm danh ({list.length})</p>
+      <ul className="mt-1.5 max-h-40 space-y-1 overflow-y-auto">
+        {list.map((member) => (
+          <li
+            key={member.participant_id ?? `${member.mssv || ''}-${member.full_name || ''}`}
+            className="flex items-center justify-between gap-2 text-xs"
+          >
+            <span className="truncate text-ink">{member.full_name}</span>
+            <span className="shrink-0 font-mono text-ink/60">{member.mssv}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 function sortStations(stations) {
@@ -220,6 +244,7 @@ function CoopDashboard() {
   const [eventStats, setEventStats] = useState(null)
   const [eventSessions, setEventSessions] = useState([])
   const [stationSessions, setStationSessions] = useState([])
+  const [checkinLog, setCheckinLog] = useState([])
   const [selectedEventId, setSelectedEventId] = useSearchParam('event', '')
   const [selectedStationId, setSelectedStationId] = useSearchParam('station', '')
   const [activeTab, setActiveTab] = useSearchParam('view', 'scan') // 'scan' | 'roster' | 'logs' | 'info'
@@ -342,12 +367,13 @@ function CoopDashboard() {
     return items
   }, [])
 
-  const loadLiveData = useCallback(async (phaseKey, eventId, stationId) => {
+  const loadLiveData = useCallback(async (phaseKey, eventId, stationId, stationKind) => {
     if (!phaseKey || !eventId) {
       setEventStats(null)
       setEventSessions([])
       setOccupancy(null)
       setStationSessions([])
+      setCheckinLog([])
       return
     }
 
@@ -366,6 +392,15 @@ function CoopDashboard() {
     setEventSessions(results[1]?.sessions || [])
     setOccupancy(stationId ? results[2] || null : null)
     setStationSessions(stationId ? results[3]?.sessions || [] : [])
+
+    if (stationKind === 'checkin' && eventId) {
+      try {
+        const checkinPayload = await apiRequest(`/event-checkins?event_id=${encodeURIComponent(eventId)}&limit=200`)
+        setCheckinLog(Array.isArray(checkinPayload?.items) ? checkinPayload.items : [])
+      } catch {
+        // Keep previous check-in log data on error instead of blanking the screen.
+      }
+    }
   }, [])
 
   const bootstrap = useCallback(async () => {
@@ -520,7 +555,7 @@ function CoopDashboard() {
 
   const refreshLive = useCallback(async () => {
     try {
-      await loadLiveData(currentPhase, selectedEventId, selectedStationId)
+      await loadLiveData(currentPhase, selectedEventId, selectedStationId, selectedStation?.kind)
     } catch (error) {
       if (error?.status === 401) {
         logoutAndRedirect('/')
@@ -528,7 +563,7 @@ function CoopDashboard() {
       }
       setApiError('Không thể tải số liệu realtime của coop.')
     }
-  }, [currentPhase, loadLiveData, selectedEventId, selectedStationId])
+  }, [currentPhase, loadLiveData, selectedEventId, selectedStationId, selectedStation])
 
   const setFlashMessage = (tone, message) => {
     setFlash({ tone, message })
@@ -678,6 +713,7 @@ function CoopDashboard() {
         checkedInCount: Number.isFinite(checkedInCount) ? checkedInCount : null,
         requiredCount: Number.isFinite(requiredCount) && requiredCount > 0 ? requiredCount : null,
         eligible: response.eligible,
+        checkedInMembers: Array.isArray(response.checked_in_members) ? response.checked_in_members : [],
       })
 
       if (response.kind === 'exit') {
@@ -903,6 +939,24 @@ function CoopDashboard() {
     }
     return list
   }, [logFilter, logSearch, stationSessions])
+
+  // Filtered check-in log (for check-in stations, which have no play sessions)
+  const filteredCheckinLog = useMemo(() => {
+    let list = [...checkinLog].sort((a, b) => {
+      const bMs = b.checked_in_at ? Date.parse(b.checked_in_at) : 0
+      const aMs = a.checked_in_at ? Date.parse(a.checked_in_at) : 0
+      return bMs - aMs
+    })
+    if (logSearch.trim()) {
+      const q = logSearch.toLowerCase()
+      list = list.filter((item) => {
+        if (item.team_name && item.team_name.toLowerCase().includes(q)) return true
+        if (item.team_code && item.team_code.toLowerCase().includes(q)) return true
+        return (item.members_detail || []).some((member) => member.full_name && member.full_name.toLowerCase().includes(q))
+      })
+    }
+    return list
+  }, [checkinLog, logSearch])
 
   if (bootLoading) {
     return (
@@ -1232,10 +1286,12 @@ function CoopDashboard() {
                       {lastResult.eligible ? ' · Đủ điều kiện vào trạm' : ''}
                     </p>
                   )}
+                  <CheckedInMembers members={lastResult.checkedInMembers} />
                 </div>}
                 {reviewPausedRef.current && <div className="rounded-xl border border-gold/40 bg-gold/10 p-4 text-sm text-ink">
                   Đang tạm dừng quét để chấm bài của {lastResult?.teamName}.
                   <button type="button" onClick={() => setActiveTab('review')} className="mt-2 block font-semibold text-trail underline">Mở bài vừa checkout</button>
+                  <CheckedInMembers members={lastResult?.checkedInMembers} />
                 </div>}
               </div>
 
@@ -1369,8 +1425,78 @@ function CoopDashboard() {
                   </div>
                 )}
 
+                {/* TAB CONTENT: CHECK-IN LOG (check-in stations have no play sessions) */}
+                {activeTab === 'logs' && selectedStation?.kind === 'checkin' && (
+                  <div className={`${CARD} overflow-hidden border-stone shadow-sm`}>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone/80 bg-stone/10 px-4 py-3">
+                      <div>
+                        <h2 className="font-display text-base font-bold text-ink">Nhật ký điểm danh</h2>
+                        <p className="text-xs text-ink/70">Danh sách đội và thành viên đã điểm danh sự kiện</p>
+                      </div>
+
+                      <div className="w-full sm:w-auto min-w-[200px]">
+                        <input
+                          type="text"
+                          value={logSearch}
+                          onChange={(e) => setLogSearch(e.target.value)}
+                          placeholder="Tìm đội hoặc thành viên..."
+                          className="w-full rounded-lg border border-stone bg-white px-3 py-1.5 text-xs text-ink placeholder:text-ink/40 outline-none focus:border-trail"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-3 sm:p-4 space-y-3 max-h-[550px] overflow-y-auto">
+                      {filteredCheckinLog.length > 0 ? (
+                        filteredCheckinLog.map((item) => {
+                          const checkedMembers = (item.members_detail || []).filter((member) => member.checked_in)
+                          return (
+                            <div key={item.id} className="rounded-xl border border-stone/80 bg-white p-3.5 shadow-2xs space-y-2">
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="font-mono text-xs font-bold text-ink/70">{item.team_code}</span>
+                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-mono text-[11px] font-bold text-emerald-800">
+                                      {item.checked_in_count} thành viên
+                                    </span>
+                                  </div>
+                                  <h4 className="mt-1 font-display text-base font-bold text-ink truncate">{item.team_name}</h4>
+                                </div>
+                                <div className="text-xs text-ink/70 font-mono">
+                                  {item.checked_in_at ? new Date(item.checked_in_at).toLocaleTimeString('vi-VN') : '--'}
+                                </div>
+                              </div>
+
+                              {checkedMembers.length > 0 ? (
+                                <ul className="space-y-1 border-t border-stone/60 pt-2">
+                                  {checkedMembers.map((member) => (
+                                    <li key={member.mssv || member.full_name} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                      <span className="text-ink">
+                                        {member.full_name} <span className="font-mono text-ink/50">({member.mssv})</span>
+                                      </span>
+                                      <span className="font-mono text-ink/60">
+                                        {member.checked_in_at ? new Date(member.checked_in_at).toLocaleTimeString('vi-VN') : ''}
+                                        {member.scanner ? ` · ${member.scanner}` : ''}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="border-t border-stone/60 pt-2 text-xs text-ink/50">Chưa có thành viên nào điểm danh.</p>
+                              )}
+                            </div>
+                          )
+                        })
+                      ) : (
+                        <div className="py-12 text-center text-ink/60">
+                          <p className="text-sm font-semibold">Chưa có đội nào điểm danh</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* TAB CONTENT: STATION LOGS & RE-GRADING */}
-                {activeTab === 'logs' && (
+                {activeTab === 'logs' && selectedStation?.kind !== 'checkin' && (
                   <div className={`${CARD} overflow-hidden border-stone shadow-sm`}>
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone/80 bg-stone/10 px-4 py-3">
                       <div>

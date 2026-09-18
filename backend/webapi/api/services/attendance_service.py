@@ -119,6 +119,40 @@ def attendance_state(team, event, participant_id=None):
     }
 
 
+def checked_in_members(team, event):
+    """Members who actually checked in at the event, earliest first.
+
+    Team mode records one header for the whole team, so every member counts once
+    it is a real check-in (not a checkout-only row). Individual mode lists only
+    the people whose own QR was scanned — those still missing are left out.
+    """
+    checkin = EventCheckIn.objects.filter(
+        team=team, sub_event=event, status=EventCheckIn.STATUS_ACTIVE,
+    ).first()
+    if checkin is None:
+        return []
+    if event.checkin_mode == event.CHECKIN_TEAM:
+        if (checkin.meta or {}).get("checkout_only"):
+            return []
+        memberships = TeamMembership.objects.filter(team=team).select_related("participant")
+        return [{
+            "participant_id": m.participant_id,
+            "full_name": m.participant.full_name,
+            "mssv": m.participant.mssv,
+            "checked_in_at": checkin.created_at.isoformat(),
+        } for m in memberships.order_by("participant__full_name")]
+    rows = EventAttendance.objects.filter(
+        checkin=checkin,
+        participant_id__in=TeamMembership.objects.filter(team=team).values("participant_id"),
+    ).select_related("participant").order_by("created_at")
+    return [{
+        "participant_id": a.participant_id,
+        "full_name": a.participant.full_name,
+        "mssv": a.participant.mssv,
+        "checked_in_at": a.created_at.isoformat(),
+    } for a in rows]
+
+
 def checkin_response(result):
     """Stable scan payload for either a team-mode header or individual attendance."""
     if isinstance(result, EventAttendance):
@@ -142,4 +176,5 @@ def checkin_response(result):
         "checkin_mode": checkin.sub_event.checkin_mode,
         **participant,
         **state,
+        "checked_in_members": checked_in_members(checkin.team, checkin.sub_event),
     }

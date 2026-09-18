@@ -10,7 +10,7 @@ from typing import Optional
 from django.utils.dateparse import parse_date, parse_datetime
 from django.db import transaction
 
-from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting
+from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting, Station
 
 
 def _checkin_config(kwargs: dict) -> None:
@@ -22,6 +22,32 @@ def _checkin_config(kwargs: dict) -> None:
         value = kwargs["min_checkin_members"]
         if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 2147483647:
             raise ValueError("invalid_min_checkin_members")
+
+
+CHECKIN_STATION_CODE = "CHECKIN"
+CHECKIN_STATION_NAME = "Trạm điểm danh"
+
+
+def ensure_checkin_station(se: SubEvent) -> Optional[Station]:
+    """Give an event that requires check-in a check-in station to staff.
+
+    Coops are posted to stations, so without one there is nowhere to assign the
+    gate crew or read the check-in log. Any existing check-in station — even one
+    an admin switched off — counts, so a deliberate choice is never undone.
+    """
+    if not se.require_checkin:
+        return None
+    existing = Station.objects.filter(sub_event=se, kind=Station.KIND_CHECKIN).first()
+    if existing:
+        return existing
+    taken = set(Station.objects.filter(sub_event=se).values_list("code", flat=True))
+    code, n = CHECKIN_STATION_CODE, 2
+    while code in taken:
+        code, n = f"{CHECKIN_STATION_CODE}-{n}", n + 1
+    return Station.objects.create(
+        sub_event=se, kind=Station.KIND_CHECKIN, code=code,
+        name=CHECKIN_STATION_NAME, order=-1,
+    )
 
 
 def get_program() -> dict:
@@ -151,8 +177,10 @@ def create_sub_event(phase_key: str, name: str, **kwargs) -> SubEvent:
     for field in ("start_date", "end_date"):
         if field in kwargs:
             kwargs[field] = _coerce_datetime(kwargs[field])
-    se = SubEvent(phase=phase, name=name, **kwargs)
-    se.save()
+    with transaction.atomic():
+        se = SubEvent(phase=phase, name=name, **kwargs)
+        se.save()
+        ensure_checkin_station(se)
     return se
 
 
@@ -193,7 +221,9 @@ def update_sub_event(event_id: int, **kwargs) -> SubEvent:
                 if not value:
                     raise ValueError("missing_name")
             setattr(se, field, value)
-    se.save()
+    with transaction.atomic():
+        se.save()
+        ensure_checkin_station(se)
     return se
 
 
