@@ -1,20 +1,22 @@
 # Triển khai Kubernetes
 
+> **ArgoCD UI trên Linode:** [Bootstrap qua GitHub Actions và SSH](argocd/ui/README.md) dùng NGINX, cert-manager/Let’s Encrypt và mật khẩu admin cố định. Đây là cấu hình riêng của hub; phần Cloudflare/TLS homelab bên dưới không áp dụng cho domain này.
+
 > **Kustomize / GitOps:** Xem [hướng dẫn tiếng Việt](KUSTOMIZE_GUIDE.vi.md) về base, components, ba overlay, Argo CD, ví dụ chỉnh sửa và vận hành. Tài liệu đó được đối chiếu với bản render ngày 09/09/2026. Các phần triển khai trực tiếp bên dưới mô tả luồng manifest đánh số; một số mô tả kiến trúc/CD đã cũ so với `kustomize/`. Không dùng lệnh triển khai cũ cho tài nguyên Argo CD quản lý mà chưa đối chiếu phạm vi trong hướng dẫn.
 
 Cùng stack với `backend/DOCKER.md` — PostgreSQL, một migration job chạy một lần, Gunicorn, frontend React/Nginx, Discord bot và email worker — cộng thêm namespace Prometheus/Grafana và một backup CronJob chạy hằng đêm. Đây là những gì production đang chạy: stack Compose đã bị thay thế hoàn toàn, và Cloudflare Tunnel trước đây dùng để đứng trước nó cũng đã bị gỡ bỏ.
 
-Các file được đánh số theo thứ tự apply. `00`–`10` là ứng dụng, `11`–`15` là monitoring, `16` là backup CronJob. `cert-manager-issuer.yaml` là tàn dư từ lần thử ACME và không còn được apply — xem phần **TLS** bên dưới.
+Các file được đánh số theo thứ tự apply. `00`–`10` là ứng dụng, `11`–`15` là monitoring, `16` là backup CronJob. `cert-manager-issuer.yaml` chứa ClusterIssuer staging/production dùng chung trên mỗi cụm; pipeline ArgoCD render email từ `ACME_EMAIL` rồi apply trên VPS. Không apply trực tiếp file còn placeholder; phần **TLS** bên dưới mô tả homelab.
 
 ---
 
 ## Bố cục Cluster
 
-| Node | Địa chỉ | vCPU | RAM | Chạy gì |
-|---|---|---|---|---|
-| `vnutour-cp` | 192.168.1.110 | 2 | 3 GB | k3s server, ingress-nginx, Prometheus, CI runner |
-| `vnutour-w1` | 192.168.1.111 | 2 | 3 GB | postgres, backend, frontend, bot, email-worker, Grafana |
-| `vnutour-w2` | — | 2 | 6 GB | chưa dựng; dự phòng, tắt nguồn qua đêm khi có |
+| Node         | Địa chỉ       | vCPU | RAM  | Chạy gì                                                 |
+| ------------ | ------------- | ---- | ---- | ------------------------------------------------------- |
+| `vnutour-cp` | 192.168.1.110 | 2    | 3 GB | k3s server, ingress-nginx, Prometheus, CI runner        |
+| `vnutour-w1` | 192.168.1.111 | 2    | 3 GB | postgres, backend, frontend, bot, email-worker, Grafana |
+| `vnutour-w2` | —             | 2    | 6 GB | chưa dựng; dự phòng, tắt nguồn qua đêm khi có           |
 
 Ubuntu 24.04, k3s v1.36.3. `w1` một mình chạy toàn bộ ứng dụng — đó là lý do `w2` là tuỳ chọn, và vì sao có thể tắt `w2` qua đêm để giải phóng bộ nhớ trên Proxmox host cho RL cluster.
 
@@ -92,7 +94,7 @@ kubectl -n vnutour create secret tls vnutour-tls --cert=origin.pem --key=origin.
 
 `10.ingress.yaml` tham chiếu secret đó và giữ `ssl-redirect: "false"`. Ép redirect ở origin cũng gây vòng lặp, vì edge đã làm rồi.
 
-cert-manager đã được thử và bỏ. `cert-manager-issuer.yaml` vẫn còn trong tree chỉ như một ghi chép về lần thử đó — apply nó không có ích gì trừ khi cert-manager được cài lại, và Full (strict) không cần nó.
+Trên homelab, cert-manager đã được thử và bỏ; Cloudflare Origin Certificate vẫn là cấu hình TLS mô tả ở đây. File `cert-manager-issuer.yaml` nay được tái sử dụng làm nguồn ClusterIssuer chung cho pipeline ArgoCD trên VPS, nơi cert-manager được cài nếu thiếu. Việc triển khai trên VPS không tự cài hay đổi cấu hình homelab.
 
 ### Images
 
@@ -119,12 +121,12 @@ Một claim bind với node mà pod của nó đầu tiên hạ xuống, điều
 
 Bốn secret, không có cái nào trong git:
 
-| Secret | Namespace | Chứa gì |
-|---|---|---|
-| `backend-secret` | `vnutour` | DB credentials, `DJANGO_SECRET_KEY`, SMTP, Discord, R2 |
-| `vnutour-tls` | `vnutour` | Cloudflare Origin Certificate |
-| `ghcr` | `vnutour` | GHCR pull credentials |
-| `grafana-admin` | `monitoring` | Grafana admin login |
+| Secret           | Namespace    | Chứa gì                                                |
+| ---------------- | ------------ | ------------------------------------------------------ |
+| `backend-secret` | `vnutour`    | DB credentials, `DJANGO_SECRET_KEY`, SMTP, Discord, R2 |
+| `vnutour-tls`    | `vnutour`    | Cloudflare Origin Certificate                          |
+| `ghcr`           | `vnutour`    | GHCR pull credentials                                  |
+| `grafana-admin`  | `monitoring` | Grafana admin login                                    |
 
 `02.secret.yaml` chứa placeholder và không được apply nguyên bản. Tạo cái thực từ một file được giữ bên ngoài repository:
 
