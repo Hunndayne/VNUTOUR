@@ -459,7 +459,10 @@ function DurationInput({ seconds, onChange }) {
   )
 }
 
-function createSubmissionConfig(submission = {}) {
+function createSubmissionConfig(input) {
+  // `= {}` only covers undefined; stations created server-side (the auto
+  // check-in station) come back with submission_config: null.
+  const submission = input && typeof input === 'object' ? input : {}
   const rawItems = Array.isArray(submission.items)
     ? submission.items
     : itemsFromLegacyConfig(submission)
