@@ -939,7 +939,14 @@ function explainApiError(error) {
     results_locked: 'Kết quả đã khóa (chương trình kết thúc), không thể sửa điểm.',
     master_admin_required: 'Chỉ master admin mới được tạo/sửa/xoá trạm và đổi phase hiện tại.',
   }
-  return map[code] || 'Không thể đồng bộ dữ liệu trạm.'
+  if (map[code]) return map[code]
+  // Không nuốt lỗi lạ: in kèm mã lỗi/HTTP status (hoặc lỗi JS) để còn biết hỏng ở đâu.
+  const detail = [
+    error?.context,
+    error?.status ? `HTTP ${error.originalStatus || error.status}` : null,
+    code,
+  ].filter(Boolean).join(' · ')
+  return detail ? `Không thể đồng bộ dữ liệu trạm (${detail}).` : 'Không thể đồng bộ dữ liệu trạm.'
 }
 
 function formatCapacitySummary(station) {
@@ -1105,9 +1112,11 @@ function buildStationPayload(form, order, active) {
 
 async function fetchStationsForEvent(phaseKey, eventId) {
   const payload = await apiRequest(`/program/phases/${phaseKey}/sub-events/${eventId}/stations?include_inactive=1`)
+    .catch((error) => { error.context = 'danh sách trạm'; throw error })
   const stations = payload?.stations || []
   const historyPayloads = await Promise.all(
-    stations.map(station => apiRequest(`/stations/${station.id}/sessions`)),
+    stations.map(station => apiRequest(`/stations/${station.id}/sessions`)
+      .catch((error) => { error.context = `lịch sử trạm ${station.code || station.id}`; throw error })),
   )
 
   return normalizeStations(
@@ -3346,6 +3355,7 @@ function StationsPage({
         logoutAndRedirect('/')
         return
       }
+      console.error('Station sync failed', error)
       setApiError(explainApiError(error))
     } finally {
       setListLoading(false)
