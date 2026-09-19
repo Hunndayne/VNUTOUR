@@ -8,6 +8,7 @@ import unittest
 
 INSTALL = Path(__file__).resolve().parents[1] / "install" / "monitoring-install.sh"
 INSTALL_DIR = INSTALL.parent
+DEPLOY = INSTALL_DIR / "deploy.sh"
 
 
 class MonitoringInstallTests(unittest.TestCase):
@@ -109,6 +110,17 @@ esac
         self.assertIn("namespace: monitoring", certificate)
         self.assertIn("root_url: https://grafana.example.invalid/", values)
         self.assertIn("cookie_secure: true", values)
+
+    def test_dashboard_is_valid_json_and_can_be_canonicalized(self):
+        dashboard = INSTALL_DIR.parent / "dashboard" / "vps_k3s_dashboard.json"
+        canonical = subprocess.run(
+            ["jq", "-S", "-c", ".", str(dashboard)],
+            check=True,
+            capture_output=True,
+        ).stdout
+
+        self.assertTrue(canonical)
+        self.assertIn('jq -S -c . "$dashboard_source"', DEPLOY.read_text())
 
 if __name__ == "__main__":
     unittest.main()
