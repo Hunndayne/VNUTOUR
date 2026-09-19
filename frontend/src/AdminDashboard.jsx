@@ -82,6 +82,8 @@ const NAV_GROUPS = [
       { key: 'feed', label: 'Bảng tin', icon: 'doc' },
       { key: 'frames', label: 'Khung ảnh', icon: 'image' },
       { key: 'links', label: 'Rút gọn link', icon: 'link' },
+      // Leaves the admin shell: admins may run a station from the collab page.
+      { key: 'coop', label: 'Trang cộng tác viên', icon: 'compass', href: '/coop' },
     ],
   },
   {
@@ -106,7 +108,7 @@ const NAV_GROUPS = [
 // Page title + fallback icon per tab. `settings` is reachable from the user
 // menu rather than the nav, so it is registered here on its own.
 const TAB_META = {
-  ...Object.fromEntries(NAV_GROUPS.flatMap(g => g.items).map(item => [item.key, item])),
+  ...Object.fromEntries(NAV_GROUPS.flatMap(g => g.items).filter(item => !item.href).map(item => [item.key, item])),
   settings: { key: 'settings', label: 'Cài đặt tài khoản', icon: 'gear' },
 }
 
@@ -351,12 +353,14 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
               )}
               <div className="space-y-0.5">
                 {group.items.map(item => {
-                  const active = activeTab === item.key
+                  const active = !item.href && activeTab === item.key
                   return (
                     <NavLink
                       key={item.key}
-                      href={adminTabPath(item.key)}
-                      onNavigate={() => onTabChange(item.key)}
+                      href={item.href || adminTabPath(item.key)}
+                      onNavigate={() => {
+                        if (item.href) { onClose(); navigate(item.href) } else onTabChange(item.key)
+                      }}
                       className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
                         active ? 'bg-gold/10 font-semibold text-ink' : 'font-medium text-ink/55 hover:bg-paper hover:text-ink'
                       }`}
