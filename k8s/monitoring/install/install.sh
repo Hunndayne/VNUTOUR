@@ -127,7 +127,9 @@ if [[ -n $legacy ]]; then
   exit 1
 fi
 
-installed_chart=$(helm list -n "$namespace" --all --filter "^${release}$" -o json \
+# Helm 4 lists releases in every status by default. The Helm 3 --all flag was
+# removed, so filtering by the exact release name is sufficient here.
+installed_chart=$(helm list -n "$namespace" --filter "^${release}$" -o json \
   | jq -r '.[0].chart // empty')
 if [[ -z $installed_chart ]]; then
   echo "[resource] Helm release $namespace/$release: missing; a new release will be installed"

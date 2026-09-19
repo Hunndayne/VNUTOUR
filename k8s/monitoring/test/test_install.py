@@ -70,6 +70,7 @@ esac
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Found 1/10 monitoring CRDs", result.stderr)
         helm_calls = (self.root / "helm-calls").read_text()
+        self.assertNotIn("--all", helm_calls)
         self.assertNotIn("pull", helm_calls)
         self.assertNotIn("upgrade", helm_calls)
         k3s_calls = (self.root / "k3s-calls").read_text()
