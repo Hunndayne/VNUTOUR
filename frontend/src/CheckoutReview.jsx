@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { apiRequest } from './api.js'
 import { AnswerReview, QuizSummary } from './QuestionReview.jsx'
 
@@ -11,7 +11,25 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const binary = result.scoringMode === 'pass_fail'
-  const fullPoints = quiz?.max_points
+  const reviewItems = useMemo(() => submission?.response_payload?.answer_review || [], [submission])
+  // Coop's verdict per question, seeded from the auto-grading. Kept on screen
+  // only: what is saved is the score these marks add up to.
+  const [marks, setMarks] = useState(() => Object.fromEntries(reviewItems.map(item => [item.id, item.is_correct ?? null])))
+  const itemPoints = item => Number(item.points ?? 1) || 0
+  const markedPoints = reviewItems.reduce((sum, item) => sum + (marks[item.id] === true ? itemPoints(item) : 0), 0)
+  const markedSummary = reviewItems.length > 0 && quiz ? {
+    ...quiz,
+    total: reviewItems.length,
+    correct_count: reviewItems.filter(item => marks[item.id] === true).length,
+    manual_count: reviewItems.filter(item => marks[item.id] == null).length,
+  } : quiz
+  const fullPoints = reviewItems.length > 0 ? reviewItems.reduce((sum, item) => sum + itemPoints(item), 0) : quiz?.max_points
+  const markQuestion = (id, mark) => {
+    const next = { ...marks, [id]: mark }
+    setMarks(next)
+    // Keep the score box in step with the marks so the coop only has to press "Lưu điểm".
+    setScore(reviewItems.reduce((sum, item) => sum + (next[item.id] === true ? itemPoints(item) : 0), 0))
+  }
   const save = async body => {
     setSaving(true)
     setError('')
@@ -33,8 +51,8 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
       <p className="mt-1 text-sm text-ink/60"><span className="font-mono">{result.teamId}</span> · {result.stationName}</p>
     </header>
     <div className="p-5">
-      <QuizSummary result={quiz} score={savedScore} />
-      {submission ? <AnswerReview items={submission.response_payload?.answer_review} /> : <p className="py-4 text-sm text-ink/60">Đội chưa có bài nộp trong lượt này. Chấm theo hoạt động tại trạm.</p>}
+      <QuizSummary result={markedSummary} score={savedScore} />
+      {submission ? <AnswerReview items={reviewItems} marks={binary ? undefined : marks} onMark={binary ? undefined : markQuestion} /> : <p className="py-4 text-sm text-ink/60">Đội chưa có bài nộp trong lượt này. Chấm theo hoạt động tại trạm.</p>}
       {submission?.files?.length > 0 && <div className="mb-4 flex flex-wrap gap-3">{submission.files.map((file, i) => <a key={file.key || i} href={file.url} target="_blank" rel="noreferrer" className="text-sm text-trail underline">{file.name || `Tệp đính kèm ${i + 1}`}</a>)}</div>}
     </div>
     <div className="sticky bottom-0 border-t border-stone bg-paper p-4 sm:p-5">
@@ -47,7 +65,9 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
         </> : <>
           {fullPoints > 0 && <button disabled={saving} onClick={() => save({ score: fullPoints })} className="min-h-[48px] rounded-lg border border-trail/30 bg-white px-4 text-sm font-semibold text-trail disabled:opacity-50">Cho đủ {fullPoints} điểm</button>}
           <button disabled={saving} onClick={() => save({ score: 0 })} className="min-h-[48px] rounded-lg border border-clay/30 bg-white px-4 text-sm font-semibold text-clay disabled:opacity-50">Không cho điểm</button>
-          {quiz?.total > 0 && <button disabled={saving} onClick={() => setScore(quiz.points)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm tự chấm: {quiz.points}</button>}
+          {reviewItems.length > 0
+            ? <button disabled={saving} onClick={() => setScore(markedPoints)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {markedPoints}</button>
+            : quiz?.total > 0 && <button disabled={saving} onClick={() => setScore(quiz.points)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {quiz.points}</button>}
         </>}
       </div>
       {!binary && <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); if (score !== '' && Number.isInteger(Number(score)) && Number(score) >= 0) save({ score: Number(score) }) }}>
