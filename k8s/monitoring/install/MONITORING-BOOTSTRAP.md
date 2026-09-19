@@ -1,6 +1,6 @@
 # Prometheus và Grafana trên VPS k3s
 
-Monitoring được triển khai qua workflow [Bootstrap VPS Baseline](../../../.github/workflows/bootstrap-baseline.yml). Pipeline kiểm tra công cụ trên runner, gửi payload qua SSH đã xác minh host key, rồi chạy [install.sh](install.sh) trên VPS. ArgoCD UI và monitoring ở chung một workflow nhưng dùng step và script độc lập để có log, retry và phạm vi lỗi rõ ràng.
+Monitoring được triển khai qua workflow [Bootstrap VPS Baseline](../../../.github/workflows/bootstrap-baseline.yml). Pipeline gọi [deploy.sh](deploy.sh) trên runner, gửi payload qua SSH đã xác minh host key, rồi chạy [monitoring-install.sh](monitoring-install.sh) trên VPS. ArgoCD UI và monitoring ở chung một workflow nhưng dùng step và script độc lập để có log, retry và phạm vi lỗi rõ ràng.
 
 ## Cấu hình GitHub Actions
 
@@ -8,6 +8,7 @@ Vào **Settings → Secrets and variables → Actions**:
 
 | Tên                      | Loại               | Mục đích                                                 |
 | ------------------------ | ------------------ | -------------------------------------------------------- |
+| `GRAFANA_HOSTNAME`       | Variable hoặc Secret | Subdomain Grafana, không gồm `https://`, port hoặc path |
 | `GRAFANA_ADMIN_PASSWORD` | Secret             | Mật khẩu Grafana ban đầu, 16–128 ký tự, không xuống dòng |
 | `VPS_SSH_HOST`           | Secret             | IP/hostname VPS                                          |
 | `VPS_SSH_PASSWORD`       | Secret             | Mật khẩu SSH                                             |
@@ -15,7 +16,9 @@ Vào **Settings → Secrets and variables → Actions**:
 | `VPS_SSH_USER`           | Variable           | `root` hoặc user có `sudo -n`                            |
 | `VPS_SSH_PORT`           | Variable, tùy chọn | Mặc định`22`                                             |
 
-Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay đổi; nếu chính workflow chung thay đổi thì chạy cả hai. Khi chạy thủ công, hai input `deploy_argocd` và `deploy_monitoring` cho phép chọn riêng từng dịch vụ. Khi cả hai được chọn, ArgoCD chạy trước để xác nhận ingress-nginx và cert-manager; monitoring hiện vẫn là ClusterIP và chưa phụ thuộc ingress.
+Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay đổi; nếu chính workflow chung thay đổi thì chạy cả hai. Khi chạy thủ công, hai input `deploy_argocd` và `deploy_monitoring` cho phép chọn riêng từng dịch vụ. Khi cả hai được chọn, ArgoCD chạy trước để xác nhận ingress-nginx, cert-manager và `ClusterIssuer/letsencrypt-prod`. Grafana dùng các thành phần này cho HTTPS; Prometheus vẫn chỉ là ClusterIP.
+
+Trước khi chạy, tạo bản ghi DNS A/AAAA của `GRAFANA_HOSTNAME` trỏ tới VPS và bảo đảm Internet truy cập được cổng 80/443. Cổng 80 cần cho ACME HTTP-01 và chuyển hướng sang HTTPS; cổng 443 phục vụ Grafana.
 
 ## Cài đặt và kiểm tra
 
@@ -36,16 +39,28 @@ Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay 
 
    ```bash
    sudo bash -c 'umask 077; read -r -s -p "Grafana password: " password; echo; printf "%s" "$password" > /tmp/grafana-admin-password'
+   printf '%s' '<GRAFANA_HOSTNAME>' | sudo tee /tmp/grafana-hostname >/dev/null
    sudo GRAFANA_ADMIN_PASSWORD_FILE=/tmp/grafana-admin-password \
-     bash k8s/monitoring/install/install.sh
-   sudo rm -f /tmp/grafana-admin-password
+     GRAFANA_HOSTNAME_FILE=/tmp/grafana-hostname \
+     bash k8s/monitoring/install/monitoring-install.sh
+   sudo rm -f /tmp/grafana-admin-password /tmp/grafana-hostname
    ```
 
    Xóa file tạm sau khi hoàn tất. Script in context/node, kiểm tra `local-path`, namespace, Helm release, đủ 10 Prometheus Operator CRD, Secret và dashboard ConfigMap. Namespace/Secret thiếu sẽ được tạo; tài nguyên đã có được giữ hoặc reconcile. Helm `upgrade --install` tạo resource chart còn thiếu và cập nhật values mà không tạo trùng. Nếu gặp legacy workload, CRD dở dang, CRD không có release sở hữu hoặc chart khác phiên bản, script dừng để tránh ghi đè. Có lỗi thì không tự rollback hoặc xóa PVC.
 
    Pipeline truyền `GRAFANA_ADMIN_PASSWORD_FILE` bằng payload tạm có quyền hạn chế và xóa cả runner/VPS payload khi kết thúc. Không commit file mật khẩu. Lần chạy sau giữ Secret hiện có. Mật khẩu chỉ khởi tạo DB Grafana lần đầu: đổi GitHub Secret hoặc restart không tự đổi mật khẩu trong DB đã có. Đổi mật khẩu qua UI/CLI Grafana rồi đồng bộ Secret bằng quy trình rotation riêng.
 
-4. Trên VPS, mở hai terminal SSH và giữ các lệnh sau chạy:
+4. Xác minh public endpoint sau khi pipeline hoàn tất:
+
+   ```bash
+   curl -I "http://<GRAFANA_HOSTNAME>/"
+   curl --fail "https://<GRAFANA_HOSTNAME>/api/health"
+   sudo k3s kubectl -n monitoring get certificate,ingress
+   ```
+
+   HTTP phải chuyển hướng sang `https://<GRAFANA_HOSTNAME>/`, Certificate `monitoring-grafana-tls` phải `Ready=True`, và health API phải báo database `ok`. Mở `https://<GRAFANA_HOSTNAME>/`, đăng nhập `admin` cùng `GRAFANA_ADMIN_PASSWORD`. Pipeline cũng tự kiểm tra HTTPS, redirect và API ẩn danh bị từ chối.
+
+5. Port-forward vẫn dùng được khi cần chẩn đoán mà không đi qua DNS/Ingress. Trên VPS, mở hai terminal SSH và giữ các lệnh sau chạy:
 
    ```bash
    # Terminal 1: Grafana
@@ -57,7 +72,7 @@ Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay 
    sudo k3s kubectl -n monitoring port-forward --address 127.0.0.1 svc/monitoring-prometheus 9090:9090
    ```
 
-5. Trên máy cá nhân, mở SSH tunnel (thay user/IP bằng thông tin VPS):
+   Trên máy cá nhân, mở SSH tunnel (thay user/IP bằng thông tin VPS):
 
    ```bash
    ssh -N -o ExitOnForwardFailure=yes -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 <SSH_USER>@<VPS_IP>
@@ -65,7 +80,7 @@ Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay 
 
    Mở [Grafana](http://localhost:3000), đăng nhập `admin` cùng mật khẩu bước 3; mở [Prometheus](http://localhost:9090). `localhost` của VPS và máy cá nhân khác nhau, vì vậy cần cả port-forward và SSH tunnel. Nếu máy cá nhân đã có kubeconfig truy cập API server, có thể chạy hai lệnh `kubectl port-forward` trực tiếp trên máy cá nhân và bỏ SSH tunnel. Không cần mở cổng public 3000/9090.
 
-6. Xác minh sau 2–3 phút:
+6. Xác minh metrics sau 2–3 phút:
    - Pod Ready, PVC Bound: `sudo k3s kubectl -n monitoring get pods,pvc`.
    - Prometheus → **Status → Target health**: kubelet/cAdvisor, node-exporter, kube-state-metrics có trạng thái UP.
    - Query `up`, `count(container_cpu_usage_seconds_total)`, `count(container_memory_working_set_bytes)`, `count(node_memory_MemTotal_bytes)`, `count(kube_pod_info)` trả dữ liệu.
@@ -74,7 +89,7 @@ Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay 
 
 ## Dashboard 15282 và phạm vi metrics
 
-[Dashboard 15282](https://grafana.com/grafana/dashboards/15282-k8s-rke-cluster-monitoring/) có tên **K3S cluster monitoring**, dù slug URL còn `k8s-rke`. Script cố định revision **1**, xác minh checksum và thay `${DS_PROMETHEUS}` bằng datasource UID `prometheus`. Grafana sidecar tự nạp ConfigMap `monitoring-dashboard-15282`, không cần import thủ công. Các dashboard mặc định của chart vẫn được giữ.
+[Dashboard 15282](https://grafana.com/grafana/dashboards/15282-k8s-rke-cluster-monitoring/) được lưu trong repo dưới tên [vps_k3s_dashboard.json](../dashboard/vps_k3s_dashboard.json) và hiển thị với tên **K3S cluster monitoring on VPS**. Script xác minh checksum và thay `${DS_PROMETHEUS}` bằng datasource UID `prometheus`. Grafana sidecar tự nạp ConfigMap `vps-k3s-monitoring-dashboard`, không cần import thủ công. Các dashboard mặc định của chart vẫn được giữ.
 
 Dashboard dùng cAdvisor, có cả query root/system cgroups và `container_spec_*`. Vì chart mặc định lọc bỏ một phần metrics đó, values đặt `cAdvisorMetricRelabelings: []`. Việc này tăng lượng series; theo dõi RAM/disk Prometheus. Kubelet/cAdvisor mới có thể không xuất một số metrics cũ: panel systemd/filesystem trống cần kiểm tra query và metric thật, không thể đảm bảo mọi panel của revision 1 đều tương thích chỉ nhờ cài chart. Nếu sửa hoặc thay revision JSON trong repo, script dừng do checksum thay đổi; review file mới rồi cập nhật checksum cùng thay đổi đó.
 
@@ -82,12 +97,11 @@ Stack gồm Prometheus Operator, Prometheus, Grafana, kube-state-metrics và nod
 
 Đây là monitoring cấp cluster. Script không chuyển các rule riêng Django/Postgres hay annotation-based discovery trong `14.prometheus.yaml` sang ServiceMonitor/PrometheusRule. Các file cũ ghim node homelab và dùng tài nguyên riêng; nếu đã chạy chúng trên VPS, cần kiểm kê/backup và lập kế hoạch migration trước. Script không xóa hoặc chuyển dữ liệu cũ.
 
-## Vận hành lâu dài và bước ingress sau
+## Vận hành lâu dài
 
-- Chạy lại script để reconcile cùng phiên bản/config. `--reset-values` lấy cấu hình Git làm nguồn chính; không giữ thay đổi `helm --set` ngoài repo. Sau này ingress/root_url phải được lưu trong values hoặc bổ sung overlay vào chính script, nếu không lần chạy lại sẽ tắt ingress.
+- Chạy lại script để reconcile cùng phiên bản/config. `--reset-values` lấy cấu hình Git và overlay được render từ `GRAFANA_HOSTNAME` làm nguồn chính; không giữ thay đổi `helm --set` ngoài repo. Đổi hostname cần cập nhật DNS và GitHub Variable/Secret rồi chạy lại pipeline; Certificate, Ingress và `grafana.ini.server.root_url` sẽ cùng được reconcile.
 - PVC `local-path` giữ dữ liệu qua pod restart nhưng gắn với node/đĩa VPS; không phải HA hoặc backup. Đặt lịch backup dữ liệu cần giữ, nhất là Grafana DB và cấu hình. Không xóa PVC/namespace để sửa lỗi đăng nhập.
 - Nâng chart là một thay đổi có kiểm tra [upgrade notes và CRDs](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack#upgrading-chart). Helm không tự nâng CRDs theo chart. Script chặn phiên bản release khác; cần quy trình nâng cấp riêng, không chỉ sửa version rồi chạy lại.
-- Sau khi port-forward và login/data đã thành công, triển khai theo [ArgoCD bootstrap](../../argocd/ui/ARGOCD-BOOTSTRAP.md): IngressClass `nginx`, dùng lại `ClusterIssuer letsencrypt-prod`, tạo Certificate/TLS Secret riêng **trong namespace monitoring**, backend `monitoring-grafana:80` qua **HTTP**, TLS kết thúc ở NGINX. Không sao chép `backend-protocol: HTTPS` của ArgoCD vì backend Grafana hiện phục vụ HTTP.
-- Dùng hostname Grafana đã chuẩn bị để đặt `grafana.ini.server.domain`, `root_url=https://<GRAFANA_HOSTNAME>/`, bật cookie secure cùng ingress/TLS. Giữ anonymous và sign-up tắt; giữ Secret admin đã tạo. Không public Prometheus. Hostname cụ thể chưa xuất hiện trong yêu cầu này; nhập chính xác khi triển khai bước ingress.
+- Grafana dùng IngressClass `nginx`, `ClusterIssuer/letsencrypt-prod` và TLS Secret `monitoring-grafana-tls` riêng trong namespace `monitoring`. TLS kết thúc ở NGINX; backend `monitoring-grafana:80` dùng HTTP. `grafana.ini.server.root_url`, domain và secure cookie được render cùng hostname. Anonymous access và sign-up vẫn tắt. Prometheus không được public.
 
 Nguồn: [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack), [k3s metrics](https://docs.k3s.io/reference/metrics).
