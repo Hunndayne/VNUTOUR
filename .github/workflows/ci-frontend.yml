@@ -185,7 +185,8 @@ jobs:
   # main    -> components/images/kustomization.yaml, the SINGLE source shared by
   #            overlays/prod (Zone 1 homelab) and overlays/prod-standby (Zone 2
   #            Linode) - one bump keeps both prod zones on the same version.
-  # Commits back to the SAME branch with [skip ci] so it does not re-trigger.
+  # GITHUB_TOKEN pushes do not trigger another push workflow.
+  # Omit skip markers: they can enter a merge message and skip release CI.
   update-manifest:
     needs: [build-push]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
@@ -241,7 +242,7 @@ jobs:
           git add "${{ steps.target.outputs.dir }}/kustomization.yaml"
           # Skip commit if nothing changed (e.g. re-run on same SHA)
           git diff --cached --quiet && echo "No changes to commit" && exit 0
-          git commit -m "ci: update frontend image tag on ${{ github.ref_name }} to ${{ steps.meta.outputs.sha }} [skip ci]"
+          git commit -m "ci: update frontend image tag on ${{ github.ref_name }} to ${{ steps.meta.outputs.sha }}"
           git push origin "${{ github.ref_name }}"
 
   # Notify: Discord notification + PR comment (always runs, even on failure)

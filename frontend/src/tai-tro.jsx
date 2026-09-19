@@ -8,6 +8,7 @@ import universityLogo from "./assets/organizer-university.webp";
 import youthUnionLogo from "./assets/organizer-youth-union.webp";
 import facultyLogo from "./assets/organizer-faculty.webp";
 import SiteHeader from "./SiteHeader.jsx";
+import SiteFooter from "./SiteFooter.jsx";
 import dolLogo from "./assets/SAT&JUNIOR-1.png";
 import netCorpLogo from "./assets/NET CORP TÁCH NỀN-01.png";
 /* ==========================================================================

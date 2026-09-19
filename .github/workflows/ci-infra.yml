@@ -5,9 +5,13 @@ on:
     branches: [main, staging]
     paths:
       - "k8s/**"
+      - ".github/workflows/bootstrap-baseline.yml"
+      - ".github/workflows/ci-infra.yml"
   pull_request:
     paths:
       - "k8s/**"
+      - ".github/workflows/bootstrap-baseline.yml"
+      - ".github/workflows/ci-infra.yml"
 
 concurrency:
   group: ci-infra-${{ github.ref }}
@@ -64,6 +68,37 @@ jobs:
           tar -xzf kustomize.tar.gz -C /usr/local/bin/
           chmod +x /usr/local/bin/kustomize
 
+      - name: Test baseline bootstrap safety
+        run: |
+          echo "::group::[BASELINE TEST 1/4] Prepare runner tools"
+          bash k8s/argocd/ui/deploy.sh --prepare-tools
+          bash k8s/monitoring/install/deploy.sh --prepare-tools
+          echo "::endgroup::"
+
+          echo "::group::[BASELINE TEST 2/4] Validate Bash syntax"
+          bash -n \
+            k8s/argocd/ui/deploy.sh \
+            k8s/argocd/ui/bootstrap.sh \
+            k8s/monitoring/install/deploy.sh \
+            k8s/monitoring/install/monitoring-install.sh
+          echo "[success] Bash syntax validation passed"
+          echo "::endgroup::"
+
+          echo "::group::[BASELINE TEST 3/4] Run ShellCheck"
+          shellcheck \
+            k8s/argocd/ui/deploy.sh \
+            k8s/argocd/ui/bootstrap.sh \
+            k8s/monitoring/install/deploy.sh \
+            k8s/monitoring/install/monitoring-install.sh
+          echo "[success] ShellCheck passed"
+          echo "::endgroup::"
+
+          echo "::group::[BASELINE TEST 4/4] Run bootstrap unit tests"
+          python3 -m unittest discover -s k8s/argocd/ui/test -p 'test_*.py' -v
+          python3 -m unittest discover -s k8s/monitoring/test -p 'test_*.py' -v
+          echo "[success] Baseline bootstrap unit tests passed"
+          echo "::endgroup::"
+
       - name: Install kubeconform
         run: |
           KUBECONFORM_VERSION=0.8.0
@@ -114,6 +149,10 @@ jobs:
           }
           standalone_found=0
           while IFS= read -r -d '' f; do
+            # Helm values are configuration input, not Kubernetes resources.
+            case "$f" in
+              k8s/monitoring/install/values.yaml|k8s/monitoring/install/ingress-values.yaml) continue ;;
+            esac
             dir=$(dirname "$f")
             is_kustomize_dir "$dir" && continue
             echo "== $f =="
