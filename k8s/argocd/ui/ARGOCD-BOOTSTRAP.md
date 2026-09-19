@@ -1,6 +1,6 @@
 # ArgoCD UI - Bootstrap bằng GitHub Actions và SSH
 
-Workflow: [Bootstrap ArgoCD UI](../../../.github/workflows/bootstrap-argocd.yml). Địa chỉ truy cập sau triển khai là `https://<ARGOCD_HOSTNAME>`, đăng nhập bằng `admin` và mật khẩu trong GitHub Secret `ARGOCD_ADMIN_PASSWORD`. Grafana để sau.
+Workflow: [Bootstrap VPS Baseline](../../../.github/workflows/bootstrap-baseline.yml). Workflow dùng chung cho ArgoCD UI và monitoring nhưng giữ step/script riêng cho từng dịch vụ. Địa chỉ ArgoCD sau triển khai là `https://<ARGOCD_HOSTNAME>`, đăng nhập bằng `admin` và mật khẩu trong GitHub Secret `ARGOCD_ADMIN_PASSWORD`.
 
 Tài liệu này mô tả cấu hình cần chạy; commit file chưa xác nhận VPS đã triển khai.
 
@@ -161,7 +161,7 @@ Các bước chờ có giới hạn: rollout cert-manager/ArgoCD 180 giây mỗi
 
 ## Pipeline chạy thế nào?
 
-Sau khi thay đổi được đưa vào `main`, workflow chạy khi file bootstrap/manifest liên quan thay đổi. Cũng có thể vào **Actions → Bootstrap ArgoCD UI → Run workflow**, chọn `main`. Không chạy deploy trên pull request hoặc branch khác. Chỉnh Secrets/Variables không tự kích hoạt pipeline; dùng Run workflow để áp dụng giá trị mới. Concurrency không hủy lượt đang chạy giữa chừng khi lượt mới được gửi.
+Sau khi thay đổi được đưa vào `main`, workflow chạy khi file baseline/manifest liên quan thay đổi. Cũng có thể vào **Actions → Bootstrap VPS Baseline → Run workflow**, chọn `main`, rồi chọn chạy ArgoCD, monitoring hoặc cả hai. Không deploy trên pull request hoặc branch khác. Chỉnh Secrets/Variables không tự kích hoạt pipeline; dùng Run workflow để áp dụng giá trị mới. Concurrency không hủy lượt đang chạy giữa chừng khi lượt mới được gửi.
 
 Thứ tự triển khai được mô tả trong [luồng triển khai ở trên](#luồng-triển-khai-argocd-ui). Sau pipeline, kiểm tra thủ công trình duyệt tải JS/CSS, refresh URL sâu và quyền truy cập của tài khoản hạn chế.
 
