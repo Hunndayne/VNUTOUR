@@ -1638,11 +1638,12 @@ function SubmissionItemCard({
 
       {item.type === 'text' && (
         <div className="grid gap-3">
-          <input
+          <textarea
+            rows={2}
             value={item.label}
             onChange={event => onChange('label', event.target.value)}
             placeholder="Nội dung câu hỏi, vd: Mật mã tìm được"
-            className={INPUT_CLS}
+            className={`${INPUT_CLS} resize-y leading-6 placeholder:text-ink/30`}
           />
           <input
             value={item.placeholder}
