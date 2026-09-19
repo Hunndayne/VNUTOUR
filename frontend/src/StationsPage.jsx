@@ -209,10 +209,260 @@ function createSubmissionLimits(limits = {}) {
     opensAt: limits.opensAt ?? '',
     closesAt: limits.closesAt ?? '',
     durationMinutes: Math.max(0, Number(limits.durationMinutes) || 0),
+    durationSeconds: limits.durationSeconds != null
+      ? Math.max(0, Number(limits.durationSeconds) || 0)
+      : Math.max(0, Number(limits.durationMinutes) || 0) * 60,
   }
 }
 
-function createSubmissionConfig(submission = {}) {
+
+
+// Thứ tự checkout để BTC xét vé chung kết: thời điểm, rồi số trạm đạt, rồi tổng lượt (ít hơn xếp trên).
+function CheckoutPanel({ eventId }) {
+  const [rows, setRows] = useState([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await apiRequest(`/event-checkins/checkouts?event_id=${encodeURIComponent(eventId)}`)
+      setRows(Array.isArray(data?.checkouts) ? data.checkouts : [])
+    } catch (err) {
+      setError(err?.message || 'Không tải được danh sách checkout.')
+    } finally {
+      setLoading(false)
+    }
+  }, [eventId])
+
+  useEffect(() => {
+    void load()
+    const timer = setInterval(() => { void load() }, 15000)
+    return () => clearInterval(timer)
+  }, [load])
+
+  const undo = async (row) => {
+    if (!window.confirm(`Huỷ checkout của đội ${row.team_code}? Đội sẽ được chơi tiếp.`)) return
+    try {
+      await apiRequest(`/event-checkins/${row.id}?scope=checkout`, { method: 'DELETE' })
+      await load()
+    } catch (err) {
+      setError(err?.message || 'Không huỷ được checkout.')
+    }
+  }
+
+  return (
+    <div className={`${CARD} mt-5 overflow-hidden`}>
+      <div className="flex items-center justify-between gap-3 border-b border-stone px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-ink">Danh sách checkout</p>
+          <p className="text-xs text-ink/45">Xếp theo thời điểm checkout. Số trạm đạt và tổng lượt dùng để xét khi đến cùng lúc.</p>
+        </div>
+        <button type="button" onClick={() => void load()} disabled={loading}
+          className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-50">
+          {loading ? 'Đang tải…' : 'Tải lại'}
+        </button>
+      </div>
+      {error && <p className="px-4 py-2 text-xs text-clay" role="alert">{error}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-paper text-[10px] uppercase tracking-widest text-ink/40">
+            <tr>
+              <th className="px-4 py-2">#</th>
+              <th className="px-4 py-2">Đội</th>
+              <th className="px-4 py-2">Checkout lúc</th>
+              <th className="px-4 py-2 text-right">Trạm đạt</th>
+              <th className="px-4 py-2 text-right">Tổng lượt</th>
+              <th className="px-4 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.id} className="border-t border-stone/60">
+                <td className="px-4 py-2 font-mono text-ink/60">{row.rank}</td>
+                <td className="px-4 py-2"><span className="font-semibold text-ink">{row.team_name}</span> <span className="font-mono text-xs text-ink/45">{row.team_code}</span></td>
+                <td className="px-4 py-2 text-ink/70">{new Date(row.checked_out_at).toLocaleTimeString('vi-VN')}</td>
+                <td className="px-4 py-2 text-right">{row.passed_count}</td>
+                <td className="px-4 py-2 text-right">{row.total_attempts}</td>
+                <td className="px-4 py-2 text-right">
+                  <button type="button" onClick={() => void undo(row)} className="text-xs font-semibold text-clay hover:underline">Huỷ checkout</button>
+                </td>
+              </tr>
+            ))}
+            {!loading && rows.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-xs text-ink/40">Chưa có đội nào checkout.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// Trạm check-in không có phiên chơi riêng — điểm danh QR ghi nhận theo cả sự
+// kiện, nên log của trạm này chính là toàn bộ lượt điểm danh của event.
+function CheckinLogPanel({ eventId }) {
+  const [rows, setRows] = useState([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState(() => new Set())
+
+  const load = useCallback(async () => {
+    if (!eventId) return
+    setLoading(true)
+    setError('')
+    try {
+      const data = await apiRequest(`/event-checkins?event_id=${encodeURIComponent(eventId)}&limit=200`)
+      setRows(Array.isArray(data?.items) ? data.items : [])
+    } catch (err) {
+      setError(err?.message || 'Không tải được danh sách điểm danh.')
+    } finally {
+      setLoading(false)
+    }
+  }, [eventId])
+
+  useEffect(() => {
+    void load()
+    const timer = setInterval(() => { void load() }, 12000)
+    return () => clearInterval(timer)
+  }, [load])
+
+  const sorted = useMemo(() => (
+    [...rows].sort((left, right) => (
+      new Date(right.checked_in_at || 0).getTime() - new Date(left.checked_in_at || 0).getTime()
+    ))
+  ), [rows])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return sorted
+    return sorted.filter(row => {
+      if ((row.team_name || '').toLowerCase().includes(q)) return true
+      if ((row.team_code || '').toLowerCase().includes(q)) return true
+      return (row.members_detail || []).some(member => (
+        (member.full_name || '').toLowerCase().includes(q) || (member.mssv || '').toLowerCase().includes(q)
+      ))
+    })
+  }, [sorted, query])
+
+  const toggle = (id) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  return (
+    <div className={`${CARD} overflow-hidden`}>
+      <div className="flex items-center justify-between gap-3 border-b border-stone px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-ink">Nhật ký điểm danh</p>
+          <p className="text-xs text-ink/45">Điểm danh QR tính theo cả sự kiện, không riêng trạm này.</p>
+        </div>
+        <button type="button" onClick={() => void load()} disabled={loading}
+          className="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-50">
+          {loading ? 'Đang tải…' : 'Tải lại'}
+        </button>
+      </div>
+      <div className="border-b border-stone px-4 py-2.5">
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Tìm theo tên đội, mã đội hoặc thành viên..."
+          className="w-full rounded-lg border border-stone bg-paper px-3 py-1.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+        />
+      </div>
+      {error && <p className="px-4 py-2 text-xs text-clay" role="alert">{error}</p>}
+      <div className="max-h-[28rem] divide-y divide-stone/50 overflow-y-auto">
+        {filtered.map(row => {
+          const isOpen = expanded.has(row.id)
+          const checkedInMembers = (row.members_detail || []).filter(member => member.checked_in)
+          const totalMembers = row.members_detail?.length ?? 0
+          return (
+            <div key={row.id} className="px-4 py-3">
+              <button
+                type="button"
+                onClick={() => toggle(row.id)}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink">
+                    {row.team_name} <span className="font-mono text-xs font-normal text-ink/45">{row.team_code}</span>
+                  </p>
+                  <p className="mt-0.5 text-xs text-ink/50">
+                    {row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString('vi-VN') : '-'}
+                    {' · '}{row.checked_in_count ?? checkedInMembers.length}/{totalMembers} thành viên
+                    {row.scanner ? ` · CTV ${row.scanner}` : ''}
+                  </p>
+                </div>
+                <Icon name="chevronR" className={`h-4 w-4 shrink-0 text-ink/30 transition ${isOpen ? 'rotate-90' : ''}`} />
+              </button>
+              {isOpen && (
+                <div className="mt-2 space-y-1.5 rounded-lg bg-paper px-3 py-2">
+                  {checkedInMembers.length > 0 ? checkedInMembers.map(member => (
+                    <div key={member.mssv} className="flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <span className="font-medium text-ink">{member.full_name}</span>
+                        <span className="ml-1.5 font-mono text-ink/40">{member.mssv}</span>
+                      </div>
+                      <span className="shrink-0 font-mono text-ink/45">
+                        {member.checked_in_at ? new Date(member.checked_in_at).toLocaleTimeString('vi-VN') : ''}
+                      </span>
+                    </div>
+                  )) : (
+                    <p className="text-xs italic text-ink/35">Không có thành viên nào được ghi nhận.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+        {!loading && filtered.length === 0 && (
+          <p className="px-4 py-8 text-center text-xs text-ink/40">
+            {rows.length === 0 ? 'Chưa có đội nào điểm danh.' : 'Không tìm thấy đội phù hợp.'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DurationInput({ seconds, onChange }) {
+  // Keep the chosen unit locally so typing "1" in minutes does not flip to seconds.
+  const [unit, setUnit] = useState(() => (seconds > 0 && seconds % 60 === 0 ? 'minutes' : 'seconds'))
+  const factor = unit === 'minutes' ? 60 : 1
+  const shown = unit === 'minutes' ? seconds / 60 : seconds
+  return (
+    <div className="mb-4 flex gap-2">
+      <input
+        type="number"
+        min={0}
+        step={unit === 'minutes' ? 'any' : 1}
+        value={shown || 0}
+        onChange={event => onChange(Math.max(0, Math.round((Number(event.target.value) || 0) * factor)))}
+        className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+      />
+      <select
+        value={unit}
+        onChange={event => setUnit(event.target.value)}
+        aria-label="Đơn vị thời gian"
+        className="rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+      >
+        <option value="seconds">Giây</option>
+        <option value="minutes">Phút</option>
+      </select>
+    </div>
+  )
+}
+
+function createSubmissionConfig(input) {
+  // `= {}` only covers undefined; stations created server-side (the auto
+  // check-in station) come back with submission_config: null.
+  const submission = input && typeof input === 'object' ? input : {}
   const rawItems = Array.isArray(submission.items)
     ? submission.items
     : itemsFromLegacyConfig(submission)
@@ -262,12 +512,14 @@ function createBlankStation() {
     name: '',
     location: '',
     active: true,
+    kind: 'play',
     checkinPolicy: 'staff_scan',
     capacityMode: 'unlimited',
     maxConcurrentTeams: 2,
     scoringMode: 'score_only',
     passThreshold: 0,
     passPoints: 0,
+    maxAttempts: null,
     teamsHere: [],
     teamsDone: [],
     submission: createSubmissionConfig(),
@@ -288,6 +540,7 @@ function createStation(station = {}) {
     }))
     : []
   next.checkinPolicy = Object.prototype.hasOwnProperty.call(CHECKIN_POLICY_META, station.checkinPolicy) ? station.checkinPolicy : 'staff_scan'
+  next.kind = ['checkin', 'checkout'].includes(station.kind) ? station.kind : 'play'
   next.capacityMode = station.capacityMode === 'limited' ? 'limited' : 'unlimited'
   next.maxConcurrentTeams = Math.max(1, Number(station.maxConcurrentTeams) || 2)
   next.scoringMode = Object.prototype.hasOwnProperty.call(SCORING_MODE_META, station.scoringMode) ? station.scoringMode : 'score_only'
@@ -295,6 +548,7 @@ function createStation(station = {}) {
   next.passThreshold = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? Math.round(rawThreshold) : 0
   const rawPoints = Number(station.passPoints)
   next.passPoints = Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 0
+  next.maxAttempts = station.maxAttempts == null ? null : Number(station.maxAttempts)
   next.submission = createSubmissionConfig(station.submission)
 
   return next
@@ -688,7 +942,14 @@ function explainApiError(error) {
     results_locked: 'Kết quả đã khóa (chương trình kết thúc), không thể sửa điểm.',
     master_admin_required: 'Chỉ master admin mới được tạo/sửa/xoá trạm và đổi phase hiện tại.',
   }
-  return map[code] || 'Không thể đồng bộ dữ liệu trạm.'
+  if (map[code]) return map[code]
+  // Không nuốt lỗi lạ: in kèm mã lỗi/HTTP status (hoặc lỗi JS) để còn biết hỏng ở đâu.
+  const detail = [
+    error?.context,
+    error?.status ? `HTTP ${error.originalStatus || error.status}` : null,
+    code,
+  ].filter(Boolean).join(' · ')
+  return detail ? `Không thể đồng bộ dữ liệu trạm (${detail}).` : 'Không thể đồng bộ dữ liệu trạm.'
 }
 
 function formatCapacitySummary(station) {
@@ -812,12 +1073,14 @@ function stationFromApi(station, sessions = []) {
     name: station.name || '',
     location: station.location || '',
     active: station.active !== false,
+    kind: station.kind || 'play',
     checkinPolicy: station.checkin_policy || 'staff_scan',
     capacityMode: station.capacity_mode || 'unlimited',
     maxConcurrentTeams: Math.max(1, Number(station.max_concurrent_teams) || 2),
     scoringMode: station.scoring_mode || 'score_only',
     passThreshold: station.pass_threshold,
     passPoints: station.pass_points,
+    maxAttempts: station.max_attempts,
     teamsHere,
     teamsDone,
     submission: createSubmissionConfig(station.submission_config),
@@ -830,12 +1093,14 @@ function buildStationPayload(form, order, active) {
     location: form.location.trim(),
     order,
     active,
+    kind: form.kind || 'play',
     checkin_policy: form.checkinPolicy,
     capacity_mode: form.capacityMode,
     max_concurrent_teams: form.capacityMode === 'limited'
       ? Math.max(1, Number(form.maxConcurrentTeams) || 1)
       : null,
     scoring_mode: form.scoringMode,
+    max_attempts: form.maxAttempts == null ? null : Number(form.maxAttempts),
     // Chỉ giữ giá trị của ô đang áp dụng — tránh gửi lên số liệu cũ của chế độ
     // đã bỏ chọn, giống cách max_concurrent_teams về null khi hết giới hạn.
     pass_threshold: form.scoringMode === 'threshold'
@@ -850,9 +1115,11 @@ function buildStationPayload(form, order, active) {
 
 async function fetchStationsForEvent(phaseKey, eventId) {
   const payload = await apiRequest(`/program/phases/${phaseKey}/sub-events/${eventId}/stations?include_inactive=1`)
+    .catch((error) => { error.context = 'danh sách trạm'; throw error })
   const stations = payload?.stations || []
   const historyPayloads = await Promise.all(
-    stations.map(station => apiRequest(`/stations/${station.id}/sessions`)),
+    stations.map(station => apiRequest(`/stations/${station.id}/sessions`)
+      .catch((error) => { error.context = `lịch sử trạm ${station.code || station.id}`; throw error })),
   )
 
   return normalizeStations(
@@ -1836,6 +2103,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
 
   const handleSave = async () => {
     if (!form.name.trim()) return
+    if (form.maxAttempts != null && (!Number.isInteger(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1 || Number(form.maxAttempts) > 2147483647)) return
     // onSave (addStation/saveStation) trả về true khi lưu thành công — chỉ xoá
     // nháp lúc đó, thất bại thì giữ nguyên để không mất nội dung đang soạn.
     const result = await onSave({
@@ -1893,6 +2161,29 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           <span className="text-sm text-ink/60">{form.active ? 'Đang hoạt động' : 'Chưa mở'}</span>
         </div>
 
+        <div className="sm:col-span-2">
+          <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
+            Loại trạm
+          </label>
+          <select
+            value={form.kind || 'play'}
+            onChange={event => set('kind', event.target.value)}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10"
+          >
+            <option value="play">Trạm chơi</option>
+            <option value="checkin">Trạm check-in (ghi nhận đội đến sự kiện)</option>
+            <option value="checkout">Trạm checkout (ghi nhận đội hoàn thành)</option>
+          </select>
+          <p className="mt-1 text-xs leading-5 text-ink/45">
+            {form.kind === 'checkin'
+              ? 'CTV quét QR đội để check-in sự kiện. Không có câu hỏi, điểm hay số lượt. Sự kiện bật "yêu cầu điểm danh" sẽ tự có sẵn trạm này (mã CHECKIN).'
+              : form.kind === 'checkout'
+                ? 'CTV quét QR đội để ghi thời điểm hoàn thành. Đội đã checkout không được chơi thêm trạm nào.'
+                : 'Trạm có nhiệm vụ, chấm điểm và giới hạn lượt chơi.'}
+          </p>
+        </div>
+
+        {(form.kind || 'play') === 'play' && (<>
         <div>
           <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
             Luồng vào trạm
@@ -1980,6 +2271,21 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </p>
         </div>
 
+        <div className="sm:col-span-2 space-y-2">
+          <label htmlFor="station-max-attempts" className="block text-sm font-semibold text-ink">Tổng số lượt chơi tối đa của mỗi đội</label>
+          <label className="flex items-center gap-2 text-sm text-ink/65">
+            <input type="checkbox" checked={form.maxAttempts == null}
+              onChange={event => set('maxAttempts', event.target.checked ? null : 3)} />
+            Không giới hạn số lượt
+          </label>
+          {form.maxAttempts != null && <input id="station-max-attempts" type="number" min={1} step={1} required
+            value={form.maxAttempts} onChange={event => set('maxAttempts', event.target.value)}
+            className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink" />}
+          <p className="text-xs text-ink/55">3 lượt gồm 1 lượt đầu và tối đa 2 lượt chơi lại. Đã đạt có được chơi tiếp hay không do tuỳ chọn của event quyết định.</p>
+          {form.maxAttempts != null && (!Number.isInteger(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1 || Number(form.maxAttempts) > 2147483647) && <p className="text-xs text-clay" role="alert">Nhập tổng số lượt là số nguyên từ 1 đến 2147483647.</p>}
+          {form.scoringMode === 'score_only' && <p className="text-xs text-ink/55">Chỉ nhập điểm không phân biệt đúng/sai. Muốn chơi lại khi sai, hãy chọn Đạt/Không đạt hoặc Ngưỡng điểm đạt.</p>}
+        </div>
+
         {form.scoringMode === 'threshold' && (
           <div className="sm:col-span-2">
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
@@ -2009,8 +2315,10 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
             />
           </div>
         )}
+        </>)}
       </div>
 
+      {(form.kind || 'play') === 'play' && (<>
       <div className="space-y-3">
         <SectionTitle
           title="Nhiệm vụ trạm"
@@ -2274,14 +2582,14 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
             />
 
             <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-ink/40">
-              Thời gian làm bài (Phút, 0 = Không giới hạn)
+              Thời gian làm bài (0 = Không giới hạn)
             </label>
-            <input
-              type="number"
-              min={0}
-              value={form.submission.limits.durationMinutes || 0}
-              onChange={event => updateLimits('durationMinutes', Math.max(0, Number(event.target.value) || 0))}
-              className="w-full rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink outline-none transition focus:border-trail/40 focus:ring-2 focus:ring-trail/10 mb-4"
+            <DurationInput
+              seconds={form.submission.limits.durationSeconds || 0}
+              onChange={seconds => {
+                updateLimits('durationSeconds', seconds)
+                updateLimits('durationMinutes', Math.floor(seconds / 60))
+              }}
             />
             <p className="mt-1 mb-4 text-xs leading-5 text-ink/45">
               Thời gian đếm ngược sẽ tính từ lúc đội check-in quét QR mã trạm.
@@ -2366,6 +2674,8 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           </p>
         </div>
       )}
+
+      </>)}
 
       <div className="flex gap-2 pt-1">
         <button
@@ -2717,23 +3027,26 @@ function StationErrorBanner({ message }) {
 /** Cột phải của trang sửa trạm: số liệu vận hành, phân công CTV, đội đang ở/đã xong. */
 function StationOpsColumn({ station, phase, selectedEvent }) {
   const totalScore = sumStationScore(station)
+  const isCheckinStation = station.kind === 'checkin'
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2">
-        <div className={`${CARD} px-3 py-2.5`}>
-          <p className="font-mono text-lg font-bold leading-none text-gold">{station.teamsHere.length}</p>
-          <p className="mt-1 text-[11px] text-ink/40">Đang ở đây</p>
+      {!isCheckinStation && (
+        <div className="grid grid-cols-3 gap-2">
+          <div className={`${CARD} px-3 py-2.5`}>
+            <p className="font-mono text-lg font-bold leading-none text-gold">{station.teamsHere.length}</p>
+            <p className="mt-1 text-[11px] text-ink/40">Đang ở đây</p>
+          </div>
+          <div className={`${CARD} px-3 py-2.5`}>
+            <p className="font-mono text-lg font-bold leading-none text-trail">{station.teamsDone.length}</p>
+            <p className="mt-1 text-[11px] text-ink/40">Đã hoàn thành</p>
+          </div>
+          <div className={`${CARD} px-3 py-2.5`}>
+            <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
+            <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
+          </div>
         </div>
-        <div className={`${CARD} px-3 py-2.5`}>
-          <p className="font-mono text-lg font-bold leading-none text-trail">{station.teamsDone.length}</p>
-          <p className="mt-1 text-[11px] text-ink/40">Đã hoàn thành</p>
-        </div>
-        <div className={`${CARD} px-3 py-2.5`}>
-          <p className="font-mono text-lg font-bold leading-none text-[#3E7CA8]">{totalScore}</p>
-          <p className="mt-1 text-[11px] text-ink/40">Tổng điểm trạm</p>
-        </div>
-      </div>
+      )}
 
       <StationFlowOverview station={station} />
 
@@ -2745,42 +3058,48 @@ function StationOpsColumn({ station, phase, selectedEvent }) {
         embedded
       />
 
-      <div>
-        <SectionTitle title={`Đang ở đây · ${station.teamsHere.length} đội`} />
-        <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
-          {station.teamsHere.length > 0 ? station.teamsHere.map(team => (
-            <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{team.name}</p>
-                <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
-              </div>
-              <span className="shrink-0 font-mono text-xs text-gold">{team.arrivedAt}</span>
+      {isCheckinStation ? (
+        <CheckinLogPanel eventId={selectedEvent?.id} />
+      ) : (
+        <>
+          <div>
+            <SectionTitle title={`Đang ở đây · ${station.teamsHere.length} đội`} />
+            <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
+              {station.teamsHere.length > 0 ? station.teamsHere.map(team => (
+                <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink">{team.name}</p>
+                    <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
+                  </div>
+                  <span className="shrink-0 font-mono text-xs text-gold">{team.arrivedAt}</span>
+                </div>
+              )) : (
+                <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
+              )}
             </div>
-          )) : (
-            <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào ở đây.</p>
-          )}
-        </div>
-      </div>
+          </div>
 
-      <div>
-        <SectionTitle title={`Đã hoàn thành · ${station.teamsDone.length} đội`} />
-        <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
-          {station.teamsDone.length > 0 ? station.teamsDone.map(team => (
-            <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{team.name}</p>
-                <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
-                <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
-              </div>
+          <div>
+            <SectionTitle title={`Đã hoàn thành · ${station.teamsDone.length} đội`} />
+            <div className={`${CARD} max-h-72 divide-y divide-stone/50 overflow-y-auto`}>
+              {station.teamsDone.length > 0 ? station.teamsDone.map(team => (
+                <div key={team.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink">{team.name}</p>
+                    <p className="font-mono text-[11px] text-ink/40">{team.id}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="font-mono text-sm font-semibold text-[#3E7CA8]">{Number(team.score) || 0} điểm</p>
+                    <p className="font-mono text-[11px] text-trail">{team.doneAt}</p>
+                  </div>
+                </div>
+              )) : (
+                <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
+              )}
             </div>
-          )) : (
-            <p className="px-4 py-4 text-sm italic text-ink/30">Chưa có đội nào hoàn thành.</p>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -3039,6 +3358,7 @@ function StationsPage({
         logoutAndRedirect('/')
         return
       }
+      console.error('Station sync failed', error)
       setApiError(explainApiError(error))
     } finally {
       setListLoading(false)
@@ -3414,6 +3734,10 @@ function StationsPage({
           </div>
         </div>
       ) : null}
+
+      {selectedEvent && (
+        <CheckoutPanel eventId={selectedEvent.id} />
+      )}
     </div>
   )
 }

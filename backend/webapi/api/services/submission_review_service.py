@@ -47,23 +47,27 @@ def build_review(config, response, item_ids=None, effective_items=None):
 
 
 def review_deadline(station, team, session):
+    """Legacy attempt edit deadline, independent of answer publication."""
     limits = normalize_config(station.submission_config)["limits"]
     deadlines = []
     fixed = parse_datetime(limits.get("closesAt") or "")
     if fixed:
         deadlines.append(timezone.make_aware(fixed) if timezone.is_naive(fixed) else fixed)
-    minutes = limits.get("durationMinutes", 0)
-    if minutes:
+    seconds = limits.get("durationSeconds", 0)
+    if seconds:
         started = session.entered_at if session else None
         if not started:
             form = TeamFormSession.objects.filter(station=station, team=team).order_by("-started_at").first()
             started = form.started_at if form else None
         if started:
-            deadlines.append(started + timedelta(minutes=minutes))
+            deadlines.append(started + timedelta(seconds=seconds))
     return min(deadlines).isoformat() if deadlines else None
 
 
-def participant_review(submission):
+def attempt_is_finished(submission):
+    """Preserve attempt edit limits even while answers wait for the event end."""
+    if participant_review(submission)["available"]:
+        return True
     payload = submission.response_payload or {}
     session = submission.station_session
     deadline_raw = payload.get("review_available_at")
@@ -71,13 +75,26 @@ def participant_review(submission):
         deadline_raw = review_deadline(submission.station, submission.team, session)
     deadline = parse_datetime(deadline_raw) if deadline_raw else None
     # Account for the same 15-second auto-submit grace period as the submit API.
-    released = timezone.now() >= deadline + timedelta(seconds=15) if deadline else (
+    return timezone.now() >= deadline + timedelta(seconds=15) if deadline else (
         (session is not None and session.status == StationSession.STATUS_CLOSED)
         or submission.station.checkin_policy == Station.POLICY_FREE_PLAY
         or not normalize_config(submission.station.submission_config)["flow"]["checkoutAfterSubmit"]
     )
+
+
+def participant_review(submission):
+    """Release answers only at the event's current configured end time.
+
+    No end time means no release. Old per-attempt review timestamps and event
+    selection changes must never reveal answers before this event ends.
+    """
+    payload = submission.response_payload or {}
+    deadline = submission.station.sub_event.end_date
+    if deadline and timezone.is_naive(deadline):
+        deadline = timezone.make_aware(deadline)
+    released = bool(deadline and timezone.now() >= deadline)
     return {
         "available": released,
-        "available_at": (deadline + timedelta(seconds=15)).isoformat() if deadline else None,
+        "available_at": deadline.isoformat() if deadline else None,
         "items": payload.get("answer_review", []) if released else [],
     }

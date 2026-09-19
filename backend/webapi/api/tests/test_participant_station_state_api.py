@@ -22,7 +22,10 @@ from api.services.auth_service import generate_session
 # Four of the eight decide whether the per-station QR is live: there is no global
 # BTC toggle any more, so visibility is "a sub-event is running and this team is
 # eligible for this live station" — settled here in one roster query.
-EXPECTED_POLL_QUERIES = 8
+# Four additional batched reads refresh replay rights; count stays independent
+# of the number of stations (the second cost test guards against N+1 queries).
+# One additional event-attendance read prevents offering entry before check-in.
+EXPECTED_POLL_QUERIES = 13
 
 
 class StationStateTestBase(TestCase):
@@ -79,6 +82,25 @@ class StationStateTestBase(TestCase):
 
 
 class StationStatePayloadTests(StationStateTestBase):
+    def test_event_checkout_qr_closes_after_scan(self):
+        from api.services.checkin_service import checkout_event
+        self.station.kind = Station.KIND_CHECKOUT
+        self.station.save(update_fields=["kind"])
+        payload = self._get(self.station)
+        self.assertEqual(payload["qr"]["direction"], "out")
+        self.assertFalse(payload["attendance"]["checked_out"])
+        _, error = checkout_event(self.team.qr_token, self.station, self.account)
+        self.assertIsNone(error)
+        payload = self._get(self.station)
+        self.assertTrue(payload["attendance"]["checked_out"])
+        self.assertFalse(payload["qr"]["enabled"])
+
+    def test_event_checkout_qr_is_hidden_while_team_is_playing(self):
+        self.station.kind = Station.KIND_CHECKOUT
+        self.station.save(update_fields=["kind"])
+        self._enter(self.other_station)
+        self.assertFalse(self._get(self.station)["qr"]["enabled"])
+
     def test_before_any_scan_the_qr_is_a_check_in_code_for_this_station(self):
         payload = self._get(self.station)
 

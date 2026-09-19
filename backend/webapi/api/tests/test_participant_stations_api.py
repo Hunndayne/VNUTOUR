@@ -127,6 +127,19 @@ class StationsApiTestBase(TestCase):
 
 
 class StationVisibilityTests(StationsApiTestBase):
+    def test_checkout_stations_are_visible_separately_from_play_journey(self):
+        checkout = Station.objects.create(
+            sub_event=self.event, code="OUT", name="Checkout sự kiện",
+            kind=Station.KIND_CHECKOUT,
+        )
+        Station.objects.create(sub_event=self.event, code="OFF", name="Closed",
+                               kind=Station.KIND_CHECKOUT, active=False)
+        payload = self._get()
+        self.assertEqual([s["station_id"] for s in payload["checkout_stations"]], [checkout.id])
+        self.assertEqual(payload["checkout_stations"][0]["kind"], "checkout")
+        self.assertEqual(payload["total_stations"], 2)
+        self.assertNotIn(checkout.id, [s["station_id"] for s in payload["stations"]])
+
     def test_a_staff_scan_station_is_listed(self):
         """The gap this endpoint closes: /api/me/experience never showed these."""
         stations = self._stations_by_code()

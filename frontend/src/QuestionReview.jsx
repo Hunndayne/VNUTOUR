@@ -65,7 +65,7 @@ export default function QuestionHistory() {
   return <section className="space-y-4">
     <div>
       <h2 className="font-display text-xl font-semibold text-ink">Lịch sử câu hỏi</h2>
-      <p className="mt-1 text-sm leading-6 text-ink/60">Xem lại từng lượt làm bài của đội. Đáp án và giải thích mở sau khi hết thời gian làm bài tại trạm.</p>
+      <p className="mt-1 text-sm leading-6 text-ink/60">Xem lại từng lượt làm bài của đội. Đáp án và giải thích chỉ mở khi đến giờ kết thúc sự kiện.</p>
     </div>
     {error && <p role="alert" className="text-sm text-clay">{error}</p>}
     {!attempts && !error && <p className="text-sm text-ink/60">Đang tải lịch sử…</p>}
@@ -77,7 +77,7 @@ export default function QuestionHistory() {
         <span className="mt-2 block text-sm text-trail">{attempt.quiz_result?.total > 0 ? `${attempt.quiz_result.correct_count}/${attempt.quiz_result.total} câu đúng` : 'Chấm thủ công'} · {attempt.review.available ? 'Xem đáp án và giải thích' : 'Chưa mở đáp án'}</span>
       </summary>
       <QuizSummary result={attempt.quiz_result} score={attempt.score} />
-      {attempt.review.available ? <AnswerReview items={attempt.review.items} /> : <p className="text-sm leading-6 text-ink/60">{attempt.review.available_at ? `Mở giải thích lúc ${formatDateTime(attempt.review.available_at)} (sau thời gian nhận bài tự động).` : 'Giải thích sẽ mở khi đội kết thúc lượt tại trạm.'}</p>}
+      {attempt.review.available ? <AnswerReview items={attempt.review.items} /> : <p className="text-sm leading-6 text-ink/60">{attempt.review.available_at ? `Đáp án và giải thích mở lúc ${formatDateTime(attempt.review.available_at)} (giờ kết thúc sự kiện).` : 'Sự kiện chưa có giờ kết thúc. Đáp án và giải thích chưa mở.'}</p>}
     </details>)}
   </section>
 }

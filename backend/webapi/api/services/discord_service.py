@@ -309,8 +309,15 @@ def get_provisioning_queue() -> list[dict]:
 
 
 def retry_provision(team_code: str) -> Team:
-    """Retry Discord provisioning for a team."""
-    team = Team.objects.get(code=team_code, approval_status=Team.APPROVAL_APPROVED)
+    """Retry Discord provisioning for a team.
+
+    Raises ValueError("team_not_approved") rather than Team.DoesNotExist when
+    the team exists but has not been approved — the caller would otherwise
+    answer 404 "team_not_found" about a team the admin is looking straight at.
+    """
+    team = Team.objects.get(code=team_code)
+    if team.approval_status != Team.APPROVAL_APPROVED:
+        raise ValueError("team_not_approved")
     team.provision_state = Team.PROVISION_PENDING
     team.provision_retry_count += 1
     team.provision_last_error = None
@@ -532,7 +539,7 @@ def get_bot_runtime_status() -> dict:
 
 
 def get_qr_delivery_payloads() -> dict:
-    """Return QR payloads currently allowed by the web's QR toggle."""
+    """Return team QR payloads while an event is running."""
     from api.services.checkin_qr_service import get_checkin_qr_state
     from api.services.program_service import get_current_phase
 

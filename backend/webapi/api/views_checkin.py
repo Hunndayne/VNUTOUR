@@ -5,19 +5,23 @@ Event check-in views — §9.6 (canonical + legacy compat aliases).
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, EventCheckIn
+from api.models import Account, EventCheckIn, Participant, TeamMembership, Station, StationSession
 from api.services.checkin_service import (
     scan_event_checkin, list_event_checkins,
-    get_checkin_stats, reset_checkin,
+    get_checkin_stats, reset_checkin, undo_checkout, list_checkouts,
 )
 from api.services.checkin_qr_service import get_checkin_qr_state, set_checkin_qr
+from api.services.attendance_service import (
+    attendance_state, checkin_response, personal_qr, team_eligible_for_event, event_checkout_qr,
+)
+from api.services.program_service import get_current_sub_event
 from api.services.audit_service import record_audit
 from .views_shared import _json_body, _auth_or_401, _require_role
 
 
 @csrf_exempt
 def checkin_qr_view(request: HttpRequest):
-    """GET: current QR check-in toggle state. POST: bật/tắt (admin) + xoay token."""
+    """GET: event QR availability. POST: legacy optional token rotation."""
     acc, err = _require_role(request, Account.ROLE_ADMIN)
     if err:
         return err
@@ -36,6 +40,79 @@ def checkin_qr_view(request: HttpRequest):
     if err_code:
         return JsonResponse({"error": err_code}, status=400)
     return JsonResponse({**state, "rotated_teams": rotated})
+
+
+def my_checkin_qr_view(request: HttpRequest):
+    """GET the signed check-in QR belonging to the authenticated member."""
+    acc, err = _auth_or_401(request)
+    if err:
+        return err
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    if acc.role != Account.ROLE_PARTICIPANT:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    participant = Participant.objects.filter(account=acc).first()
+    if participant is None:
+        return JsonResponse({"error": "participant_not_found"}, status=404)
+    membership = TeamMembership.objects.select_related("team").filter(participant=participant).first()
+    if membership is None:
+        return JsonResponse({"error": "no_team"}, status=404)
+    event = get_current_sub_event()
+    if event is None:
+        return JsonResponse({"error": "no_current_event"}, status=409)
+
+    team = membership.team
+    state = attendance_state(team, event, participant.id)
+    roster_allowed = team_eligible_for_event(team, event)
+    enabled = bool(
+        roster_allowed and
+        team.approval_status == team.APPROVAL_APPROVED and not state["checked_in"] and
+        not state["checked_out"]
+    )
+    payload = None
+    if enabled:
+        if event.checkin_mode == event.CHECKIN_INDIVIDUAL:
+            payload = personal_qr(participant.id, team.id, event.id)
+        else:
+            from api.services.team_service import rotate_qr_token
+            if not team.qr_token:
+                rotate_qr_token(team)
+                team.refresh_from_db(fields=["qr_token"])
+            payload = f"t:{team.qr_token}"
+    # An event always has a checkout gate, even without a configured station.
+    # Configured gates keep their station assignment and QR scan permissions.
+    checkout_enabled = bool(
+        roster_allowed and team.approval_status == team.APPROVAL_APPROVED and
+        not state["checked_out"] and
+        not Station.objects.filter(sub_event=event, kind=Station.KIND_CHECKOUT, active=True).exists()
+    )
+    checkout_blocked = checkout_enabled and StationSession.objects.filter(
+        team=team, sub_event=event, status=StationSession.STATUS_ACTIVE,
+    ).exists()
+    checkout_enabled = checkout_enabled and not checkout_blocked
+    if checkout_enabled and not team.qr_token:
+        from api.services.team_service import rotate_qr_token
+        rotate_qr_token(team)
+        team.refresh_from_db(fields=["qr_token"])
+    return JsonResponse({
+        "enabled": enabled,
+        "checkout": {
+            "enabled": checkout_enabled,
+            "payload": event_checkout_qr(team, event) if checkout_enabled else None,
+            "blocked_reason": "session_already_active" if checkout_blocked else None,
+        },
+        "payload": payload,
+        "qr_payload": payload,
+        "checkin_mode": event.checkin_mode,
+        "mode": event.checkin_mode,
+        "participant_name": participant.full_name,
+        "mssv": participant.mssv,
+        "team_code": team.code,
+        "event_name": event.name,
+        "event_id": event.id,
+        **state,
+    })
 
 
 # =====================================================================
@@ -82,17 +159,33 @@ def event_checkin_scan_view(request: HttpRequest):
             "already_checked_in": 409, "event_not_found": 404,
             "phase_not_found": 404, "team_not_in_phase": 403,
             "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
+            "personal_qr_required": 400, "invalid_personal_qr": 400,
+            "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+            "no_current_event": 409,
+            "team_checked_out": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
-    return JsonResponse({
-        "id": checkin.id,
-        "team_code": checkin.team.code,
-        "team_name": checkin.team.name,
-        "event_name": checkin.sub_event.name,
-        "status": checkin.status,
-        "checked_in_at": checkin.created_at.isoformat(),
-    }, status=201)
+    return JsonResponse(checkin_response(checkin), status=201)
+
+
+def event_checkout_list_view(request: HttpRequest):
+    """GET ?event_id=: teams in checkout order with tie-break stats (admin)."""
+    acc, err = _require_role(request, Account.ROLE_ADMIN)
+    if err:
+        return err
+    if request.method != "GET":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    try:
+        event_id = int(request.GET.get("event_id") or "")
+    except ValueError:
+        return JsonResponse({"error": "invalid_event_id"}, status=400)
+    from api.models import SubEvent
+    try:
+        rows = list_checkouts(event_id)
+    except SubEvent.DoesNotExist:
+        return JsonResponse({"error": "event_not_found"}, status=404)
+    return JsonResponse({"checkouts": rows})
 
 
 def event_checkin_list_view(request: HttpRequest):
@@ -151,6 +244,22 @@ def event_checkin_reset_view(request: HttpRequest, checkin_id: int):
         id=checkin_id,
         status=EventCheckIn.STATUS_ACTIVE,
     ).first()
+    # ?scope=checkout only clears a mistaken checkout; the check-in stays.
+    if checkin and request.GET.get("scope") == "checkout":
+        before = checkin.checked_out_at
+        if not undo_checkout(checkin_id):
+            return JsonResponse({"error": "not_checked_out"}, status=404)
+        record_audit(
+            actor=acc,
+            action="checkin.checkout_undo",
+            summary=f"Huỷ checkout đội {checkin.team.code} tại {checkin.sub_event.name}",
+            target_type="EventCheckIn",
+            target_id=checkin.id,
+            before_data={"checked_out_at": before.isoformat() if before else None},
+            after_data={"checked_out_at": None},
+            reversible=True,
+        )
+        return JsonResponse({"status": "checkout_undone"})
     if checkin and reset_checkin(checkin_id):
         record_audit(
             actor=acc,
@@ -227,21 +336,16 @@ def checkin_legacy_view(request: HttpRequest):
             "already_checked_in": 409, "event_not_found": 404,
             "phase_not_found": 404, "team_not_in_phase": 403,
             "checkin_qr_disabled": 403, "checkin_qr_phase_mismatch": 403,
+            "personal_qr_required": 400, "invalid_personal_qr": 400,
+            "checkin_qr_event_mismatch": 409, "participant_not_in_team": 403,
+            "no_current_event": 409,
+            "team_checked_out": 409,
         }
         return JsonResponse({"error": err}, status=status_map.get(err, 400))
 
-    return JsonResponse({
-        "id": checkin.id,
-        "team_code": checkin.team.code,
-        "team_name": checkin.team.name,
-        "event_name": checkin.sub_event.name,
-        "status": checkin.status,
-        "team": {
-            "code": checkin.team.code,
-            "name": checkin.team.name,
-        },
-        "checked_in_at": checkin.created_at.isoformat(),
-    }, status=201)
+    response = checkin_response(checkin)
+    response["team"] = {"code": response["team_code"], "name": response["team_name"]}
+    return JsonResponse(response, status=201)
 
 
 def checkins_legacy_list_view(request: HttpRequest):

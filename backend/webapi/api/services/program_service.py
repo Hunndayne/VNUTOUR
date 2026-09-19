@@ -10,7 +10,44 @@ from typing import Optional
 from django.utils.dateparse import parse_date, parse_datetime
 from django.db import transaction
 
-from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting
+from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting, Station
+
+
+def _checkin_config(kwargs: dict) -> None:
+    if "checkin_mode" in kwargs and kwargs["checkin_mode"] not in (
+        SubEvent.CHECKIN_TEAM, SubEvent.CHECKIN_INDIVIDUAL,
+    ):
+        raise ValueError("invalid_checkin_mode")
+    if "min_checkin_members" in kwargs:
+        value = kwargs["min_checkin_members"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 2147483647:
+            raise ValueError("invalid_min_checkin_members")
+
+
+CHECKIN_STATION_CODE = "CHECKIN"
+CHECKIN_STATION_NAME = "Trạm điểm danh"
+
+
+def ensure_checkin_station(se: SubEvent) -> Optional[Station]:
+    """Give an event that requires check-in a check-in station to staff.
+
+    Coops are posted to stations, so without one there is nowhere to assign the
+    gate crew or read the check-in log. Any existing check-in station — even one
+    an admin switched off — counts, so a deliberate choice is never undone.
+    """
+    if not se.require_checkin:
+        return None
+    existing = Station.objects.filter(sub_event=se, kind=Station.KIND_CHECKIN).first()
+    if existing:
+        return existing
+    taken = set(Station.objects.filter(sub_event=se).values_list("code", flat=True))
+    code, n = CHECKIN_STATION_CODE, 2
+    while code in taken:
+        code, n = f"{CHECKIN_STATION_CODE}-{n}", n + 1
+    return Station.objects.create(
+        sub_event=se, kind=Station.KIND_CHECKIN, code=code,
+        name=CHECKIN_STATION_NAME, order=-1,
+    )
 
 
 def get_program() -> dict:
@@ -43,6 +80,10 @@ def get_program() -> dict:
                     "end_date": se.end_date.isoformat() if se.end_date else None,
                     "uses_stations": se.uses_stations,
                     "replay_after_all": se.replay_after_all,
+                    "replay_after_pass": se.replay_after_pass,
+                    "require_checkin": se.require_checkin,
+                    "checkin_mode": se.checkin_mode,
+                    "min_checkin_members": se.min_checkin_members,
                     "note": se.note,
                     "order": se.order,
                     "is_current": bool(current_event and current_event.id == se.id),
@@ -132,11 +173,14 @@ def create_sub_event(phase_key: str, name: str, **kwargs) -> SubEvent:
     if not name:
         raise ValueError("missing_name")
     phase = ProgramPhase.objects.get(key=phase_key)
+    _checkin_config(kwargs)
     for field in ("start_date", "end_date"):
         if field in kwargs:
             kwargs[field] = _coerce_datetime(kwargs[field])
-    se = SubEvent(phase=phase, name=name, **kwargs)
-    se.save()
+    with transaction.atomic():
+        se = SubEvent(phase=phase, name=name, **kwargs)
+        se.save()
+        ensure_checkin_station(se)
     return se
 
 
@@ -167,6 +211,7 @@ def set_current_sub_event(event_id: int) -> Optional[SubEvent]:
 def update_sub_event(event_id: int, **kwargs) -> SubEvent:
     """Update a sub-event."""
     se = SubEvent.objects.get(id=event_id)
+    _checkin_config(kwargs)
     for field, value in kwargs.items():
         if hasattr(se, field) and value is not None:
             if field in ("start_date", "end_date"):
@@ -176,7 +221,9 @@ def update_sub_event(event_id: int, **kwargs) -> SubEvent:
                 if not value:
                     raise ValueError("missing_name")
             setattr(se, field, value)
-    se.save()
+    with transaction.atomic():
+        se.save()
+        ensure_checkin_station(se)
     return se
 
 

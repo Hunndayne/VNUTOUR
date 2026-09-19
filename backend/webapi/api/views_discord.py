@@ -69,6 +69,10 @@ def retry_provision_view(request: HttpRequest, team_code: str):
         team = retry_provision(team_code)
     except Team.DoesNotExist:
         return JsonResponse({"error": "team_not_found"}, status=404)
+    except ValueError as exc:
+        if str(exc) == "team_not_approved":
+            return JsonResponse({"error": "team_not_approved"}, status=409)
+        raise
 
     return JsonResponse({
         "team_code": team.code,
