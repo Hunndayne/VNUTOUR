@@ -1,0 +1,142 @@
+name: Bootstrap VPS Baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_argocd:
+        description: Reconcile ArgoCD UI, cert-manager and HTTPS
+        required: true
+        type: boolean
+        default: true
+      deploy_monitoring:
+        description: Reconcile Prometheus and Grafana
+        required: true
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/bootstrap-baseline.yml"
+      - "k8s/argocd/ui/**"
+      - "k8s/monitoring/**"
+      - "k8s/cert-manager-issuer.yaml"
+
+permissions:
+  contents: read
+
+# Only one baseline change may mutate the VPS at a time. A queued run waits
+# instead of interrupting Helm, cert-manager or a Kubernetes rollout.
+concurrency:
+  group: vps-baseline-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Decide whether the pipeline needs to deploy ArgoCD, monitoring, or both. The goal is to avoid redeploying services that have not changed.
+      - name: Select baseline components
+        id: components
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          MANUAL_ARGOCD: ${{ inputs.deploy_argocd }}
+          MANUAL_MONITORING: ${{ inputs.deploy_monitoring }}
+        run: |
+          echo "========== [PIPELINE] Select baseline components =========="
+          if [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
+            echo "argocd=$MANUAL_ARGOCD" >> "$GITHUB_OUTPUT"
+            echo "monitoring=$MANUAL_MONITORING" >> "$GITHUB_OUTPUT"
+            echo "[selection] argocd=$MANUAL_ARGOCD monitoring=$MANUAL_MONITORING"
+            exit 0
+          fi
+
+          if [[ $BEFORE_SHA =~ ^0+$ ]]; then
+            changed_files=$(git ls-tree -r --name-only "$CURRENT_SHA")
+          else
+            changed_files=$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")
+          fi
+          printf '%s\n' "$changed_files"
+
+          argocd=false
+          monitoring=false
+          if grep -Eq '^(k8s/argocd/ui/|k8s/cert-manager-issuer\.yaml$)' <<< "$changed_files"; then
+            argocd=true
+          fi
+          if grep -Eq '^k8s/monitoring/' <<< "$changed_files"; then
+            monitoring=true
+          fi
+          if grep -Fxq '.github/workflows/bootstrap-baseline.yml' <<< "$changed_files"; then
+            argocd=true
+            monitoring=true
+          fi
+          echo "argocd=$argocd" >> "$GITHUB_OUTPUT"
+          echo "monitoring=$monitoring" >> "$GITHUB_OUTPUT"
+          echo "[selection] argocd=$argocd monitoring=$monitoring"
+
+      # Both deployment scripts report tools that already exist and install only missing packages. Running this before injecting Secrets also performs all syntax/lint checks without exposing deployment credentials.
+      - name: Check runner tools and deployment scripts
+        run: |
+          echo "::group::[PIPELINE 1/3] Prepare runner tools"
+          bash k8s/argocd/ui/deploy.sh --prepare-tools
+          bash k8s/monitoring/deploy.sh --prepare-tools
+          echo "::endgroup::"
+
+          echo "::group::[PIPELINE 2/3] Validate Bash syntax"
+          bash -n \
+            k8s/argocd/ui/deploy.sh \
+            k8s/argocd/ui/bootstrap.sh \
+            k8s/monitoring/deploy.sh \
+            k8s/monitoring/install/install.sh
+          echo "[success] Bash syntax validation passed"
+          echo "::endgroup::"
+
+          echo "::group::[PIPELINE 3/3] Run ShellCheck"
+          shellcheck \
+            k8s/argocd/ui/deploy.sh \
+            k8s/argocd/ui/bootstrap.sh \
+            k8s/monitoring/deploy.sh \
+            k8s/monitoring/install/install.sh
+          echo "[success] ShellCheck passed"
+          echo "::endgroup::"
+
+      # ArgoCD runs first because it verifies ingress-nginx and prepares the shared cert-manager ClusterIssuer later used by public baseline UIs.
+      - name: "[ArgoCD] Bootstrap UI over SSH"
+        if: steps.components.outputs.argocd == 'true'
+        env:
+          ARGOCD_HOSTNAME: ${{ secrets.ARGOCD_HOSTNAME || vars.ARGOCD_HOSTNAME }}
+          ACME_EMAIL: ${{ secrets.ACME_EMAIL || vars.ACME_EMAIL }}
+          ARGOCD_ADMIN_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
+          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_USER: ${{ vars.VPS_SSH_USER }}
+          VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_SSH_PORT: ${{ vars.VPS_SSH_PORT || '22' }}
+        run: bash k8s/argocd/ui/deploy.sh --deploy
+
+      - name: "[ArgoCD] Verify HTTPS authentication"
+        if: steps.components.outputs.argocd == 'true'
+        env:
+          ARGOCD_HOSTNAME: ${{ secrets.ARGOCD_HOSTNAME || vars.ARGOCD_HOSTNAME }}
+        run: bash k8s/argocd/ui/deploy.sh --verify
+
+      # Monitoring stays private (ClusterIP) during this phase. The step waits
+      # for Grafana and Prometheus readiness; access is tested by port-forward.
+      - name: "[Monitoring] Install or reconcile over SSH"
+        if: steps.components.outputs.monitoring == 'true'
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_USER: ${{ vars.VPS_SSH_USER }}
+          VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_SSH_PORT: ${{ vars.VPS_SSH_PORT || '22' }}
+        run: bash k8s/monitoring/deploy.sh --deploy
