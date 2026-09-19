@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GitHub runner entrypoint: validate inputs, build a private payload, then run
-# k8s/monitoring/install/install.sh on the VPS through one verified SSH connection.
+# monitoring-install.sh on the VPS through one verified SSH connection.
 set -euo pipefail
 set +x
 umask 077
@@ -34,19 +34,58 @@ if [[ ${1:-} == --prepare-tools ]]; then
   echo '[success] Runner tools are ready'
   exit 0
 fi
+
+validate_grafana_hostname() {
+  [[ ${GRAFANA_HOSTNAME:-} =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || {
+    echo '[error] GRAFANA_HOSTNAME must be a lowercase DNS hostname without scheme, port or path.' >&2
+    exit 1
+  }
+}
+
+if [[ ${1:-} == --verify ]]; then
+  echo
+  echo '========== [MONITORING RUNNER VERIFY] Check Grafana HTTPS =========='
+  : "${GRAFANA_HOSTNAME:?Missing GRAFANA_HOSTNAME}"
+  validate_grafana_hostname
+  if [[ ${GITHUB_ACTIONS:-false} == true ]]; then
+    printf '::add-mask::%s\n' "$GRAFANA_HOSTNAME"
+  fi
+  work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/monitoring-verify.XXXXXXXX")
+  trap 'rm -rf -- "$work"' EXIT
+  url="https://$GRAFANA_HOSTNAME"
+  curl --fail --silent --show-error --max-time 30 --retry 6 --retry-delay 5 --retry-all-errors \
+    "$url/api/health" -o "$work/health.json"
+  jq -e '.database == "ok"' "$work/health.json" >/dev/null
+  code=$(curl --silent --show-error --max-time 30 -D "$work/headers" -o /dev/null \
+    -w '%{http_code}' "http://$GRAFANA_HOSTNAME/")
+  if [[ ! $code =~ ^30[1278]$ ]] || ! grep -Fiq "location: $url/" "$work/headers"; then
+    echo '[error] Grafana HTTP endpoint must redirect to its HTTPS hostname.' >&2
+    exit 1
+  fi
+  code=$(curl --silent --show-error --max-time 30 -o /dev/null -w '%{http_code}' "$url/api/search")
+  if [[ $code != 401 && $code != 403 ]]; then
+    echo '[error] Grafana anonymous API access was not denied.' >&2
+    exit 1
+  fi
+  echo '[success] Grafana HTTPS, health, redirect and anonymous-access checks passed'
+  exit 0
+fi
+
 [[ ${1:-} == --deploy ]] || {
-  echo 'Usage: deploy.sh --prepare-tools | --deploy' >&2
+  echo 'Usage: deploy.sh --prepare-tools | --deploy | --verify' >&2
   exit 2
 }
 
 echo
 echo '========== [MONITORING RUNNER 2/4] Validate Variables and Secrets =========='
+: "${GRAFANA_HOSTNAME:?Missing GRAFANA_HOSTNAME}"
 : "${GRAFANA_ADMIN_PASSWORD:?Missing GRAFANA_ADMIN_PASSWORD}"
 : "${VPS_SSH_HOST:?Missing VPS_SSH_HOST}"
 : "${VPS_SSH_USER:?Missing VPS_SSH_USER}"
 : "${VPS_SSH_PASSWORD:?Missing VPS_SSH_PASSWORD}"
 : "${VPS_SSH_KNOWN_HOSTS:?Missing VPS_SSH_KNOWN_HOSTS}"
 VPS_SSH_PORT=${VPS_SSH_PORT:-22}
+validate_grafana_hostname
 if [[ ! $VPS_SSH_HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] ||
    [[ ! $VPS_SSH_USER =~ ^[a-z_][a-z0-9_-]*$ ]] ||
    [[ ! $VPS_SSH_PORT =~ ^[1-9][0-9]{0,4}$ ]] || (( VPS_SSH_PORT > 65535 )); then
@@ -60,9 +99,9 @@ if (( ${#GRAFANA_ADMIN_PASSWORD} < 16 || ${#GRAFANA_ADMIN_PASSWORD} > 128 )) ||
   exit 1
 fi
 if [[ ${GITHUB_ACTIONS:-false} == true ]]; then
-  printf '::add-mask::%s\n' "$VPS_SSH_HOST"
+  printf '::add-mask::%s\n' "$GRAFANA_HOSTNAME" "$VPS_SSH_HOST"
 fi
-echo '[input] SSH configuration and protected passwords passed validation'
+echo '[input] Grafana hostname, SSH configuration and protected passwords passed validation'
 
 echo
 echo '========== [MONITORING RUNNER 3/4] Build temporary SSH payload =========='
@@ -70,13 +109,16 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/monitoring-deploy.XXXXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/payload/install" "$work/payload/dashboard"
-cp "$here/install/install.sh" "$here/install/values.yaml" "$work/payload/install/"
-cp "$here/dashboard/15282_rev1.json" "$work/payload/dashboard/"
+cp "$here/monitoring-install.sh" "$here/values.yaml" \
+  "$here/ingress-values.yaml" "$here/certificate.yaml" \
+  "$here/ingress.yaml" "$work/payload/install/"
+cp "$here/../dashboard/vps_k3s_dashboard.json" "$work/payload/dashboard/"
 printf '%s' "$GRAFANA_ADMIN_PASSWORD" > "$work/payload/grafana-admin-password"
+printf '%s' "$GRAFANA_HOSTNAME" > "$work/payload/grafana-hostname"
 printf '%s\n' "$VPS_SSH_PASSWORD" > "$work/ssh-password"
 printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$work/known_hosts"
 unset GRAFANA_ADMIN_PASSWORD VPS_SSH_PASSWORD VPS_SSH_KNOWN_HOSTS
-echo '[payload] Script, values, reviewed dashboard and protected Grafana password are ready'
+echo '[payload] Script, values, TLS/Ingress templates, dashboard and protected inputs are ready'
 
 remote_commands=$(cat <<'SSH'
 set -eu
@@ -86,10 +128,12 @@ trap 'rm -rf -- "$task_dir"' EXIT
 tar -xzf - -C "$task_dir"
 if [ "$(id -u)" -eq 0 ]; then
   GRAFANA_ADMIN_PASSWORD_FILE="$task_dir/grafana-admin-password" \
-    bash "$task_dir/install/install.sh"
+    GRAFANA_HOSTNAME_FILE="$task_dir/grafana-hostname" \
+    bash "$task_dir/install/monitoring-install.sh"
 else
   sudo -n env GRAFANA_ADMIN_PASSWORD_FILE="$task_dir/grafana-admin-password" \
-    bash "$task_dir/install/install.sh"
+    GRAFANA_HOSTNAME_FILE="$task_dir/grafana-hostname" \
+    bash "$task_dir/install/monitoring-install.sh"
 fi
 SSH
 )

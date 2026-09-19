@@ -1,0 +1,12 @@
+# Runtime overlay rendered by deploy.sh/monitoring-install.sh with the validated hostname.
+# Keep the Ingress as an explicit manifest so Certificate ownership and the backend protocol remain easy to review.
+grafana:
+  grafana.ini:
+    server:
+      protocol: http
+      domain: grafana.example.invalid
+      root_url: https://grafana.example.invalid/
+      enforce_domain: true
+    security:
+      cookie_secure: true
+      cookie_samesite: strict

@@ -87,15 +87,15 @@ jobs:
         run: |
           echo "::group::[PIPELINE 1/3] Prepare runner tools"
           bash k8s/argocd/ui/deploy.sh --prepare-tools
-          bash k8s/monitoring/deploy.sh --prepare-tools
+          bash k8s/monitoring/install/deploy.sh --prepare-tools
           echo "::endgroup::"
 
           echo "::group::[PIPELINE 2/3] Validate Bash syntax"
           bash -n \
             k8s/argocd/ui/deploy.sh \
             k8s/argocd/ui/bootstrap.sh \
-            k8s/monitoring/deploy.sh \
-            k8s/monitoring/install/install.sh
+            k8s/monitoring/install/deploy.sh \
+            k8s/monitoring/install/monitoring-install.sh
           echo "[success] Bash syntax validation passed"
           echo "::endgroup::"
 
@@ -103,8 +103,8 @@ jobs:
           shellcheck \
             k8s/argocd/ui/deploy.sh \
             k8s/argocd/ui/bootstrap.sh \
-            k8s/monitoring/deploy.sh \
-            k8s/monitoring/install/install.sh
+            k8s/monitoring/install/deploy.sh \
+            k8s/monitoring/install/monitoring-install.sh
           echo "[success] ShellCheck passed"
           echo "::endgroup::"
 
@@ -128,15 +128,22 @@ jobs:
           ARGOCD_HOSTNAME: ${{ secrets.ARGOCD_HOSTNAME || vars.ARGOCD_HOSTNAME }}
         run: bash k8s/argocd/ui/deploy.sh --verify
 
-      # Monitoring stays private (ClusterIP) during this phase. The step waits
-      # for Grafana and Prometheus readiness; access is tested by port-forward.
+      # Grafana is exposed through ingress-nginx with its own TLS Certificate.
+      # Prometheus remains private as a ClusterIP service.
       - name: "[Monitoring] Install or reconcile over SSH"
         if: steps.components.outputs.monitoring == 'true'
         env:
+          GRAFANA_HOSTNAME: ${{ secrets.GRAFANA_HOSTNAME || vars.GRAFANA_HOSTNAME }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_SSH_USER: ${{ vars.VPS_SSH_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
           VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
           VPS_SSH_PORT: ${{ vars.VPS_SSH_PORT || '22' }}
-        run: bash k8s/monitoring/deploy.sh --deploy
+        run: bash k8s/monitoring/install/deploy.sh --deploy
+
+      - name: "[Monitoring] Verify Grafana HTTPS"
+        if: steps.components.outputs.monitoring == 'true'
+        env:
+          GRAFANA_HOSTNAME: ${{ secrets.GRAFANA_HOSTNAME || vars.GRAFANA_HOSTNAME }}
+        run: bash k8s/monitoring/install/deploy.sh --verify

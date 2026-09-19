@@ -72,15 +72,15 @@ jobs:
         run: |
           echo "::group::[BASELINE TEST 1/4] Prepare runner tools"
           bash k8s/argocd/ui/deploy.sh --prepare-tools
-          bash k8s/monitoring/deploy.sh --prepare-tools
+          bash k8s/monitoring/install/deploy.sh --prepare-tools
           echo "::endgroup::"
 
           echo "::group::[BASELINE TEST 2/4] Validate Bash syntax"
           bash -n \
             k8s/argocd/ui/deploy.sh \
             k8s/argocd/ui/bootstrap.sh \
-            k8s/monitoring/deploy.sh \
-            k8s/monitoring/install/install.sh
+            k8s/monitoring/install/deploy.sh \
+            k8s/monitoring/install/monitoring-install.sh
           echo "[success] Bash syntax validation passed"
           echo "::endgroup::"
 
@@ -88,8 +88,8 @@ jobs:
           shellcheck \
             k8s/argocd/ui/deploy.sh \
             k8s/argocd/ui/bootstrap.sh \
-            k8s/monitoring/deploy.sh \
-            k8s/monitoring/install/install.sh
+            k8s/monitoring/install/deploy.sh \
+            k8s/monitoring/install/monitoring-install.sh
           echo "[success] ShellCheck passed"
           echo "::endgroup::"
 
@@ -149,8 +149,10 @@ jobs:
           }
           standalone_found=0
           while IFS= read -r -d '' f; do
-            # Helm values are configuration input, not a Kubernetes resource.
-            [ "$f" = "k8s/monitoring/install/values.yaml" ] && continue
+            # Helm values are configuration input, not Kubernetes resources.
+            case "$f" in
+              k8s/monitoring/install/values.yaml|k8s/monitoring/install/ingress-values.yaml) continue ;;
+            esac
             dir=$(dirname "$f")
             is_kustomize_dir "$dir" && continue
             echo "== $f =="
