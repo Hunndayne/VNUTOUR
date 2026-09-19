@@ -75,6 +75,9 @@ if tool == 'k3s':
         print(json.dumps({'spec': {'template': {'spec': {'containers': [{'image': 'test/controller:'+version}]}}}}))
     elif 'get' in args and 'deployments' in args and case == 'cert-manager-without-crds':
         print('deployment.apps/cert-manager')
+    elif 'get' in args and 'deployments' in args:
+        if case not in ('no-cert-manager', 'unsupported-kubernetes'):
+            print('deployment.apps/cert-manager\ndeployment.apps/cert-manager-cainjector\ndeployment.apps/cert-manager-webhook')
     elif 'get' in args and 'ingressclass' in args:
         print(json.dumps({'spec': {'controller': 'k8s.io/ingress-nginx'}}))
     elif 'get' in args and 'service' in args:
@@ -89,7 +92,7 @@ if tool == 'k3s':
             if '--ignore-not-found' not in args: sys.exit(1)
             print('crd/certificates.cert-manager.io')
         elif case not in ('no-cert-manager', 'unsupported-kubernetes', 'cert-manager-without-crds'):
-            print('crd/certificates.cert-manager.io\ncrd/issuers.cert-manager.io\ncrd/clusterissuers.cert-manager.io')
+            print('crd/certificaterequests.cert-manager.io\ncrd/certificates.cert-manager.io\ncrd/challenges.acme.cert-manager.io\ncrd/clusterissuers.cert-manager.io\ncrd/issuers.cert-manager.io\ncrd/orders.acme.cert-manager.io')
     elif 'patch' in args:
         name = args[args.index('patch')+2]
         patch = json.loads(pathlib.Path(args[args.index('--patch-file')+1]).read_text())

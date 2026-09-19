@@ -6,47 +6,48 @@ set -euo pipefail
 umask 077 # Temporary files are readable only by the current user.
 export LC_ALL=C
 
-# 1. Install only missing tools, then print their versions for verification in logs.
-if ! command -v jq > /dev/null; then
+# 1. Keep existing runner tools and install only missing packages. Grouping the
+# installation behind one apt update keeps logs short and repeated runs fast.
+echo
+echo '========== [ARGOCD RUNNER 1/7] Check deployment tools =========='
+missing_packages=()
+for command_package in jq:jq curl:curl ssh:openssh-client sshpass:sshpass htpasswd:apache2-utils shellcheck:shellcheck; do
+  command_name=${command_package%%:*}
+  package_name=${command_package##*:}
+  if command -v "$command_name" >/dev/null; then
+    echo "[tool] $command_name: already installed"
+  else
+    echo "[tool] $command_name: missing; package $package_name will be installed"
+    missing_packages+=("$package_name")
+  fi
+done
+if (( ${#missing_packages[@]} > 0 )); then
+  echo "[tool] Installing missing runner packages: ${missing_packages[*]}"
   sudo apt-get update -qq
-  sudo apt-get install -y --no-upgrade jq
-fi
-if ! command -v curl > /dev/null; then
-  sudo apt-get update -qq
-  sudo apt-get install -y --no-upgrade curl
-fi
-if ! command -v ssh > /dev/null; then
-  sudo apt-get update -qq
-  sudo apt-get install -y --no-upgrade openssh-client
-fi
-if ! command -v sshpass > /dev/null; then
-  sudo apt-get update -qq
-  sudo apt-get install -y --no-upgrade sshpass
-fi
-if ! command -v htpasswd > /dev/null; then
-  sudo apt-get update -qq
-  sudo apt-get install -y --no-upgrade apache2-utils
-fi
-if ! command -v shellcheck > /dev/null; then
-  sudo apt-get update -qq
-  sudo apt-get install -y --no-upgrade shellcheck
+  sudo apt-get install -y --no-upgrade "${missing_packages[@]}"
+  echo '[tool] Missing runner packages installed successfully'
 fi
 
-# Verify the version
-bash --version
-jq --version
-curl --version
-ssh -V
-sshpass -V
-tar --version
-dpkg-query -W apache2-utils # htpasswd does not have a --version option.
-shellcheck --version
+# Print versions so an Actions log shows exactly what handled the deployment.
+echo "[version] $(bash --version | head -n 1)"
+echo "[version] $(jq --version)"
+echo "[version] $(curl --version | head -n 1)"
+echo "[version] $(ssh -V 2>&1)"
+echo "[version] $(sshpass -V | head -n 1)"
+echo "[version] $(tar --version | head -n 1)"
+echo "[version] $(dpkg-query -W -f='${Version}' apache2-utils)"
+echo "[version] $(shellcheck --version | sed -n '2p')"
 
 # Workflow uses --prepare-tools to install and verify tools before passing Secrets.
-if [[ ${1:-} == --prepare-tools ]]; then exit 0; fi
+if [[ ${1:-} == --prepare-tools ]]; then
+  echo '[success] ArgoCD runner tools are ready'
+  exit 0
+fi
 
 # --verify reads login.json from a session saved by --deploy; skips payload and SSH.
 if [[ ${1:-} == --verify ]]; then
+  echo
+  echo '========== [ARGOCD RUNNER 7/7] Verify HTTPS and authentication =========='
   : "${ARGOCD_HOSTNAME:?Missing ARGOCD_HOSTNAME}"
   if [[ ${GITHUB_ACTIONS:-false} == true ]]; then
     printf '::add-mask::%s\n' "$ARGOCD_HOSTNAME"
@@ -62,6 +63,8 @@ if [[ ${1:-} == --verify ]]; then
 else
 
 # 2. Get variables from GitHub Variables/Secrets.
+echo
+echo '========== [ARGOCD RUNNER 2/7] Validate Variables and Secrets =========='
 : "${ARGOCD_HOSTNAME:?Missing ARGOCD_HOSTNAME}"
 : "${ACME_EMAIL:?Missing ACME_EMAIL}"
 : "${ARGOCD_ADMIN_PASSWORD:?Missing ARGOCD_ADMIN_PASSWORD}"
@@ -91,6 +94,8 @@ if [[ ${GITHUB_ACTIONS:-false} == true ]]; then
 fi
 
 # 3. Create a dedicated directory. Automatically delete the password file, patch, and token when the script finishes.
+echo
+echo '========== [ARGOCD RUNNER 3/7] Create protected temporary workspace =========='
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/argocd-deploy.XXXXXXXX")
 trap 'rm -rf -- "$work"' EXIT
@@ -100,12 +105,16 @@ printf '%s\n' "$VPS_SSH_PASSWORD" > "$work/ssh-password"
 unset VPS_SSH_PASSWORD VPS_SSH_KNOWN_HOSTS
 
 # 4. Replace the hostname/email in the manifest; the file in Git contains only a placeholder.
+echo
+echo '========== [ARGOCD RUNNER 4/7] Render ArgoCD manifests =========='
 sed "s/argocd.example.invalid/$ARGOCD_HOSTNAME/g" "$here/certificate.yaml" > "$work/payload/certificate.yaml"
 sed "s/argocd.example.invalid/$ARGOCD_HOSTNAME/g" "$here/ingress.yaml" > "$work/payload/ingress.yaml"
 sed "s/acme@example.invalid/$ACME_EMAIL/g" "$here/../../cert-manager-issuer.yaml" > "$work/payload/cluster-issuers.yaml"
 cp "$here/bootstrap.sh" "$work/payload/bootstrap.sh"
 
 # 5. Create the patch. Only send the bcrypt hash to the VPS, not the cleartext UI password.
+echo
+echo '========== [ARGOCD RUNNER 5/7] Build authentication patches =========='
 printf '%s\n' "$ARGOCD_ADMIN_PASSWORD" | htpasswd -niBC 12 admin | cut -d: -f2 | tr -d '\n' > "$work/hash"
 jq -n --rawfile hash "$work/hash" '{stringData: {
   "admin.password": $hash,
@@ -130,6 +139,8 @@ unset ARGOCD_ADMIN_PASSWORD
 
 # 6. The commands in this heredoc will run on the VPS after a successful SSH.
 # The single quote at 'SSH' preserves the variables inside so the VPS reads them itself; the runner does not replace them.
+echo
+echo '========== [ARGOCD RUNNER 6/7] Bootstrap ArgoCD UI on VPS =========='
 remote_commands=$(cat <<'SSH'
 set -eu
 umask 077

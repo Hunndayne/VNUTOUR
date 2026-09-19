@@ -1,0 +1,134 @@
+# VPS profile: Helm release monitoring, namespace monitoring.
+fullnameOverride: monitoring
+
+# K3s embeds these components; the upstream standalone scrape targets do not apply.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+defaultRules:
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeProxy: false
+    alertmanager: false
+
+# Start with metrics/UI; configure notification receivers in a later change.
+alertmanager:
+  enabled: false
+
+kubelet:
+  serviceMonitor:
+    cAdvisor: true
+    # Dashboard 15282 needs root/system cgroups and container_spec metrics that
+    # upstream drops by default. This increases series count; watch TSDB usage.
+    cAdvisorMetricRelabelings: []
+
+prometheus:
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  prometheusSpec:
+    replicas: 1
+    retention: 7d
+    retentionSize: 6GB
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 10Gi
+
+grafana:
+  fullnameOverride: monitoring-grafana
+  replicas: 1
+  deploymentStrategy:
+    type: Recreate
+  admin:
+    existingSecret: monitoring-grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    accessModes: [ReadWriteOnce]
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: monitoring
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
+      name: Prometheus
+      uid: prometheus
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  grafana.ini:
+    auth.anonymous:
+      enabled: false
+    users:
+      allow_sign_up: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 192Mi
+
+prometheus-node-exporter:
+  # Scrape via Pod IP without binding port 9100 on the VPS public interface.
+  hostNetwork: false
+  resources:
+    requests:
+      cpu: 30m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

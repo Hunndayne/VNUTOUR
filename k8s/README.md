@@ -1,5 +1,7 @@
 # Triển khai Kubernetes
 
+> **Baseline trên VPS k3s:** workflow [Bootstrap VPS Baseline](../.github/workflows/bootstrap-baseline.yml) cấu hình ArgoCD UI rồi cài Prometheus/Grafana. Xem [hướng dẫn monitoring](monitoring/install/MONITORING.md) để cấu hình Secrets, chạy lại an toàn và kiểm tra qua port-forward. Các manifest `11`–`15` bên dưới là bộ homelab cũ; không cài cả hai bộ monitoring lên cùng cụm.
+
 > **ArgoCD UI trên Linode:** [Bootstrap qua GitHub Actions và SSH](argocd/ui/README.md) dùng NGINX, cert-manager/Let’s Encrypt và mật khẩu admin cố định. Đây là cấu hình riêng của hub; phần Cloudflare/TLS homelab bên dưới không áp dụng cho domain này.
 
 > **Kustomize / GitOps:** Xem [hướng dẫn tiếng Việt](KUSTOMIZE_GUIDE.vi.md) về base, components, ba overlay, Argo CD, ví dụ chỉnh sửa và vận hành. Tài liệu đó được đối chiếu với bản render ngày 09/09/2026. Các phần triển khai trực tiếp bên dưới mô tả luồng manifest đánh số; một số mô tả kiến trúc/CD đã cũ so với `kustomize/`. Không dùng lệnh triển khai cũ cho tài nguyên Argo CD quản lý mà chưa đối chiếu phạm vi trong hướng dẫn.
