@@ -1638,11 +1638,12 @@ function SubmissionItemCard({
 
       {item.type === 'text' && (
         <div className="grid gap-3">
-          <input
+          <textarea
+            rows={2}
             value={item.label}
             onChange={event => onChange('label', event.target.value)}
             placeholder="Nội dung câu hỏi, vd: Mật mã tìm được"
-            className={INPUT_CLS}
+            className={`${INPUT_CLS} resize-y leading-6 placeholder:text-ink/30`}
           />
           <input
             value={item.placeholder}
@@ -2707,7 +2708,6 @@ function resolveAttachmentUrl(url) {
 }
 
 function StationSubmissionDetailView({ submission, onGrade, busy }) {
-  const [scoreInput, setScoreInput] = useState(submission.score ?? '')
   const files = submission.files || []
   const formAnswers = submission.response_payload?.form || []
   const quizAnswers = submission.response_payload?.quiz || []
@@ -2717,6 +2717,10 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
   const reviewItems = useMemo(() => submission.answer_review || [], [submission.answer_review])
   const hasReview = reviewItems.length > 0
   const { marks, setMarks, pointsFor, markedPoints, summarize } = useItemMarks(reviewItems, submission.item_marks)
+  // Ungraded attempts start with the points of their right answers in the box.
+  const [scoreInput, setScoreInput] = useState(
+    hasReview && !submission.item_marks && !submission.score ? String(markedPoints) : (submission.score ?? ''),
+  )
   const quizResult = hasReview && autoQuizResult ? summarize(autoQuizResult) : autoQuizResult
   const markQuestion = (id, mark) => {
     const next = { ...marks, [id]: mark }

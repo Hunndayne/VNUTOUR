@@ -307,7 +307,7 @@ function FormFieldCard({ label, required, helper, children, isAntiCheat = true }
   return (
     <div className={`${CARD} relative px-5 py-5 sm:px-6`}>
       <div className="mb-5 relative">
-        <h2 className="text-base font-semibold text-ink">
+        <h2 className="whitespace-pre-wrap text-base font-semibold text-ink">
           {label}
           {required ? <span className="ml-1 text-clay">*</span> : null}
         </h2>
