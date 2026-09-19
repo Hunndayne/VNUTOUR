@@ -66,12 +66,16 @@ metadata:
   name: prometheus
   namespace: monitoring
 spec:
+  # Expose Prometheus to the VPS Grafana through the private WireGuard route.
+  # DO NOT forward this port from the public internet.
+  type: NodePort
   selector:
     app: prometheus
   ports:
     - name: http
       port: 9090
       targetPort: http
+      nodePort: 30900
 
 ---
 apiVersion: v1
