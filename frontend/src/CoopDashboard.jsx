@@ -11,7 +11,7 @@ import {
 } from './api.js'
 import { CARD, Icon } from './ui.jsx'
 import { useSearchParam } from './router.js'
-import { useDraftState, DraftNotice } from './drafts.jsx'
+import { useDraftState, DraftNotice, readDraft, writeDraft, clearDraft } from './drafts.jsx'
 
 const PRIMARY_BUTTON =
   'inline-flex items-center justify-center gap-2 rounded-xl bg-ink px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 min-h-[46px]'
@@ -44,6 +44,8 @@ const RESULT_META = {
     tone: 'sky',
   },
 }
+
+const CHECKOUT_REVIEW_DRAFT = 'coop:checkoutReview'
 
 const CHECKIN_POLICY_META = {
   staff_scan: { label: 'Cần coop scan', cls: 'bg-amber-100 text-amber-900 border border-amber-200' },
@@ -326,7 +328,12 @@ function CoopDashboard() {
   const [manualCode, setManualCode] = useState('')
   const [showManualModal, setShowManualModal] = useState(false)
   const [flash, setFlash] = useState(null)
-  const [lastResult, setLastResult] = useState(null)
+  // The checkout being graded survives a reload: without it the coop lost the
+  // review screen (and the team's answers) the moment the page refreshed.
+  const [lastResult, setLastResult] = useState(() => {
+    const saved = readDraft(CHECKOUT_REVIEW_DRAFT)?.value
+    return saved?.kind === 'exit' ? saved : null
+  })
   const [refreshing, setRefreshing] = useState(false)
   const [processingScan, setProcessingScan] = useState(false)
   const [scoreDrafts, setScoreDrafts, scoreDraft] = useDraftState('coop:scoreDrafts', {})
@@ -347,7 +354,11 @@ function CoopDashboard() {
   const videoRef = useRef(null)
   const scannerRef = useRef(null)
   const scanBusyRef = useRef(false)
-  const reviewPausedRef = useRef(false)
+  const reviewPausedRef = useRef(lastResult?.kind === 'exit')
+  useEffect(() => {
+    if (lastResult?.kind === 'exit') writeDraft(CHECKOUT_REVIEW_DRAFT, lastResult)
+    else clearDraft(CHECKOUT_REVIEW_DRAFT)
+  }, [lastResult])
   const scanHandlerRef = useRef(null)
   const lastScanRef = useRef({ code: '', at: 0 })
   const selectedStationIdRef = useRef(selectedStationId)
@@ -1474,7 +1485,16 @@ function CoopDashboard() {
                 {lastResult?.kind === 'exit' && (activeTab === 'review' || activeTab === 'scan') && <CheckoutReview
                   key={lastResult.sessionId}
                   result={lastResult}
-                  onSaved={updated => { setLastResult(current => ({ ...current, score: updated.score })); void refreshLive() }}
+                  onSaved={updated => {
+                    setLastResult(current => ({
+                      ...current,
+                      score: updated.score,
+                      submission: current.submission && 'item_marks' in updated
+                        ? { ...current.submission, item_marks: updated.item_marks }
+                        : current.submission,
+                    }))
+                    void refreshLive()
+                  }}
                   onNext={() => { reviewPausedRef.current = false; setActiveTab('scan'); setLastResult(null) }}
                 />}
                 {/* TAB CONTENT: LIVE ROSTER */}

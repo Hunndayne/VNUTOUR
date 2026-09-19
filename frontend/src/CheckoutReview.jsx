@@ -1,21 +1,36 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { apiRequest } from './api.js'
 import { AnswerReview, QuizSummary } from './QuestionReview.jsx'
 import { useItemMarks } from './itemMarks.js'
+import { clearDraft, readDraft, writeDraft } from './drafts.jsx'
 
 export default function CheckoutReview({ result, onSaved, onNext }) {
   const submission = result.submission
   const quiz = submission?.response_payload?.quiz_result
-  const [score, setScore] = useState(result.score ?? submission?.score ?? '')
-  const [savedScore, setSavedScore] = useState(result.score ?? submission?.score ?? null)
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
   const binary = result.scoringMode === 'pass_fail'
   const reviewItems = useMemo(() => submission?.answer_review || submission?.response_payload?.answer_review || [], [submission])
   // Coop's verdict per question; sent with every score save so the backend keeps them.
   const markable = !binary && reviewItems.length > 0
-  const { marks, setMarks, pointsFor, markedPoints, fullPoints: allPoints, markAll, summarize } = useItemMarks(reviewItems, submission?.item_marks)
+  // Unsaved grading (marks + score box) is kept per session so a reload
+  // mid-review does not throw it away; cleared once saved or moved on.
+  const draftKey = `coop:checkoutGrading:${result.sessionId}`
+  const [draft] = useState(() => readDraft(draftKey)?.value || null)
+  const { marks, setMarks, pointsFor, markedPoints, fullPoints: allPoints, markAll, summarize } = useItemMarks(reviewItems, draft?.marks ?? submission?.item_marks)
+  const initialScore = result.score ?? submission?.score ?? null
+  // Until someone grades per question, the score box starts at what the
+  // right answers add up to, so the coop can usually just press "Lưu điểm".
+  const [score, setScore] = useState(() => {
+    if (draft && 'score' in draft) return draft.score
+    return markable && !submission?.item_marks && !initialScore ? markedPoints : (initialScore ?? '')
+  })
+  const [dirty, setDirty] = useState(Boolean(draft))
+  useEffect(() => {
+    if (dirty) writeDraft(draftKey, { marks, score })
+  }, [dirty, draftKey, marks, score])
+  const [savedScore, setSavedScore] = useState(initialScore)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
   const markedSummary = reviewItems.length > 0 && quiz ? summarize(quiz) : quiz
   const fullPoints = reviewItems.length > 0 ? allPoints : quiz?.max_points
   const markQuestion = (id, mark) => {
@@ -23,6 +38,7 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
     setMarks(next)
     // Keep the score box in step with the marks so the coop only has to press "Lưu điểm".
     setScore(pointsFor(next))
+    setDirty(true)
   }
   const save = async (body, nextMarks = marks) => {
     if (markable) body = { ...body, marks: nextMarks }
@@ -32,6 +48,8 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
     try {
       const response = await apiRequest(`/station-sessions/${result.sessionId}/score`, { method: 'PATCH', body })
       if (markable) setMarks(nextMarks)
+      setDirty(false)
+      clearDraft(draftKey)
       setSavedScore(response.score)
       setScore(response.score)
       setMessage(`Đã lưu ${response.score} điểm cho ${result.teamName}.`)
@@ -62,19 +80,19 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
           {fullPoints > 0 && <button disabled={saving} onClick={() => save({ score: fullPoints }, markAll(true))} className="min-h-[48px] rounded-lg border border-trail/30 bg-white px-4 text-sm font-semibold text-trail disabled:opacity-50">Cho đủ {fullPoints} điểm</button>}
           <button disabled={saving} onClick={() => save({ score: 0 }, markAll(false))} className="min-h-[48px] rounded-lg border border-clay/30 bg-white px-4 text-sm font-semibold text-clay disabled:opacity-50">Không cho điểm</button>
           {reviewItems.length > 0
-            ? <button disabled={saving} onClick={() => setScore(markedPoints)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {markedPoints}</button>
-            : quiz?.total > 0 && <button disabled={saving} onClick={() => setScore(quiz.points)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {quiz.points}</button>}
+            ? <button disabled={saving} onClick={() => { setScore(markedPoints); setDirty(true) }} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {markedPoints}</button>
+            : quiz?.total > 0 && <button disabled={saving} onClick={() => { setScore(quiz.points); setDirty(true) }} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {quiz.points}</button>}
         </>}
       </div>
       {!binary && <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); if (score !== '' && Number.isInteger(Number(score)) && Number(score) >= 0) save({ score: Number(score) }) }}>
         <label className="text-sm font-medium text-ink">Điểm của đội
-          <input type="number" min="0" step="1" required disabled={saving} value={score} onChange={e => setScore(e.target.value)} className="mt-1 block min-h-[48px] w-32 rounded-lg border border-stone bg-white px-3 font-mono text-lg focus:outline-trail" />
+          <input type="number" min="0" step="1" required disabled={saving} value={score} onChange={e => { setScore(e.target.value); setDirty(true) }} className="mt-1 block min-h-[48px] w-32 rounded-lg border border-stone bg-white px-3 font-mono text-lg focus:outline-trail" />
         </label>
         <button disabled={saving || score === '' || !Number.isInteger(Number(score)) || Number(score) < 0} className="min-h-[48px] rounded-lg bg-trail px-5 font-semibold text-white disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu điểm'}</button>
       </form>}
       {message && <p role="status" className="mt-3 text-sm font-semibold text-trail">{message}</p>}
       {error && <p role="alert" className="mt-3 text-sm text-clay">{error}</p>}
-      <button type="button" disabled={saving} onClick={onNext} className="mt-4 min-h-[48px] w-full rounded-lg bg-ink px-4 font-semibold text-white disabled:opacity-50">Quét đội tiếp theo</button>
+      <button type="button" disabled={saving} onClick={() => { clearDraft(draftKey); onNext() }} className="mt-4 min-h-[48px] w-full rounded-lg bg-ink px-4 font-semibold text-white disabled:opacity-50">Quét đội tiếp theo</button>
       {savedScore == null && <p className="mt-2 text-xs text-ink/60">Chưa lưu điểm. Bạn có thể chấm sau trong Nhật ký trạm.</p>}
     </div>
   </section>
