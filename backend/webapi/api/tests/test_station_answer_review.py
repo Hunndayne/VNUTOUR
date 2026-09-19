@@ -183,6 +183,54 @@ class StationAnswerReviewTests(FormsApiTestBase):
             self.assertEqual(sub.score, expected)
             self.assertEqual(sub.status, 'graded')
 
+    def test_coop_marks_are_saved_with_the_score_and_shown_to_the_team(self):
+        # q1 (3 pts) was answered wrong, q2 (2 pts) right; the coop accepts q1.
+        sub = self.submit_answers()
+        checkout = self.checkout()
+        self.assertIsNone(checkout["submission"]["item_marks"])
+        url = f'/api/station-sessions/{self.session.id}/score'
+        response = self.request_as('patch', url, {"score": 5, "marks": {"q1": True, "q2": True}}, self.coop)
+        self.assertEqual(response.status_code, 200, response.content)
+        # Only the verdict that overrules the machine is stored.
+        self.assertEqual(response.json()["item_marks"], {"q1": True})
+        sub.refresh_from_db()
+        self.assertEqual(sub.item_marks, {"q1": True})
+        self.assertEqual(sub.score, 5)
+        # The auto-grading snapshot itself is left untouched.
+        self.assertFalse(sub.response_payload["answer_review"][0]["is_correct"])
+
+        state = self.client.get(f'/api/my-team/station-state?station_id={self.station.id}', HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertEqual(state["submission"]["quiz_result"]["correct_count"], 2)
+        attempt = self.history()[0]
+        self.assertEqual(attempt["quiz_result"]["correct_count"], 2)
+        self.assertEqual(attempt["quiz_result"]["points"], 5)
+        self.assertEqual(attempt["review"]["items"], [])
+        with patch('api.services.submission_review_service.timezone.now', return_value=self.event.end_date):
+            q1 = self.history()[0]["review"]["items"][0]
+        self.assertTrue(q1["is_correct"])
+        self.assertFalse(q1["auto_is_correct"])
+        self.assertTrue(q1["marked_by_coop"])
+
+        # A later save without marks keeps them; null drops the coop's verdict.
+        self.assertEqual(self.request_as('patch', url, {"score": 5}, self.coop).status_code, 200)
+        sub.refresh_from_db()
+        self.assertEqual(sub.item_marks, {"q1": True})
+        self.assertEqual(self.request_as('patch', url, {"score": 2, "marks": {"q1": None}}, self.coop).status_code, 200)
+        sub.refresh_from_db()
+        self.assertIsNone(sub.item_marks)
+
+    def test_invalid_marks_are_rejected_without_changing_the_score(self):
+        sub = self.submit_answers()
+        self.checkout()
+        url = f'/api/station-sessions/{self.session.id}/score'
+        for marks, error in [({"nope": True}, "unknown_mark_item"), ({"q1": "yes"}, "invalid_marks"), (["q1"], "invalid_marks")]:
+            response = self.request_as('patch', url, {"score": 9, "marks": marks}, self.coop)
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["error"], error)
+        sub.refresh_from_db()
+        self.assertIsNone(sub.item_marks)
+        self.assertNotEqual(sub.score, 9)
+
     def test_unassigned_coop_cannot_checkout_or_see_review(self):
         self.submit_answers()
         StationAssignment.objects.all().delete()

@@ -17,6 +17,7 @@ from api.services.station_service import (
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from api.services.submission_config_service import normalize_config, public_config
+from api.services.submission_review_service import clean_item_marks
 from api.services.audit_service import record_audit
 from api.services import scan_token_service
 from api.services.assignment_service import is_collab_assigned
@@ -125,14 +126,33 @@ def station_session_score_view(request: HttpRequest, session_id: int):
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
-    if session.station.scoring_mode == Station.SCORING_PASS_FAIL:
-        updated, err = set_session_score(
-            session_id, acc, score=None, note=data.get("note"), outcome=data.get("outcome"),
-        )
-    else:
-        if "score" not in data:
-            return JsonResponse({"error": "missing_score"}, status=400)
-        updated, err = set_session_score(session_id, acc, score=data.get("score"), note=data.get("note"))
+    # Optional per-question verdicts from the checkout review; they are saved
+    # on the attempt's submission together with the score they add up to.
+    marks_submission = stored_marks = None
+    if "marks" in data:
+        marks_submission = StationSubmission.objects.filter(
+            station_session=session,
+            status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
+        ).order_by("-submitted_at", "-id").first()
+        if not marks_submission:
+            return JsonResponse({"error": "submission_not_found"}, status=404)
+        stored_marks, err = clean_item_marks(marks_submission, data.get("marks"))
+        if err:
+            return JsonResponse({"error": err}, status=400)
+
+    if session.station.scoring_mode != Station.SCORING_PASS_FAIL and "score" not in data:
+        return JsonResponse({"error": "missing_score"}, status=400)
+
+    with transaction.atomic():
+        if session.station.scoring_mode == Station.SCORING_PASS_FAIL:
+            updated, err = set_session_score(
+                session_id, acc, score=None, note=data.get("note"), outcome=data.get("outcome"),
+            )
+        else:
+            updated, err = set_session_score(session_id, acc, score=data.get("score"), note=data.get("note"))
+        if not err and marks_submission:
+            marks_submission.item_marks = stored_marks
+            marks_submission.save(update_fields=["item_marks", "updated_at"])
 
     if err:
         status = (
@@ -146,6 +166,7 @@ def station_session_score_view(request: HttpRequest, session_id: int):
         "team_code": updated.team.code,
         "score": updated.score,
         "outcome": updated.outcome,
+        "item_marks": stored_marks if marks_submission else None,
     })
 
 
@@ -176,6 +197,7 @@ def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
         "graded_at": sub.graded_at.isoformat() if sub.graded_at else None,
         "graded_by": sub.graded_by.username if sub.graded_by else None,
         "response_payload": sub.response_payload,
+        "item_marks": sub.item_marks,
         "files": files,
     }
 
