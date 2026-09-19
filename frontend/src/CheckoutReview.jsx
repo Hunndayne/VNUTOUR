@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { apiRequest } from './api.js'
 import { AnswerReview, QuizSummary } from './QuestionReview.jsx'
+import { useItemMarks } from './itemMarks.js'
 
 export default function CheckoutReview({ result, onSaved, onNext }) {
   const submission = result.submission
@@ -11,13 +12,26 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const binary = result.scoringMode === 'pass_fail'
-  const fullPoints = quiz?.max_points
-  const save = async body => {
+  const reviewItems = useMemo(() => submission?.answer_review || submission?.response_payload?.answer_review || [], [submission])
+  // Coop's verdict per question; sent with every score save so the backend keeps them.
+  const markable = !binary && reviewItems.length > 0
+  const { marks, setMarks, pointsFor, markedPoints, fullPoints: allPoints, markAll, summarize } = useItemMarks(reviewItems, submission?.item_marks)
+  const markedSummary = reviewItems.length > 0 && quiz ? summarize(quiz) : quiz
+  const fullPoints = reviewItems.length > 0 ? allPoints : quiz?.max_points
+  const markQuestion = (id, mark) => {
+    const next = { ...marks, [id]: mark }
+    setMarks(next)
+    // Keep the score box in step with the marks so the coop only has to press "Lưu điểm".
+    setScore(pointsFor(next))
+  }
+  const save = async (body, nextMarks = marks) => {
+    if (markable) body = { ...body, marks: nextMarks }
     setSaving(true)
     setError('')
     setMessage('')
     try {
       const response = await apiRequest(`/station-sessions/${result.sessionId}/score`, { method: 'PATCH', body })
+      if (markable) setMarks(nextMarks)
       setSavedScore(response.score)
       setScore(response.score)
       setMessage(`Đã lưu ${response.score} điểm cho ${result.teamName}.`)
@@ -33,8 +47,8 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
       <p className="mt-1 text-sm text-ink/60"><span className="font-mono">{result.teamId}</span> · {result.stationName}</p>
     </header>
     <div className="p-5">
-      <QuizSummary result={quiz} score={savedScore} />
-      {submission ? <AnswerReview items={submission.response_payload?.answer_review} /> : <p className="py-4 text-sm text-ink/60">Đội chưa có bài nộp trong lượt này. Chấm theo hoạt động tại trạm.</p>}
+      <QuizSummary result={markedSummary} score={savedScore} />
+      {submission ? <AnswerReview items={reviewItems} marks={markable ? marks : undefined} onMark={markable ? markQuestion : undefined} /> : <p className="py-4 text-sm text-ink/60">Đội chưa có bài nộp trong lượt này. Chấm theo hoạt động tại trạm.</p>}
       {submission?.files?.length > 0 && <div className="mb-4 flex flex-wrap gap-3">{submission.files.map((file, i) => <a key={file.key || i} href={file.url} target="_blank" rel="noreferrer" className="text-sm text-trail underline">{file.name || `Tệp đính kèm ${i + 1}`}</a>)}</div>}
     </div>
     <div className="sticky bottom-0 border-t border-stone bg-paper p-4 sm:p-5">
@@ -45,9 +59,11 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
           <button disabled={saving} onClick={() => save({ outcome: 'passed' })} className="min-h-[48px] rounded-lg bg-trail px-4 font-semibold text-white disabled:opacity-50">Cho điểm · {result.passPoints ?? 0} đ</button>
           <button disabled={saving} onClick={() => save({ outcome: 'failed' })} className="min-h-[48px] rounded-lg border border-clay/30 bg-white px-4 font-semibold text-clay disabled:opacity-50">Không cho điểm · 0 đ</button>
         </> : <>
-          {fullPoints > 0 && <button disabled={saving} onClick={() => save({ score: fullPoints })} className="min-h-[48px] rounded-lg border border-trail/30 bg-white px-4 text-sm font-semibold text-trail disabled:opacity-50">Cho đủ {fullPoints} điểm</button>}
-          <button disabled={saving} onClick={() => save({ score: 0 })} className="min-h-[48px] rounded-lg border border-clay/30 bg-white px-4 text-sm font-semibold text-clay disabled:opacity-50">Không cho điểm</button>
-          {quiz?.total > 0 && <button disabled={saving} onClick={() => setScore(quiz.points)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm tự chấm: {quiz.points}</button>}
+          {fullPoints > 0 && <button disabled={saving} onClick={() => save({ score: fullPoints }, markAll(true))} className="min-h-[48px] rounded-lg border border-trail/30 bg-white px-4 text-sm font-semibold text-trail disabled:opacity-50">Cho đủ {fullPoints} điểm</button>}
+          <button disabled={saving} onClick={() => save({ score: 0 }, markAll(false))} className="min-h-[48px] rounded-lg border border-clay/30 bg-white px-4 text-sm font-semibold text-clay disabled:opacity-50">Không cho điểm</button>
+          {reviewItems.length > 0
+            ? <button disabled={saving} onClick={() => setScore(markedPoints)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {markedPoints}</button>
+            : quiz?.total > 0 && <button disabled={saving} onClick={() => setScore(quiz.points)} className="min-h-[48px] rounded-lg border border-stone bg-white px-4 text-sm text-ink">Dùng điểm đã chấm: {quiz.points}</button>}
         </>}
       </div>
       {!binary && <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); if (score !== '' && Number.isInteger(Number(score)) && Number(score) >= 0) save({ score: Number(score) }) }}>

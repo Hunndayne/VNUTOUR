@@ -21,6 +21,7 @@ from api.services.registration_service import (
     UIT_CODE, get_schema, validate_account_mssv_claim, validate_person_submission,
 )
 from api.services.program_service import get_current_sub_event
+from api.services.submission_review_service import marked_quiz_result
 from api.services.checkin_qr_service import team_qr_visible
 
 from api.services.station_service import (
@@ -2313,7 +2314,7 @@ def my_team_station_state_view(request: HttpRequest):
     if session:
         submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
-        "station_id", "status", "submitted_at", "score", "response_payload",
+        "station_id", "status", "submitted_at", "score", "response_payload", "item_marks",
     ).first()
 
     # A form that stopped accepting answers (timer ran out, closed by BTC...)
@@ -2387,7 +2388,7 @@ def my_team_station_state_view(request: HttpRequest):
             "status": submission["status"],
             "submitted_at": stamp(submission["submitted_at"]),
             "score": submission["score"],
-            "quiz_result": (submission["response_payload"] or {}).get("quiz_result"),
+            "quiz_result": marked_quiz_result(submission["response_payload"], submission["item_marks"]),
         } if submission else None,
         "qr": qr,
         "attendance": attendance,
@@ -2418,7 +2419,7 @@ def my_team_question_history_view(request: HttpRequest):
         "id": sub.id, "station_id": sub.station_id, "station_name": sub.station.name,
         "event_name": sub.station.sub_event.name,
         "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
-        "score": sub.score, "quiz_result": (sub.response_payload or {}).get("quiz_result"),
+        "score": sub.score, "quiz_result": marked_quiz_result(sub.response_payload, sub.item_marks),
         "review": participant_review(sub),
     } for sub in submissions]})
 

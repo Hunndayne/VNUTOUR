@@ -50,6 +50,80 @@ const CHECKIN_POLICY_META = {
   free_play: { label: 'Tự do vào chơi', cls: 'bg-stone/30 text-ink/70 border border-stone' },
 }
 
+// ─── Camera auto-pick ───────────────────────────────────────────────
+// Phones expose several lenses and some of them (IR, depth, virtual) open but
+// never show a picture, so the collab used to hunt for a working one by hand.
+// In 'auto' mode the scanner tries each rear lens in turn and keeps the first
+// that actually streams an image. The front camera is never tried.
+const CAMERA_STORAGE_KEY = 'coop.cameraId'
+const FRONT_CAMERA_RE = /front|user|trươ|trướ|truoc|selfie|facetime/i
+// Lenses that work but are poor for a QR held close: tried after the main one.
+const SECONDARY_LENS_RE = /ultra|wide|tele|depth|infrared|\bir\b|virtual|obs|desk view|macro/i
+
+const isFrontCamera = (label = '') => FRONT_CAMERA_RE.test(label)
+
+function readSavedCameraId() {
+  try {
+    return localStorage.getItem(CAMERA_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function saveCameraId(id) {
+  try {
+    localStorage.setItem(CAMERA_STORAGE_KEY, id)
+  } catch {
+    // storage unavailable — the pick just is not remembered
+  }
+}
+
+// Rear lenses in the order to try: last known good one, main lenses, then the rest.
+function orderRearCameras(cameras, savedId) {
+  const rear = cameras.filter((c) => !isFrontCamera(c.label))
+  const rank = (c) => (c.id === savedId ? 0 : SECONDARY_LENS_RE.test(c.label) ? 2 : 1)
+  return rear
+    .map((camera, index) => ({ camera, index }))
+    .sort((a, b) => rank(a.camera) - rank(b.camera) || a.index - b.index)
+    .map(({ camera }) => camera)
+}
+
+function streamingDeviceId(video) {
+  const track = video?.srcObject?.getVideoTracks?.()[0]
+  return track?.getSettings?.().deviceId || null
+}
+
+// A lens "works" once it delivers a frame that is not solid black. Waits a few
+// seconds because the first frames are often dark while exposure settles.
+async function videoShowsPicture(video, isCancelled, timeoutMs = 3000) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 16
+  canvas.height = 16
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (isCancelled()) return false
+    if (video.videoWidth > 0 && video.readyState >= 2 && ctx) {
+      try {
+        ctx.drawImage(video, 0, 0, 16, 16)
+        const { data } = ctx.getImageData(0, 0, 16, 16)
+        let min = 255
+        let max = 0
+        for (let i = 0; i < data.length; i += 4) {
+          const luma = (data[i] + data[i + 1] + data[i + 2]) / 3
+          if (luma < min) min = luma
+          if (luma > max) max = luma
+        }
+        if (max > 12 || max - min > 6) return true
+      } catch {
+        return true // cannot sample the frame; trust that it is streaming
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return false
+}
+
 function LogoutIcon({ className = 'h-4 w-4' }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -263,7 +337,10 @@ function CoopDashboard() {
   const [hasTorch, setHasTorch] = useState(false)
   const [isTorchOn, setIsTorchOn] = useState(false)
   const [cameras, setCameras] = useState([])
-  const [cameraMode, setCameraMode] = useState('environment')
+  // 'auto' probes the rear lenses; otherwise the deviceId (or facing mode) the collab picked.
+  const [cameraMode, setCameraMode] = useState('auto')
+  const [activeCameraId, setActiveCameraId] = useState(null)
+  const [cameraProbing, setCameraProbing] = useState(false)
 
   const [nowTick, setNowTick] = useState(() => Date.now())
 
@@ -752,58 +829,96 @@ function CoopDashboard() {
     let cancelled = false
     let scanner = null
 
-    import('qr-scanner').then(({ default: QrScanner }) => {
+    const onDecode = (result) => {
+      const value = typeof result === 'string' ? result : result?.data
+      if (value && scanHandlerRef.current) {
+        void scanHandlerRef.current(value)
+      }
+    }
+
+    const discard = (target) => {
+      try {
+        target.stop()
+        target.destroy()
+      } catch {
+        // already torn down
+      }
+      if (scanner === target) scanner = null
+    }
+
+    // Opens one camera and resolves to the device that is actually streaming,
+    // or null. `strict` rejects a lens that shows no picture, and rejects the
+    // library silently falling back to some other lens (possibly the front one).
+    const openCamera = async (QrScanner, camera, strict) => {
+      const candidate = new QrScanner(videoRef.current, onDecode, {
+        preferredCamera: camera,
+        highlightScanRegion: true,
+        highlightCodeOutline: true,
+        maxScansPerSecond: 5,
+      })
+      scanner = candidate
+      scannerRef.current = candidate
+      try {
+        await candidate.start()
+      } catch {
+        discard(candidate)
+        return null
+      }
+      if (cancelled) return null
+      const streaming = streamingDeviceId(videoRef.current)
+      if (strict) {
+        const fellBack = streaming && streaming !== camera
+        if (fellBack || !(await videoShowsPicture(videoRef.current, () => cancelled))) {
+          discard(candidate)
+          return null
+        }
+      }
+      return streaming || camera
+    }
+
+    import('qr-scanner').then(async ({ default: QrScanner }) => {
       if (cancelled || !videoRef.current) return
 
-      QrScanner.listCameras(true).then((cams) => {
+      let opened = null
+      if (cameraMode === 'auto') {
+        setCameraProbing(true)
+        // Asks for camera permission first, so the labels needed to spot the front lens are filled in.
+        const cams = await QrScanner.listCameras(true).catch(() => [])
         if (cancelled) return
         setCameras(cams)
-        let savedId = null
-        try {
-          savedId = localStorage.getItem('coop.cameraId')
-        } catch {
-          savedId = null
-        }
-        if (savedId && cameraMode === 'environment' && cams.some((c) => c.id === savedId)) {
-          setCameraMode(savedId)
-        }
-      }).catch(() => {})
-
-      scanner = new QrScanner(
-        videoRef.current,
-        (result) => {
-          const value = typeof result === 'string' ? result : result?.data
-          if (value && scanHandlerRef.current) {
-            void scanHandlerRef.current(value)
+        for (const cam of orderRearCameras(cams, readSavedCameraId())) {
+          opened = await openCamera(QrScanner, cam.id, true)
+          if (cancelled) return
+          if (opened) {
+            saveCameraId(opened)
+            break
           }
-        },
-        {
-          preferredCamera: cameraMode,
-          highlightScanRegion: true,
-          highlightCodeOutline: true,
-          maxScansPerSecond: 5,
-        },
-      )
+        }
+        // No rear lens proved itself (or the browser hid the labels): let it pick the back camera.
+        if (!opened) opened = await openCamera(QrScanner, 'environment', false)
+        if (cancelled) return
+        setCameraProbing(false)
+      } else {
+        QrScanner.listCameras(true).then((cams) => { if (!cancelled) setCameras(cams) }).catch(() => {})
+        opened = await openCamera(QrScanner, cameraMode, false)
+        if (cancelled) return
+      }
 
-      scannerRef.current = scanner
-      scanner.start()
-        .then(() => {
-          scanner.hasFlash().then((has) => setHasTorch(Boolean(has))).catch(() => {})
-        })
-        .catch(() => {
-          setApiError('Không thể mở camera. Bạn có thể sử dụng nút Nhập mã tay.')
-        })
+      if (!opened || !scanner) {
+        setApiError('Không thể mở camera. Bạn có thể sử dụng nút Nhập mã tay.')
+        return
+      }
+      setActiveCameraId(opened)
+      scanner.hasFlash().then((has) => { if (!cancelled) setHasTorch(Boolean(has)) }).catch(() => {})
     }).catch(() => {
       if (!cancelled) setApiError('Không thể tải thư viện quét QR.')
     })
 
     return () => {
       cancelled = true
-      if (scanner) {
-        scanner.stop()
-        scanner.destroy()
-      }
+      if (scanner) discard(scanner)
       scannerRef.current = null
+      setCameraProbing(false)
     }
   }, [cameraMode, bootLoading, stationEvents.length])
 
@@ -822,31 +937,28 @@ function CoopDashboard() {
     // Trên máy nhiều camera sau, chỉ luân phiên giữa các ống KÍNH SAU để bỏ qua
     // ống góc siêu rộng / camera ảo không lấy nét gần được, và không nhảy nhầm
     // sang camera trước.
-    const isFront = (label = '') => /front|user|trươ|trướ|selfie|facing user/i.test(label)
-    const rearCameras = cameras.filter((c) => !isFront(c.label))
+    const rearCameras = cameras.filter((c) => !isFrontCamera(c.label))
     const pool = rearCameras.length > 1 ? rearCameras : cameras
 
     if (pool.length > 1) {
-      const currentIndex = pool.findIndex((c) => c.id === cameraMode)
+      const currentIndex = pool.findIndex((c) => c.id === activeCameraId)
       const next = currentIndex === -1 ? 0 : (currentIndex + 1) % pool.length
       setCameraMode(pool[next].id)
-    } else if (cameras.length > 1) {
-      const currentIndex = cameras.findIndex((c) => c.id === cameraMode)
-      setCameraMode(cameras[currentIndex === -1 ? 0 : (currentIndex + 1) % cameras.length].id)
     } else {
-      setCameraMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
+      setCameraMode((prev) => (prev === 'user' ? 'environment' : 'user'))
     }
   }
 
   const handleCameraSelect = (e) => {
     const id = e.target.value
     setCameraMode(id)
-    try {
-      localStorage.setItem('coop.cameraId', id)
-    } catch {
-      // ignore
-    }
+    if (id !== 'auto') saveCameraId(id)
   }
+
+  const activeCameraLabel = (() => {
+    const index = cameras.findIndex((c) => c.id === activeCameraId)
+    return index === -1 ? '' : cameras[index].label || `Camera ${index + 1}`
+  })()
 
   const handleManualSubmit = async (e) => {
     e?.preventDefault()
@@ -1202,14 +1314,14 @@ function CoopDashboard() {
                       )}
                       {cameras.length > 1 ? (
                         <select
-                          value={cameras.some((c) => c.id === cameraMode) ? cameraMode : ''}
+                          value={cameraMode === 'auto' || cameras.some((c) => c.id === cameraMode) ? cameraMode : 'auto'}
                           onChange={handleCameraSelect}
                           title="Chọn camera"
-                          className="rounded-lg border border-stone bg-white px-2 py-1 text-xs text-ink/70"
+                          className="max-w-[11rem] rounded-lg border border-stone bg-white px-2 py-1 text-xs text-ink/70"
                         >
-                          {!cameras.some((c) => c.id === cameraMode) && (
-                            <option value="" disabled>Chọn camera…</option>
-                          )}
+                          <option value="auto">
+                            {cameraProbing ? 'Tự động · đang dò…' : `Tự động${activeCameraLabel ? ` · ${activeCameraLabel}` : ''}`}
+                          </option>
                           {cameras.map((c, index) => (
                             <option key={c.id} value={c.id}>
                               {c.label || `Camera ${index + 1}`}
@@ -1233,6 +1345,14 @@ function CoopDashboard() {
                     {/* CAMERA VIEWPORT WITH RETICLE */}
                     <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-black shadow-inner border border-stone/40">
                       <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
+
+                      {cameraProbing && (
+                        <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+                          <span className="rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white">
+                            Đang tìm camera sau hoạt động…
+                          </span>
+                        </div>
+                      )}
 
                       {/* SCANNING TARGET FRAME OVERLAY */}
                       <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-8">

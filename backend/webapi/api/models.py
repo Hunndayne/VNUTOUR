@@ -860,6 +860,10 @@ class StationSubmission(models.Model):
     is_correct = models.BooleanField(null=True, blank=True)
     # Points awarded by the grader; mirrored into ScoreEntry (kind=station)
     score = models.IntegerField(null=True, blank=True)
+    # Coop's per-question verdicts {item_id: bool}, kept apart from the
+    # auto-grading in response_payload. Only entries that grade a manual
+    # question or overrule the machine are stored.
+    item_marks = models.JSONField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     graded_at = models.DateTimeField(null=True, blank=True)
     graded_by = models.ForeignKey(

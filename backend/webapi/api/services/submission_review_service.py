@@ -82,6 +82,86 @@ def attempt_is_finished(submission):
     )
 
 
+def submission_answer_review(submission):
+    """The per-question review of an attempt: the snapshot taken at submit time.
+
+    Attempts submitted before snapshots existed are rebuilt from the station's
+    current form, limited to the questions the team answered, so graders still
+    see question text and the chosen option instead of "đáp án 2".
+    """
+    payload = submission.response_payload or {}
+    stored = payload.get("answer_review")
+    if stored is not None:
+        return stored
+    answered = [
+        str(answer.get("id"))
+        for answer in (payload.get("quiz") or []) + (payload.get("form") or [])
+        if isinstance(answer, dict) and answer.get("id") is not None
+    ]
+    if not answered:
+        return []
+    from api.services.question_bank_service import effective_quiz_items
+    station = submission.station
+    return build_review(station.submission_config, payload, answered, effective_quiz_items(station))
+
+
+def clean_item_marks(submission, marks):
+    """Validate the coop's per-question verdicts against a submission.
+
+    `marks` maps an answer_review item id to True/False, or None to drop the
+    coop's verdict. Returns (stored_marks, error). Only verdicts that grade a
+    manual question or overrule the machine are kept, so "matches the auto
+    grade" and "never touched" read the same.
+    """
+    if not isinstance(marks, dict):
+        return None, "invalid_marks"
+    review = {str(item.get("id")): item for item in submission_answer_review(submission)}
+    stored = {}
+    for key, value in marks.items():
+        key = str(key)
+        if key not in review:
+            return None, "unknown_mark_item"
+        if value is not None and not isinstance(value, bool):
+            return None, "invalid_marks"
+        if value is not None and value != review[key].get("is_correct"):
+            stored[key] = value
+    return stored or None, None
+
+
+def marked_review(payload, marks):
+    """answer_review with the coop's verdicts applied on top of the auto-grading."""
+    marks = marks or {}
+    items = []
+    for item in (payload or {}).get("answer_review") or []:
+        entry = dict(item)
+        key = str(item.get("id"))
+        if key in marks:
+            entry["auto_is_correct"] = item.get("is_correct")
+            entry["is_correct"] = marks[key]
+            entry["marked_by_coop"] = True
+        items.append(entry)
+    return items
+
+
+def marked_quiz_result(payload, marks):
+    """quiz_result recounted after the coop's verdicts; unchanged when there are none."""
+    quiz = (payload or {}).get("quiz_result")
+    if not marks or not quiz:
+        return quiz
+    items = marked_review(payload, marks)
+    graded = [item for item in items if item.get("is_correct") is not None]
+    correct = [item for item in graded if item["is_correct"]]
+    return {
+        **quiz,
+        "correct_count": len(correct),
+        "total": len(graded),
+        "points": sum(int(item.get("points", 1) or 0) for item in correct),
+        "max_points": sum(int(item.get("points", 1) or 0) for item in graded),
+        "manual_count": len(items) - len(graded),
+        "all_correct": bool(graded) and len(correct) == len(graded),
+    }
+
+
 def participant_review(submission):
     """Release answers only at the event's current configured end time.
 
@@ -96,5 +176,5 @@ def participant_review(submission):
     return {
         "available": released,
         "available_at": deadline.isoformat() if deadline else None,
-        "items": payload.get("answer_review", []) if released else [],
+        "items": marked_review(payload, submission.item_marks) if released else [],
     }

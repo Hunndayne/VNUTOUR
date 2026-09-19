@@ -47,7 +47,7 @@ def test_private_submission_url_resolves_legacy_key_even_with_old_public_url():
     sub = SimpleNamespace(
         id=1, team=SimpleNamespace(code="T1", name="Team"), status="submitted",
         is_correct=None, score=None, submitted_at=None, graded_at=None,
-        graded_by=None, response_payload={}, attachment_payload={"files": [entry]},
+        graded_by=None, response_payload={}, item_marks=None, attachment_payload={"files": [entry]},
     )
     with patch.object(storage, "_r2_client", return_value=client):
         data = _serialize_submission(sub)

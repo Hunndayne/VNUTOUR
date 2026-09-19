@@ -15,15 +15,146 @@ export function QuizSummary({ result, score }) {
   )
 }
 
-export function AnswerReview({ items = [] }) {
+const pointsText = points => (points > 0 ? `${points} điểm` : '0 điểm')
+
+// Big verdict pill in the question header: the first thing a coop reads.
+function VerdictBadge({ verdict, overridden }) {
+  const cls = verdict === true
+    ? 'bg-trail text-white'
+    : verdict === false
+      ? 'bg-clay text-white'
+      : 'border-2 border-dashed border-ink/30 bg-white text-ink/70'
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-sm font-bold ${cls}`}>
+      {verdict === true ? '✓ Đúng' : verdict === false ? '✗ Sai' : 'Chưa chấm'}
+      {overridden && <span className="font-medium opacity-90">· đã sửa</span>}
+    </span>
+  )
+}
+
+/**
+ * Grading row under the answers. A manual question gets both choices; a
+ * machine-graded one shows the machine's verdict and a single button to flip
+ * it. Buttons are full-size and fully coloured so the choice reads at a glance.
+ */
+function GradeBar({ item, verdict, onChange }) {
+  const points = Number(item.points ?? 1) || 0
+  const auto = item.is_correct
+  if (auto != null) {
+    const current = verdict !== false
+    const overridden = current !== auto
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-paper p-3">
+        <p className="flex-1 text-sm text-ink/80">
+          Máy chấm: <strong className={auto ? 'text-trail' : 'text-clay'}>{auto ? 'Đúng' : 'Sai'}</strong>
+          {overridden && <> · đã đổi thành <strong className={current ? 'text-trail' : 'text-clay'}>{current ? 'Đúng' : 'Sai'}</strong></>}
+        </p>
+        <button
+          type="button"
+          onClick={() => onChange(!current)}
+          className={`min-h-[44px] rounded-lg border-2 px-4 text-sm font-bold transition ${current ? 'border-clay bg-white text-clay hover:bg-clay hover:text-white' : 'border-trail bg-white text-trail hover:bg-trail hover:text-white'}`}
+        >
+          {current ? '✗ Đổi thành Sai' : `✓ Đổi thành Đúng (+${pointsText(points)})`}
+        </button>
+      </div>
+    )
+  }
+  const option = (mark, label, activeCls, idleCls) => (
+    <button
+      type="button"
+      aria-pressed={verdict === mark}
+      onClick={() => onChange(verdict === mark ? null : mark)}
+      className={`min-h-[48px] flex-1 rounded-lg border-2 px-4 text-sm font-bold transition ${verdict === mark ? activeCls : idleCls}`}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div className="mt-3 rounded-lg bg-paper p-3">
+      <p className="mb-2 text-sm font-semibold text-ink">Chấm tay câu này:</p>
+      <div className="flex gap-2" role="group" aria-label="Chấm câu này">
+        {option(true, `✓ Đúng (+${pointsText(points)})`, 'border-trail bg-trail text-white shadow-sm', 'border-trail bg-white text-trail hover:bg-trail/10')}
+        {option(false, '✗ Sai (0 điểm)', 'border-clay bg-clay text-white shadow-sm', 'border-clay bg-white text-clay hover:bg-clay/10')}
+      </div>
+    </div>
+  )
+}
+
+const markLabel = mark => mark === true ? 'Đúng' : mark === false ? 'Sai' : 'Chưa chấm'
+
+// Shows the question, the team's answer and the key before a verdict changes,
+// so a mis-tap on the scoring screen cannot silently move a team's score.
+function ConfirmMarkDialog({ pending, onConfirm, onCancel }) {
+  useEffect(() => {
+    const onKey = event => { if (event.key === 'Escape') onCancel() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCancel])
+  const { item, index, from, to } = pending
+  const points = Number(item.points ?? 1) || 0
+  const tone = to === true ? 'bg-trail text-white' : to === false ? 'bg-clay text-white' : 'bg-ink text-white'
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/40 p-4 backdrop-blur-sm sm:items-center" onClick={onCancel}>
+      <div role="dialog" aria-modal="true" aria-labelledby="confirm-mark-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={event => event.stopPropagation()}>
+        <h2 id="confirm-mark-title" className="font-display text-lg font-bold text-ink">
+          Đổi kết quả câu {index + 1}: {markLabel(from)} → {markLabel(to)}
+        </h2>
+        <p className="mt-3 whitespace-pre-wrap text-sm font-semibold text-ink">{item.question}</p>
+        <dl className="mt-3 grid gap-3">
+          <div className="rounded-lg border border-stone p-3">
+            <dt className="text-xs font-medium text-ink/60">Đội chọn / trả lời</dt>
+            <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{answerText(item.selected_answer) || 'Chưa trả lời'}</dd>
+          </div>
+          <div className="rounded-lg bg-trail/5 p-3">
+            <dt className="text-xs font-medium text-trail">Đáp án đúng</dt>
+            <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{answerText(item.correct_answer) || 'Theo hướng dẫn chấm của trạm'}</dd>
+          </div>
+        </dl>
+        {points > 0 && (
+          <p className="mt-3 text-sm text-ink/70">
+            {to === true ? `Đội được cộng ${points} điểm cho câu này.` : from === true ? `Đội bị trừ ${points} điểm của câu này.` : 'Câu này không tính điểm.'}
+          </p>
+        )}
+        <div className="mt-5 flex gap-2">
+          <button type="button" onClick={onCancel} className="min-h-[48px] flex-1 rounded-lg border border-stone bg-white px-4 text-sm font-semibold text-ink/80">Huỷ</button>
+          <button type="button" autoFocus onClick={onConfirm} className={`min-h-[48px] flex-1 rounded-lg px-4 text-sm font-semibold ${tone}`}>
+            Xác nhận {markLabel(to).toLowerCase()}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Per-question review. With `marks` + `onMark` the coop can overrule the
+ * auto-grading (or grade a manual question) right on the question, after a
+ * confirmation; the parent turns the marks into a score. Without them the
+ * verdict is read-only.
+ */
+export function AnswerReview({ items = [], marks, onMark }) {
+  const [pending, setPending] = useState(null)
   if (!items.length) return <p className="py-4 text-sm text-ink/60">Bài nộp này chưa có bản lưu đáp án chi tiết.</p>
+  const markable = Boolean(marks && onMark)
+  const askMark = (item, index, from, to) => setPending({ item, index, from, to })
   return <div className="divide-y divide-stone">
-    {items.map((item, index) => <article key={item.id} className="py-5 first:pt-0">
+    {pending && <ConfirmMarkDialog
+      pending={pending}
+      onCancel={() => setPending(null)}
+      onConfirm={() => { onMark(pending.item.id, pending.to); setPending(null) }}
+    />}
+    {items.map((item, index) => {
+      const verdict = markable ? marks[item.id] ?? null : item.is_correct
+      return <article key={item.id} className="py-5 first:pt-0">
       <div className="flex items-start justify-between gap-3">
         <h3 className="whitespace-pre-wrap text-base font-semibold text-ink">{index + 1}. {item.question}</h3>
-        <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${item.is_correct === true ? 'bg-trail/10 text-trail' : item.is_correct === false ? 'bg-clay/10 text-clay' : 'bg-paper text-ink/60'}`}>
-          {item.is_correct === true ? 'Đúng' : item.is_correct === false ? 'Sai' : 'Chấm thủ công'}
-        </span>
+        {markable ? (
+          <VerdictBadge verdict={verdict} overridden={item.is_correct != null && verdict !== null && verdict !== item.is_correct} />
+        ) : (
+          <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${verdict === true ? 'bg-trail/10 text-trail' : verdict === false ? 'bg-clay/10 text-clay' : 'bg-paper text-ink/60'}`}>
+            {verdict === true ? 'Đúng' : verdict === false ? 'Sai' : 'Chấm thủ công'}
+          </span>
+        )}
       </div>
       <dl className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-stone p-3">
@@ -35,11 +166,13 @@ export function AnswerReview({ items = [] }) {
           <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{answerText(item.correct_answer) || 'Theo hướng dẫn chấm của trạm'}</dd>
         </div>
       </dl>
+      {markable && <GradeBar item={item} verdict={verdict} onChange={mark => askMark(item, index, item.is_correct != null ? verdict !== false : verdict, mark)} />}
       <div className="mt-3 border-l-2 border-trail/30 pl-3">
         <p className="text-xs font-semibold text-ink/70">Giải thích</p>
         <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-ink/75">{item.explanation || 'Chưa có giải thích cho câu này.'}</p>
       </div>
-    </article>)}
+    </article>
+    })}
   </div>
 }
 
