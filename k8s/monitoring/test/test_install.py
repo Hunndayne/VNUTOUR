@@ -6,7 +6,8 @@ import tempfile
 import unittest
 
 
-INSTALL = Path(__file__).resolve().parents[1] / "install" / "install.sh"
+INSTALL = Path(__file__).resolve().parents[1] / "install" / "monitoring-install.sh"
+INSTALL_DIR = INSTALL.parent
 
 
 class MonitoringInstallTests(unittest.TestCase):
@@ -18,6 +19,8 @@ class MonitoringInstallTests(unittest.TestCase):
         self.bin.mkdir()
         self.kubeconfig = self.root / "k3s.yaml"
         self.kubeconfig.write_text("test-only")
+        self.hostname = self.root / "grafana-hostname"
+        self.hostname.write_text("grafana.example.com")
 
         # The test reaches the CRD safety gate and must never reach download,
         # Secret creation, ConfigMap apply or Helm upgrade.
@@ -30,6 +33,12 @@ case "$*" in
   *"config current-context"*) echo test-context ;;
   *"get nodes"*) echo test-node ;;
   *"get storageclass local-path"*) exit 0 ;;
+  *"get ingressclass nginx -o json"*) echo '{"spec":{"controller":"k8s.io/ingress-nginx"}}' ;;
+  *"-n ingress-nginx get deployment ingress-nginx-controller"*) exit 0 ;;
+  *"-n ingress-nginx rollout status deployment/ingress-nginx-controller"*) exit 0 ;;
+  *"get crd certificates.cert-manager.io clusterissuers.cert-manager.io"*) exit 0 ;;
+  *"-n cert-manager get deployment cert-manager"*) exit 0 ;;
+  *"wait --for=condition=Ready clusterissuer/letsencrypt-prod"*) exit 0 ;;
   *"get namespace monitoring"*) exit 0 ;;
   *"get deployment prometheus grafana kube-state-metrics"*) exit 0 ;;
   *"get daemonset node-exporter"*) exit 0 ;;
@@ -60,6 +69,7 @@ esac
             "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
             "TEST_ROOT": str(self.root),
             "K3S_KUBECONFIG": str(self.kubeconfig),
+            "GRAFANA_HOSTNAME_FILE": str(self.hostname),
         }
         return subprocess.run(
             ["bash", str(INSTALL)], env=env, text=True, capture_output=True
@@ -77,6 +87,28 @@ esac
         self.assertNotIn("create", k3s_calls)
         self.assertNotIn("apply", k3s_calls)
 
+    def test_invalid_hostname_stops_before_cluster_access(self):
+        self.hostname.write_text("grafana.example.com/$(id)")
+
+        result = self.run_install()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Grafana hostname must be lowercase DNS", result.stderr)
+        self.assertFalse((self.root / "k3s-calls").exists())
+        self.assertFalse((self.root / "helm-calls").exists())
+
+    def test_https_templates_use_http_grafana_backend(self):
+        ingress = (INSTALL_DIR / "ingress.yaml").read_text()
+        certificate = (INSTALL_DIR / "certificate.yaml").read_text()
+        values = (INSTALL_DIR / "ingress-values.yaml").read_text()
+
+        self.assertIn("name: monitoring-grafana", ingress)
+        self.assertIn("number: 80", ingress)
+        self.assertNotIn("backend-protocol", ingress)
+        self.assertIn("name: letsencrypt-prod", certificate)
+        self.assertIn("namespace: monitoring", certificate)
+        self.assertIn("root_url: https://grafana.example.invalid/", values)
+        self.assertIn("cookie_secure: true", values)
 
 if __name__ == "__main__":
     unittest.main()
