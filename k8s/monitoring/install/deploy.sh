@@ -112,7 +112,12 @@ mkdir -p "$work/payload/install" "$work/payload/dashboard"
 cp "$here/monitoring-install.sh" "$here/values.yaml" \
   "$here/ingress-values.yaml" "$here/certificate.yaml" \
   "$here/ingress.yaml" "$work/payload/install/"
-cp "$here/../dashboard/vps_k3s_dashboard.json" "$work/payload/dashboard/"
+dashboard_source="$here/../dashboard/vps_k3s_dashboard.json"
+jq -S -c . "$dashboard_source" > "$work/payload/dashboard/vps_k3s_dashboard.json" || {
+  echo '[error] Dashboard is not valid JSON and cannot be added to the SSH payload.' >&2
+  exit 1
+}
+echo '[payload] Dashboard JSON validated and canonicalized with jq -S -c .'
 printf '%s' "$GRAFANA_ADMIN_PASSWORD" > "$work/payload/grafana-admin-password"
 printf '%s' "$GRAFANA_HOSTNAME" > "$work/payload/grafana-hostname"
 printf '%s\n' "$VPS_SSH_PASSWORD" > "$work/ssh-password"

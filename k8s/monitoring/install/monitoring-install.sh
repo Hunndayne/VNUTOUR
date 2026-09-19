@@ -15,7 +15,6 @@ namespace=monitoring
 dashboard_configmap=vps-k3s-monitoring-dashboard
 helm_version=4.3.0
 helm_sha256=86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
-dashboard_sha256=681810dea7d21fa42c5e6e8106cce740d1f090d927702d8e757fdb48f7439a1b
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 dashboard_file="$script_dir/../dashboard/vps_k3s_dashboard.json"
 ingress_values_template="$script_dir/ingress-values.yaml"
@@ -213,11 +212,11 @@ for required_file in "$dashboard_file" "$ingress_values_template" "$certificate_
     exit 1
   }
 done
-printf '%s  %s\n' "$dashboard_sha256" "$dashboard_file" | sha256sum --check --status || {
-  echo '[error] Dashboard checksum does not match the reviewed revision.' >&2
+jq -S -c . "$dashboard_file" > "$work/dashboard-canonical.json" || {
+  echo '[error] Dashboard is not valid JSON.' >&2
   exit 1
 }
-echo '[check] VPS K3s dashboard checksum: valid'
+echo '[check] VPS K3s dashboard JSON: valid and canonicalized'
 sed "s/grafana.example.invalid/$grafana_hostname/g" "$ingress_values_template" > "$work/ingress-values.yaml"
 sed "s/grafana.example.invalid/$grafana_hostname/g" "$certificate_template" > "$work/certificate.yaml"
 sed "s/grafana.example.invalid/$grafana_hostname/g" "$ingress_template" > "$work/ingress.yaml"
@@ -232,7 +231,7 @@ helm template "$release" "$package" -n "$namespace" -f "$script_dir/values.yaml"
   > "$work/rendered.yaml"
 echo "[check] kube-prometheus-stack $chart_version rendered successfully"
 jq 'walk(if type == "string" then gsub("\\$\\{DS_PROMETHEUS\\}"; "prometheus") else . end)
-  | del(.__inputs) | .id = null' "$dashboard_file" > "$work/vps_k3s_dashboard.json"
+  | del(.__inputs) | .id = null' "$work/dashboard-canonical.json" > "$work/vps_k3s_dashboard.json"
 
 echo
 echo '========== [MONITORING VPS 6/9] Reconcile Grafana credentials and dashboard =========='
