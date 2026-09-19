@@ -17,7 +17,7 @@ from api.services.station_service import (
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from api.services.submission_config_service import normalize_config, public_config
-from api.services.submission_review_service import clean_item_marks
+from api.services.submission_review_service import clean_item_marks, submission_answer_review
 from api.services.audit_service import record_audit
 from api.services import scan_token_service
 from api.services.assignment_service import is_collab_assigned
@@ -197,6 +197,7 @@ def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
         "graded_at": sub.graded_at.isoformat() if sub.graded_at else None,
         "graded_by": sub.graded_by.username if sub.graded_by else None,
         "response_payload": sub.response_payload,
+        "answer_review": submission_answer_review(sub),
         "item_marks": sub.item_marks,
         "files": files,
     }
@@ -220,7 +221,7 @@ def station_submissions_view(request: HttpRequest, station_id: int):
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
-    submissions = StationSubmission.objects.select_related("team", "graded_by").filter(
+    submissions = StationSubmission.objects.select_related("team", "graded_by", "station").filter(
         station=station,
     ).order_by(F("submitted_at").desc(nulls_last=True))
 
@@ -273,6 +274,11 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
     if "is_correct" in data and not isinstance(data.get("is_correct"), (bool, type(None))):
         return JsonResponse({"error": "invalid_is_correct"}, status=400)
 
+    if "marks" in data:
+        stored_marks, marks_error = clean_item_marks(submission, data.get("marks"))
+        if marks_error:
+            return JsonResponse({"error": marks_error}, status=400)
+
     if "score" in data:
         err = set_submission_score(submission, acc, data.get("score"), data.get("note"))
         if err:
@@ -284,6 +290,8 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
     submission.graded_by = acc
     if "is_correct" in data:
         submission.is_correct = data.get("is_correct")
+    if "marks" in data:
+        submission.item_marks = stored_marks
     submission.save()
 
     # In pass/fail mode the explicit correct/incorrect verdict is the session

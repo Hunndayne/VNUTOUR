@@ -219,6 +219,36 @@ class StationAnswerReviewTests(FormsApiTestBase):
         sub.refresh_from_db()
         self.assertIsNone(sub.item_marks)
 
+    def test_admin_grade_saves_marks_and_lists_readable_answers(self):
+        sub = self.submit_answers()
+        listing = self.request_as('get', f'/api/stations/{self.station.id}/submissions', actor=self.admin).json()
+        review = listing["submissions"][0]["answer_review"]
+        # Graders see the option text, not "đáp án 2".
+        self.assertEqual(review[0]["selected_answer"], "Hue")
+        self.assertEqual(review[0]["correct_answer"], "Hanoi")
+        response = self.request_as('patch', f'/api/submissions/{sub.id}/grade',
+                                   {"score": 5, "marks": {"q1": True}}, self.admin)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["item_marks"], {"q1": True})
+        self.assertEqual(response.json()["score"], 5)
+        bad = self.request_as('patch', f'/api/submissions/{sub.id}/grade', {"score": 1, "marks": {"zz": True}}, self.admin)
+        self.assertEqual(bad.status_code, 400)
+        sub.refresh_from_db()
+        self.assertEqual(sub.score, 5)
+        self.assertEqual(sub.item_marks, {"q1": True})
+
+    def test_legacy_submission_without_snapshot_gets_a_rebuilt_review(self):
+        sub = self.submit_answers()
+        payload = dict(sub.response_payload)
+        payload.pop("answer_review")
+        StationSubmission.objects.filter(id=sub.id).update(response_payload=payload)
+        listing = self.request_as('get', f'/api/stations/{self.station.id}/submissions', actor=self.admin).json()
+        review = {item["id"]: item for item in listing["submissions"][0]["answer_review"]}
+        self.assertEqual(review["q1"]["question"], "Capital?")
+        self.assertEqual(review["q1"]["selected_answer"], "Hue")
+        self.assertFalse(review["q1"]["is_correct"])
+        self.assertTrue(review["q2"]["is_correct"])
+
     def test_invalid_marks_are_rejected_without_changing_the_score(self):
         sub = self.submit_answers()
         self.checkout()

@@ -7,6 +7,8 @@ import { useDraftState, DraftNotice } from './drafts.jsx'
 import { exportToJson, exportQuizToExcel, importFromFile, downloadSampleExcel, downloadSampleJson } from './importExportUtils.js'
 import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
+import { AnswerReview } from './QuestionReview.jsx'
+import { useItemMarks } from './itemMarks.js'
 
 const LEGACY_STATIONS_STORAGE_KEY = 'vnutour:admin:stations-by-phase'
 
@@ -2709,7 +2711,18 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
   const files = submission.files || []
   const formAnswers = submission.response_payload?.form || []
   const quizAnswers = submission.response_payload?.quiz || []
-  const quizResult = submission.response_payload?.quiz_result || null
+  const autoQuizResult = submission.response_payload?.quiz_result || null
+  // Per-question review (question, the team's answer as text, the key) and the
+  // grader's verdicts on it; older attempts are rebuilt server-side.
+  const reviewItems = useMemo(() => submission.answer_review || [], [submission.answer_review])
+  const hasReview = reviewItems.length > 0
+  const { marks, setMarks, pointsFor, markedPoints, summarize } = useItemMarks(reviewItems, submission.item_marks)
+  const quizResult = hasReview && autoQuizResult ? summarize(autoQuizResult) : autoQuizResult
+  const markQuestion = (id, mark) => {
+    const next = { ...marks, [id]: mark }
+    setMarks(next)
+    setScoreInput(String(pointsFor(next)))
+  }
   const statusMeta = submission.status === 'graded'
     ? { label: 'Đã chấm', cls: 'bg-trail/12 text-trail' }
     : { label: 'Đã nộp', cls: 'bg-gold/15 text-[#9A6B12]' }
@@ -2744,7 +2757,9 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
       ) : null}
 
       <div className="mt-6 border-t border-stone/40 pt-4">
-        {formAnswers.length > 0 && (
+        {hasReview && <AnswerReview items={reviewItems} marks={marks} onMark={markQuestion} />}
+
+        {!hasReview && formAnswers.length > 0 && (
           <div className="mt-4 space-y-2">
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Câu trả lời</p>
             {formAnswers.map((field, index) => (
@@ -2756,7 +2771,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
           </div>
         )}
 
-        {quizAnswers.length > 0 && (
+        {!hasReview && quizAnswers.length > 0 && (
           <div className="mt-6 space-y-2">
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Trắc nghiệm</p>
             {quizAnswers.map((item, index) => (
@@ -2811,7 +2826,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
             className="inline-flex items-center gap-2 rounded-lg border border-trail/30 bg-trail/10 px-4 py-2 text-sm font-semibold text-trail transition hover:bg-trail/15 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="checkPlain" className="h-4 w-4" />
-            Đánh dấu Đúng
+            Cả bài: Đúng
           </button>
           <button
             type="button"
@@ -2820,18 +2835,18 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
             className="inline-flex items-center gap-2 rounded-lg border border-clay/30 bg-clay/10 px-4 py-2 text-sm font-semibold text-clay transition hover:bg-clay/15 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="xmark" className="h-4 w-4" />
-            Đánh dấu Sai
+            Cả bài: Sai
           </button>
           <div className="ml-auto flex items-center gap-2">
-            {quizResult ? (
+            {hasReview || quizResult ? (
               <button
                 type="button"
-                onClick={() => setScoreInput(String(quizResult.points))}
+                onClick={() => setScoreInput(String(hasReview ? markedPoints : quizResult.points))}
                 disabled={busy}
-                title="Điền điểm quiz tự tính vào ô điểm"
+                title="Điền tổng điểm các câu đang chấm Đúng vào ô điểm"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-3 py-2 text-sm font-semibold text-[#3E7CA8] transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Lấy điểm quiz
+                Dùng điểm đã chấm: {hasReview ? markedPoints : quizResult.points}
               </button>
             ) : null}
             <input
@@ -2843,7 +2858,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
             />
             <button
               type="button"
-              onClick={() => onGrade(submission.id, { score: Number(scoreInput) })}
+              onClick={() => onGrade(submission.id, hasReview ? { score: Number(scoreInput), marks } : { score: Number(scoreInput) })}
               disabled={busy || scoreInput === '' || !Number.isFinite(Number(scoreInput))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -2932,7 +2947,8 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
             </div>
           </div>
         </div>
-        <StationSubmissionDetailView 
+        <StationSubmissionDetailView
+          key={selectedSubmission.id}
           submission={selectedSubmission} 
           onGrade={handleGrade} 
           busy={busyId === selectedSubmission.id} 

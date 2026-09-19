@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { apiRequest } from './api.js'
 import { AnswerReview, QuizSummary } from './QuestionReview.jsx'
+import { useItemMarks } from './itemMarks.js'
 
 export default function CheckoutReview({ result, onSaved, onNext }) {
   const submission = result.submission
@@ -11,29 +12,17 @@ export default function CheckoutReview({ result, onSaved, onNext }) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const binary = result.scoringMode === 'pass_fail'
-  const reviewItems = useMemo(() => submission?.response_payload?.answer_review || [], [submission])
-  // Coop's verdict per question: the auto-grading, overlaid with the verdicts
-  // saved earlier. Sent with every score save so the backend keeps them.
+  const reviewItems = useMemo(() => submission?.answer_review || submission?.response_payload?.answer_review || [], [submission])
+  // Coop's verdict per question; sent with every score save so the backend keeps them.
   const markable = !binary && reviewItems.length > 0
-  const [marks, setMarks] = useState(() => {
-    const saved = submission?.item_marks || {}
-    return Object.fromEntries(reviewItems.map(item => [item.id, saved[item.id] ?? item.is_correct ?? null]))
-  })
-  const markAll = mark => Object.fromEntries(reviewItems.map(item => [item.id, mark]))
-  const itemPoints = item => Number(item.points ?? 1) || 0
-  const markedPoints = reviewItems.reduce((sum, item) => sum + (marks[item.id] === true ? itemPoints(item) : 0), 0)
-  const markedSummary = reviewItems.length > 0 && quiz ? {
-    ...quiz,
-    total: reviewItems.length,
-    correct_count: reviewItems.filter(item => marks[item.id] === true).length,
-    manual_count: reviewItems.filter(item => marks[item.id] == null).length,
-  } : quiz
-  const fullPoints = reviewItems.length > 0 ? reviewItems.reduce((sum, item) => sum + itemPoints(item), 0) : quiz?.max_points
+  const { marks, setMarks, pointsFor, markedPoints, fullPoints: allPoints, markAll, summarize } = useItemMarks(reviewItems, submission?.item_marks)
+  const markedSummary = reviewItems.length > 0 && quiz ? summarize(quiz) : quiz
+  const fullPoints = reviewItems.length > 0 ? allPoints : quiz?.max_points
   const markQuestion = (id, mark) => {
     const next = { ...marks, [id]: mark }
     setMarks(next)
     // Keep the score box in step with the marks so the coop only has to press "Lưu điểm".
-    setScore(reviewItems.reduce((sum, item) => sum + (next[item.id] === true ? itemPoints(item) : 0), 0))
+    setScore(pointsFor(next))
   }
   const save = async (body, nextMarks = marks) => {
     if (markable) body = { ...body, marks: nextMarks }

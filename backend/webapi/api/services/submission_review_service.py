@@ -82,6 +82,29 @@ def attempt_is_finished(submission):
     )
 
 
+def submission_answer_review(submission):
+    """The per-question review of an attempt: the snapshot taken at submit time.
+
+    Attempts submitted before snapshots existed are rebuilt from the station's
+    current form, limited to the questions the team answered, so graders still
+    see question text and the chosen option instead of "đáp án 2".
+    """
+    payload = submission.response_payload or {}
+    stored = payload.get("answer_review")
+    if stored is not None:
+        return stored
+    answered = [
+        str(answer.get("id"))
+        for answer in (payload.get("quiz") or []) + (payload.get("form") or [])
+        if isinstance(answer, dict) and answer.get("id") is not None
+    ]
+    if not answered:
+        return []
+    from api.services.question_bank_service import effective_quiz_items
+    station = submission.station
+    return build_review(station.submission_config, payload, answered, effective_quiz_items(station))
+
+
 def clean_item_marks(submission, marks):
     """Validate the coop's per-question verdicts against a submission.
 
@@ -92,7 +115,7 @@ def clean_item_marks(submission, marks):
     """
     if not isinstance(marks, dict):
         return None, "invalid_marks"
-    review = {str(item.get("id")): item for item in (submission.response_payload or {}).get("answer_review") or []}
+    review = {str(item.get("id")): item for item in submission_answer_review(submission)}
     stored = {}
     for key, value in marks.items():
         key = str(key)

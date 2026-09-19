@@ -15,40 +15,67 @@ export function QuizSummary({ result, score }) {
   )
 }
 
-// A machine-graded question keeps its verdict badge plus one button to flip it.
-function FlipMark({ value, autoValue, points, onChange }) {
-  const overridden = value !== autoValue
+const pointsText = points => (points > 0 ? `${points} điểm` : '0 điểm')
+
+// Big verdict pill in the question header: the first thing a coop reads.
+function VerdictBadge({ verdict, overridden }) {
+  const cls = verdict === true
+    ? 'bg-trail text-white'
+    : verdict === false
+      ? 'bg-clay text-white'
+      : 'border-2 border-dashed border-ink/30 bg-white text-ink/70'
   return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <span className={`rounded-md px-2 py-1 text-xs font-semibold ${value ? 'bg-trail/10 text-trail' : 'bg-clay/10 text-clay'}`}>
-        {value ? `Đúng${points > 0 ? ` · ${points}đ` : ''}` : 'Sai'}{overridden ? ' (CTV sửa)' : ''}
-      </span>
-      <button
-        type="button"
-        onClick={() => onChange(!value)}
-        className={`min-h-[36px] rounded-md border bg-white px-3 text-xs font-semibold transition ${value ? 'border-clay/40 text-clay hover:bg-clay/5' : 'border-trail/40 text-trail hover:bg-trail/5'}`}
-      >
-        {value ? 'Chấm sai' : 'Chấm đúng'}
-      </button>
-    </div>
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-sm font-bold ${cls}`}>
+      {verdict === true ? '✓ Đúng' : verdict === false ? '✗ Sai' : 'Chưa chấm'}
+      {overridden && <span className="font-medium opacity-90">· đã sửa</span>}
+    </span>
   )
 }
 
-function MarkToggle({ value, points, onChange }) {
-  const option = (mark, label, activeCls) => (
+/**
+ * Grading row under the answers. A manual question gets both choices; a
+ * machine-graded one shows the machine's verdict and a single button to flip
+ * it. Buttons are full-size and fully coloured so the choice reads at a glance.
+ */
+function GradeBar({ item, verdict, onChange }) {
+  const points = Number(item.points ?? 1) || 0
+  const auto = item.is_correct
+  if (auto != null) {
+    const current = verdict !== false
+    const overridden = current !== auto
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-paper p-3">
+        <p className="flex-1 text-sm text-ink/80">
+          Máy chấm: <strong className={auto ? 'text-trail' : 'text-clay'}>{auto ? 'Đúng' : 'Sai'}</strong>
+          {overridden && <> · đã đổi thành <strong className={current ? 'text-trail' : 'text-clay'}>{current ? 'Đúng' : 'Sai'}</strong></>}
+        </p>
+        <button
+          type="button"
+          onClick={() => onChange(!current)}
+          className={`min-h-[44px] rounded-lg border-2 px-4 text-sm font-bold transition ${current ? 'border-clay bg-white text-clay hover:bg-clay hover:text-white' : 'border-trail bg-white text-trail hover:bg-trail hover:text-white'}`}
+        >
+          {current ? '✗ Đổi thành Sai' : `✓ Đổi thành Đúng (+${pointsText(points)})`}
+        </button>
+      </div>
+    )
+  }
+  const option = (mark, label, activeCls, idleCls) => (
     <button
       type="button"
-      aria-pressed={value === mark}
-      onClick={() => onChange(value === mark ? null : mark)}
-      className={`min-h-[36px] rounded-md border px-3 text-xs font-semibold transition ${value === mark ? activeCls : 'border-stone bg-white text-ink/60 hover:text-ink'}`}
+      aria-pressed={verdict === mark}
+      onClick={() => onChange(verdict === mark ? null : mark)}
+      className={`min-h-[48px] flex-1 rounded-lg border-2 px-4 text-sm font-bold transition ${verdict === mark ? activeCls : idleCls}`}
     >
       {label}
     </button>
   )
   return (
-    <div className="flex shrink-0 items-center gap-1.5" role="group" aria-label="Chấm câu này">
-      {option(true, `Đúng${points > 0 ? ` · ${points}đ` : ''}`, 'border-trail bg-trail text-white')}
-      {option(false, 'Sai', 'border-clay bg-clay text-white')}
+    <div className="mt-3 rounded-lg bg-paper p-3">
+      <p className="mb-2 text-sm font-semibold text-ink">Chấm tay câu này:</p>
+      <div className="flex gap-2" role="group" aria-label="Chấm câu này">
+        {option(true, `✓ Đúng (+${pointsText(points)})`, 'border-trail bg-trail text-white shadow-sm', 'border-trail bg-white text-trail hover:bg-trail/10')}
+        {option(false, '✗ Sai (0 điểm)', 'border-clay bg-clay text-white shadow-sm', 'border-clay bg-white text-clay hover:bg-clay/10')}
+      </div>
     </div>
   )
 }
@@ -121,10 +148,8 @@ export function AnswerReview({ items = [], marks, onMark }) {
       return <article key={item.id} className="py-5 first:pt-0">
       <div className="flex items-start justify-between gap-3">
         <h3 className="whitespace-pre-wrap text-base font-semibold text-ink">{index + 1}. {item.question}</h3>
-        {markable && item.is_correct != null ? (
-          <FlipMark value={verdict !== false} autoValue={item.is_correct} points={item.points} onChange={mark => askMark(item, index, verdict !== false, mark)} />
-        ) : markable ? (
-          <MarkToggle value={verdict} points={item.points} onChange={mark => askMark(item, index, verdict, mark)} />
+        {markable ? (
+          <VerdictBadge verdict={verdict} overridden={item.is_correct != null && verdict !== null && verdict !== item.is_correct} />
         ) : (
           <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${verdict === true ? 'bg-trail/10 text-trail' : verdict === false ? 'bg-clay/10 text-clay' : 'bg-paper text-ink/60'}`}>
             {verdict === true ? 'Đúng' : verdict === false ? 'Sai' : 'Chấm thủ công'}
@@ -141,6 +166,7 @@ export function AnswerReview({ items = [], marks, onMark }) {
           <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{answerText(item.correct_answer) || 'Theo hướng dẫn chấm của trạm'}</dd>
         </div>
       </dl>
+      {markable && <GradeBar item={item} verdict={verdict} onChange={mark => askMark(item, index, item.is_correct != null ? verdict !== false : verdict, mark)} />}
       <div className="mt-3 border-l-2 border-trail/30 pl-3">
         <p className="text-xs font-semibold text-ink/70">Giải thích</p>
         <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-ink/75">{item.explanation || 'Chưa có giải thích cho câu này.'}</p>
