@@ -19,7 +19,7 @@ Workflow tự chạy trên `main` và chỉ reconcile dịch vụ có file thay 
 
 ## Cài đặt và kiểm tra
 
-1. VPS cần có k3s đang chạy, kubeconfig `/etc/rancher/k3s/k3s.yaml`, `root` hoặc `sudo -n`, và Internet tới Helm OCI registry/image registries. Script giữ công cụ đã có; nếu thiếu curl, jq, tar, gzip hoặc coreutils thì cài đúng package còn thiếu bằng apt. Nếu thiếu Helm, script cài Helm 3.18.4 AMD64 đã cố định và kiểm tra SHA-256. Script không tự cài hoặc nâng k3s. Chart yêu cầu Kubernetes >= 1.25.
+1. VPS cần có k3s đang chạy, kubeconfig `/etc/rancher/k3s/k3s.yaml`, `root` hoặc `sudo -n`, và Internet tới Helm OCI registry/image registries. Script giữ công cụ đã có; nếu thiếu curl, jq, tar, gzip hoặc coreutils thì cài đúng package còn thiếu bằng apt. Nếu thiếu Helm, script cài Helm 4.3.0 AMD64 đã cố định và kiểm tra SHA-256. Script không tự cài hoặc nâng k3s. Chart yêu cầu Kubernetes >= 1.25.
 2. Clone/cập nhật repo trên VPS, vào thư mục repo và kiểm tra đúng cụm, tài nguyên:
 
    ```bash
@@ -86,7 +86,7 @@ Stack gồm Prometheus Operator, Prometheus, Grafana, kube-state-metrics và nod
 
 - Chạy lại script để reconcile cùng phiên bản/config. `--reset-values` lấy cấu hình Git làm nguồn chính; không giữ thay đổi `helm --set` ngoài repo. Sau này ingress/root_url phải được lưu trong values hoặc bổ sung overlay vào chính script, nếu không lần chạy lại sẽ tắt ingress.
 - PVC `local-path` giữ dữ liệu qua pod restart nhưng gắn với node/đĩa VPS; không phải HA hoặc backup. Đặt lịch backup dữ liệu cần giữ, nhất là Grafana DB và cấu hình. Không xóa PVC/namespace để sửa lỗi đăng nhập.
-- Nâng chart là một thay đổi có kiểm tra [upgrade notes và CRDs](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack#upgrading-chart). Helm 3 không tự nâng CRDs theo chart. Script chặn phiên bản release khác; cần quy trình nâng cấp riêng, không chỉ sửa version rồi chạy lại.
+- Nâng chart là một thay đổi có kiểm tra [upgrade notes và CRDs](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack#upgrading-chart). Helm không tự nâng CRDs theo chart. Script chặn phiên bản release khác; cần quy trình nâng cấp riêng, không chỉ sửa version rồi chạy lại.
 - Sau khi port-forward và login/data đã thành công, triển khai theo [ArgoCD bootstrap](../../argocd/ui/ARGOCD-BOOTSTRAP.md): IngressClass `nginx`, dùng lại `ClusterIssuer letsencrypt-prod`, tạo Certificate/TLS Secret riêng **trong namespace monitoring**, backend `monitoring-grafana:80` qua **HTTP**, TLS kết thúc ở NGINX. Không sao chép `backend-protocol: HTTPS` của ArgoCD vì backend Grafana hiện phục vụ HTTP.
 - Dùng hostname Grafana đã chuẩn bị để đặt `grafana.ini.server.domain`, `root_url=https://<GRAFANA_HOSTNAME>/`, bật cookie secure cùng ingress/TLS. Giữ anonymous và sign-up tắt; giữ Secret admin đã tạo. Không public Prometheus. Hostname cụ thể chưa xuất hiện trong yêu cầu này; nhập chính xác khi triển khai bước ingress.
 

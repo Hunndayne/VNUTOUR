@@ -6,14 +6,14 @@ set +x
 umask 077
 export LC_ALL=C
 
-# Change versions only after reviewing upstream upgrade notes. Helm 3 does not
+# Change versions only after reviewing upstream upgrade notes. Helm does not
 # upgrade CRDs automatically, so chart upgrades need a separate migration.
 chart_version=91.4.1
 chart=oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
 release=monitoring
 namespace=monitoring
 helm_version=4.3.0
-helm_sha256=f8180838c23d7c7d797b208861fecb591d9ce1690d8704ed1e4cb8e2add966c1
+helm_sha256=86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
 dashboard_sha256=e331a33cf52ffbf291abc089c9122e654848e57d40e6410c34012276499cb6de
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 dashboard_file="$script_dir/../dashboard/15282_rev1.json"
@@ -59,7 +59,7 @@ if (( ${#missing_packages[@]} > 0 )); then
   echo '[tool] Missing OS packages installed successfully'
 fi
 
-# Preserve an existing Helm 3 installation. On a fresh AMD64 VPS, install a
+# Preserve an existing Helm 4 installation. On a fresh AMD64 VPS, install a
 # pinned official binary only after its SHA-256 checksum passes.
 work=$(mktemp -d /tmp/monitoring-install.XXXXXXXX)
 trap 'rm -rf -- "$work"' EXIT

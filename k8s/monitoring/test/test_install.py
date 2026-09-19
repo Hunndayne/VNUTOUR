@@ -44,7 +44,7 @@ esac
 set -eu
 printf '%s\n' "$*" >> "$TEST_ROOT/helm-calls"
 case "$1" in
-  version) echo v3.18.4 ;;
+  version) echo v4.3.0 ;;
   list) printf '[{"chart":"kube-prometheus-stack-91.4.1"}]' ;;
   *) echo "mutation or download reached: $*" >&2; exit 92 ;;
 esac
