@@ -248,6 +248,10 @@ def replay_lock_reason(
     The optional defaults retain compatibility with older direct callers while
     keeping the precedence used by every API path: passed, exhausted, pending,
     then the event's first-loop requirement.
+
+    `pending_result` means "an attempt is still open", not "a verdict is still
+    missing": a closed attempt awaiting a manual grade no longer blocks the
+    next one.
     """
     if not has_prior_closed:
         return None
@@ -380,6 +384,8 @@ def _assemble_replay_state(
         has_passed = StationSession.OUTCOME_PASSED in outcomes
         latest_outcome = outcomes[-1] if outcomes else None
         has_active = any(row["status"] == StationSession.STATUS_ACTIVE for row in rows)
+        # Still reported to the UI so a team can see "đang chờ chấm", but it no
+        # longer gates the next attempt — see the call below.
         pending_result = has_active or latest_outcome == StationSession.OUTCOME_PENDING
         has_prior = attempts_used > 0
         reason = replay_lock_reason(
@@ -388,7 +394,11 @@ def _assemble_replay_state(
             has_passed=has_passed,
             attempts_used=attempts_used,
             max_attempts=station.max_attempts,
-            pending_result=pending_result,
+            # Only an attempt that is STILL OPEN blocks the next one; a closed
+            # attempt waiting on a manual verdict does not. Graders lag behind
+            # during an event and teams were getting stuck queueing on them.
+            # `attempts_exhausted` above is what keeps replays bounded.
+            pending_result=has_active,
             replay_after_all=sub_event.replay_after_all,
             allow_replay_after_pass=sub_event.replay_after_pass,
         )

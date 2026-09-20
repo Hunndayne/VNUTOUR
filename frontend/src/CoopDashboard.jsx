@@ -183,7 +183,7 @@ function explainScanError(error) {
     replay_locked_incomplete: 'Đội phải đi hết tất cả các trạm khác rồi mới được quay lại trạm này.',
     replay_locked_passed: 'Đội đã qua trạm này rồi nên không cần vào lại.',
     replay_locked_attempts_exhausted: 'Đội đã dùng hết số lượt chơi của trạm này.',
-    replay_locked_pending_result: 'Lượt trước của đội đang chờ chấm kết quả.',
+    replay_locked_pending_result: 'Đội đang trong một lượt chơi chưa kết thúc ở trạm này.',
     event_not_checked_in: 'Đội chưa check-in sự kiện. Mời quét QR theo chế độ check-in của event.',
     event_insufficient_checkin: 'Đội chưa đủ số thành viên đã check-in để vào trạm. Mời thêm thành viên quét QR cá nhân.',
     team_checked_out: 'Đội đã checkout, không được chơi thêm trạm nào.',
