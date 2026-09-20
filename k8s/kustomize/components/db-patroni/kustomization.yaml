@@ -28,3 +28,31 @@ resources:
   - rbac.yaml
   - patroni-statefulset.yaml
   - haproxy.yaml
+
+# --- Prod resource sizing (PostgreSQL / Patroni) ---------------------------
+# Base ships conservative dev defaults (200m CPU / 512Mi RAM, limit 1 CPU /
+# 1Gi). Scale vertically so Postgres has enough CPU headroom for query
+# processing and enough RAM for shared_buffers / work_mem under prod load.
+# Patch lives HERE (not in prod-config) because Kustomize resolves patches
+# against the resources present in the same component — db-patroni defines the
+# StatefulSet, so this patch always fires. prod-config is listed BEFORE
+# db-patroni in overlays/prod, so a patch there targets a non-existent object
+# and is silently skipped.
+# Ticket: fix/prod-replicas-2092026
+patches:
+  - target:
+      kind: StatefulSet
+      name: postgres-ha
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "2"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "8"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 4Gi
