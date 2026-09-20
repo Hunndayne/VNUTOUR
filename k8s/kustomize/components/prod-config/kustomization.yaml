@@ -104,7 +104,29 @@ patches:
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: 1Gi
 
-  # --- Prod serving backend: 5 replicas, spread across nodes -----------------
+  # --- Prod resource sizing (PostgreSQL / Patroni) ---------------------------
+  # Base ships conservative dev defaults (200m CPU / 512Mi RAM, limit 1 CPU /
+  # 1Gi). Prod is under DB load; scale vertically so Postgres has enough CPU
+  # headroom for query processing and enough RAM for shared_buffers / work_mem.
+  # Ticket: fix/prod-replicas-2092026
+  - target:
+      kind: StatefulSet
+      name: postgres-ha
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "1"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "4"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 4Gi
+
+  # --- Prod serving backend: 8 replicas, spread across nodes -----------------
   # The serving `backend` is unpinned by components/backend-ops (media/backups
   # moved to the pinned backend-ops pod), so it can schedule on any node. Run 5
   # replicas and spread them evenly across hosts so no single node carries the
@@ -116,7 +138,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 5
+        value: 8
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
         value:
@@ -127,14 +149,14 @@ patches:
               matchLabels:
                 app: backend
 
-  # --- Prod frontend: 5 replicas, spread across nodes -----------------------
+  # --- Prod frontend: 8 replicas, spread across nodes -----------------------
   - target:
       kind: Deployment
       name: frontend
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 5
+        value: 8
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
         value:
