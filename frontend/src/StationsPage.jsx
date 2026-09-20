@@ -304,20 +304,43 @@ function CheckoutPanel({ eventId }) {
 
 // Trạm check-in không có phiên chơi riêng — điểm danh QR ghi nhận theo cả sự
 // kiện, nên log của trạm này chính là toàn bộ lượt điểm danh của event.
+// Hiển thị 50 lượt mỗi trang. Vẫn tải toàn bộ về trước rồi mới cắt trang ở
+// client, để ô tìm kiếm tra được cả sự kiện chứ không chỉ trang đang mở.
+const CHECKIN_PAGE_SIZE = 50
+// Trần cứng của API là 200/lượt gọi; kéo tối đa 20 lượt (4000 dòng) rồi dừng,
+// đủ xa cho một sự kiện mà vẫn không để vòng lặp chạy vô hạn nếu API đổi hành vi.
+const CHECKIN_FETCH_LIMIT = 200
+const CHECKIN_MAX_PAGES = 20
+
 function CheckinLogPanel({ eventId }) {
   const [rows, setRows] = useState([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState(() => new Set())
+  const [page, setPage] = useState(1)
+  const [truncated, setTruncated] = useState(false)
 
   const load = useCallback(async () => {
     if (!eventId) return
     setLoading(true)
     setError('')
     try {
-      const data = await apiRequest(`/event-checkins?event_id=${encodeURIComponent(eventId)}&limit=200`)
-      setRows(Array.isArray(data?.items) ? data.items : [])
+      const all = []
+      let hitCap = false
+      for (let p = 1; p <= CHECKIN_MAX_PAGES; p += 1) {
+        const data = await apiRequest(
+          `/event-checkins?event_id=${encodeURIComponent(eventId)}`
+          + `&limit=${CHECKIN_FETCH_LIMIT}&page=${p}`,
+        )
+        const batch = Array.isArray(data?.items) ? data.items : []
+        all.push(...batch)
+        // A short page means the server has nothing left to give.
+        if (batch.length < CHECKIN_FETCH_LIMIT) break
+        if (p === CHECKIN_MAX_PAGES) hitCap = true
+      }
+      setRows(all)
+      setTruncated(hitCap)
     } catch (err) {
       setError(err?.message || 'Không tải được danh sách điểm danh.')
     } finally {
@@ -348,6 +371,18 @@ function CheckinLogPanel({ eventId }) {
       ))
     })
   }, [sorted, query])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / CHECKIN_PAGE_SIZE))
+  // Typing a filter, or rows disappearing on refresh, can strand the view past
+  // the last page — clamp instead of showing an empty list.
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
+  useEffect(() => { setPage(1) }, [query])
+
+  const paged = useMemo(() => (
+    filtered.slice((page - 1) * CHECKIN_PAGE_SIZE, page * CHECKIN_PAGE_SIZE)
+  ), [filtered, page])
 
   const toggle = (id) => {
     setExpanded((current) => {
@@ -380,7 +415,7 @@ function CheckinLogPanel({ eventId }) {
       </div>
       {error && <p className="px-4 py-2 text-xs text-clay" role="alert">{error}</p>}
       <div className="max-h-[28rem] divide-y divide-stone/50 overflow-y-auto">
-        {filtered.map(row => {
+        {paged.map(row => {
           const isOpen = expanded.has(row.id)
           const checkedInMembers = (row.members_detail || []).filter(member => member.checked_in)
           const totalMembers = row.members_detail?.length ?? 0
@@ -429,6 +464,27 @@ function CheckinLogPanel({ eventId }) {
           </p>
         )}
       </div>
+      {filtered.length > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-stone px-4 py-2.5">
+          <p className="text-xs text-ink/45">
+            {`${(page - 1) * CHECKIN_PAGE_SIZE + 1}–${Math.min(page * CHECKIN_PAGE_SIZE, filtered.length)}`}
+            {` / ${filtered.length} lượt`}
+            {query.trim() ? ` (lọc từ ${rows.length})` : ''}
+            {truncated ? ' · đã đạt trần tải, có thể còn lượt cũ hơn' : ''}
+          </p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="rounded-lg border border-stone bg-white px-2.5 py-1 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-40">
+              Trước
+            </button>
+            <span className="font-mono text-xs text-ink/45">{page}/{pageCount}</span>
+            <button type="button" onClick={() => setPage(p => Math.min(pageCount, p + 1))} disabled={page >= pageCount}
+              className="rounded-lg border border-stone bg-white px-2.5 py-1 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-40">
+              Sau
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2875,7 +2931,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
   )
 }
 
-function StationSubmissionsView({ stationId, stationName, onBack }) {
+function StationSubmissionsView({ stationId, stationName, stationKind, eventId, onBack }) {
   const [submissions, setSubmissions] = useState([])
   const [stationLabel, setStationLabel] = useState(stationName || '')
   const [loading, setLoading] = useState(true)
@@ -2957,6 +3013,25 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
           onGrade={handleGrade} 
           busy={busyId === selectedSubmission.id} 
         />
+      </div>
+    )
+  }
+
+  // A check-in station never produces submissions — the QR scan writes an
+  // EventCheckIn for the whole event instead. Showing "chưa có đội nào nộp
+  // bài" here reads like lost data, so serve the check-in log instead.
+  if (stationKind === 'checkin') {
+    return (
+      <div className="space-y-4">
+        <div className={`${CARD} px-5 py-4`}>
+          <StationBackLink onClick={onBack} />
+          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Trạm điểm danh</p>
+          <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{stationLabel}</h2>
+          <p className="mt-1 text-sm text-ink/45">
+            Trạm check-in không có bài nộp. Dưới đây là toàn bộ lượt điểm danh của sự kiện.
+          </p>
+        </div>
+        <CheckinLogPanel eventId={eventId} />
       </div>
     )
   }
@@ -3581,6 +3656,8 @@ function StationsPage({
       <StationSubmissionsView
         stationId={submissionsStationId}
         stationName={stations.find(station => station.id === submissionsStationId)?.name}
+        stationKind={stations.find(station => station.id === submissionsStationId)?.kind}
+        eventId={selectedEventId}
         onBack={() => setSubmissionsStationId(null)}
       />
     )
