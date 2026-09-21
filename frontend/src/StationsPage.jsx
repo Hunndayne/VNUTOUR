@@ -2898,8 +2898,8 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
     <div className={`${CARD} px-5 py-5`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-xl font-bold text-ink">{submission.team_name}</p>
-          <p className="font-mono text-sm text-ink/40">{submission.team_code}</p>
+          <p className="truncate text-xl font-bold text-ink">{submission.is_survey ? (submission.participant_name || 'Khảo sát cũ · chưa xác định người trả lời') : submission.team_name}</p>
+          <p className="font-mono text-sm text-ink/40">{submission.is_survey ? [submission.participant_mssv, submission.team_code].filter(Boolean).join(' · ') : submission.team_code}</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge {...statusMeta} />
@@ -2997,7 +2997,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
           </div>
         )}
 
-        <div className="mt-8 flex flex-wrap items-center gap-2">
+        {!submission.is_survey && <div className="mt-8 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => onGrade(submission.id, { is_correct: true })}
@@ -3044,7 +3044,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
               Lưu điểm
             </button>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   )
@@ -3212,11 +3212,11 @@ function StationSubmissionsView({ stationId, stationName, stationKind, eventId, 
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="truncate text-base font-semibold text-ink">{submission.team_name}</p>
+                        <p className="truncate text-base font-semibold text-ink">{submission.is_survey ? (submission.participant_name || 'Khảo sát cũ · chưa xác định người trả lời') : submission.team_name}</p>
                         <Badge {...statusMeta} />
                       </div>
                       <p className="mt-1 text-sm text-ink/50">
-                        {submission.team_code} · {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
+                        {submission.is_survey && submission.participant_mssv ? `${submission.participant_mssv} · ` : ''}{submission.team_code} · {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
                         {submission.score !== null && submission.score !== undefined ? ` · Điểm: ${submission.score}` : ''}
                       </p>
                     </div>
@@ -3230,7 +3230,7 @@ function StationSubmissionsView({ stationId, stationName, stationKind, eventId, 
           </div>
         ) : (
           <div className={`${CARD} border-dashed px-4 py-10 text-center text-sm text-ink/40`}>
-            Trạm này chưa có đội nào nộp bài.
+            Trạm này chưa có bài nộp.
           </div>
         )}
       </div>

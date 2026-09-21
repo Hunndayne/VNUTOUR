@@ -100,6 +100,7 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
     submissions = StationSubmission.objects.filter(
         station_id=station_id,
         station_session__isnull=True,
+        participant__isnull=True,
     ).select_related("team").order_by("-created_at")[:limit]
 
     out = []
@@ -322,6 +323,7 @@ def get_event_replay_states(
             team_id__in=team_ids,
             station_id__in=station_ids,
             station_session__isnull=True,
+            participant__isnull=True,
             status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
         ).only("id", "team_id", "station_id", "score", "is_correct", "created_at", "status")
         .order_by("team_id", "station_id", "created_at", "id")
@@ -472,6 +474,7 @@ def _materialize_legacy_attempt(team: Team, station: Station) -> None:
     """
     submissions = list(StationSubmission.objects.filter(
         team=team, station=station, station_session__isnull=True,
+        participant__isnull=True,
         status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
     ).order_by("created_at", "id"))
     if not submissions:
@@ -822,6 +825,8 @@ def set_submission_score(
     lần chơi mới nhất. Bài nộp tự do (trạm free-play chưa từng có phiên nào)
     thì khoá entry theo submission như trước, vì không có phiên nào để tổng hợp.
     """
+    if submission.station.sub_event.type == SubEvent.TYPE_SURVEY:
+        return "survey_not_graded"
     _lock_attempt_scope(submission.team_id, submission.station_id)
     if results_are_locked():
         return "results_locked"

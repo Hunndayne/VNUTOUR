@@ -581,7 +581,9 @@ function FormSubmissionPanel({
   const teamSyncEnabled = !isSurvey && Boolean(stationId) && !form?.requires_start
 
   const [answers, setAnswers, answersDraft] = useDraftState(
-    stationId ? `form-answers:${stationId}:${form?.attempt_id ?? 'unstarted'}` : '',
+    stationId ? (isSurvey
+      ? `survey-answers:${stationId}:${form.participant_id}`
+      : `form-answers:${stationId}:${form?.attempt_id ?? 'unstarted'}`) : '',
     {},
   )
   // Attachments are live File objects — never persisted, never restorable.
@@ -982,7 +984,7 @@ function FormSubmissionPanel({
               ) : null}
               {closure?.max_submissions ? (
                 <span className="font-mono text-xs text-ink/50">
-                  {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} đội đã nộp
+                  {Math.min(closure.submitted_count || 0, closure.max_submissions)}/{closure.max_submissions} {isSurvey ? 'lượt nộp của bạn' : 'đội đã nộp'}
                 </span>
               ) : null}
             </div>
@@ -1270,7 +1272,7 @@ export default function FormResponses() {
             <div className={`${CARD} px-6 py-6 sm:px-8 sm:py-8`}>
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-stone bg-paper/70 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.24em] text-ink/55">
-                  Bài tập trạm
+                  {selectedForm.is_survey ? 'Khảo sát cá nhân' : 'Bài tập trạm'}
                 </div>
                 <h1 className="mt-2 text-2xl font-bold text-ink sm:text-3xl">
                   {selectedForm.station_name}
@@ -1298,7 +1300,9 @@ export default function FormResponses() {
                 <button type="button" onClick={() => loadForms()} className="mt-3 block w-full px-4 py-3 text-sm font-semibold text-trail">Kiểm tra lại điểm danh</button>
               </section>
             ) : <FormSubmissionPanel
-              key={`${selectedId}:${selectedForm.attempt_id ?? 'unstarted'}`}
+              key={`${selectedId}:${selectedForm.is_survey
+                ? `${selectedForm.participant_id}:${selectedForm.closure?.started_at ?? 'unstarted'}`
+                : selectedForm.attempt_id ?? 'unstarted'}`}
               form={selectedForm}
               serverTimeOffset={serverTimeOffset}
               onReload={loadForms}
