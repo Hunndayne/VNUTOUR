@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { apiRequest, logoutAndRedirect, formatDateTime } from './api.js'
-import { Icon } from './ui.jsx'
+import { Icon, ICON_PATHS } from './ui.jsx'
 import { useSearchParam, navigate, buildUrl } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
 import { explainReplayLock, attemptLabel } from './stationReplay.js'
@@ -319,6 +319,45 @@ function FormFieldCard({ label, required, helper, children, isAntiCheat = true }
   )
 }
 
+// Star scale for a `rating` item. The answer is an integer 1..scale; clicking
+// the currently chosen star again clears it.
+function RatingInput({ item, value, onChange, disabled }) {
+  const scale = Math.min(10, Math.max(2, Math.trunc(Number(item.scale)) || 5))
+  const [hover, setHover] = useState(0)
+  const current = Number.isInteger(value) ? value : 0
+  const shown = hover || current
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-1" role="radiogroup" onMouseLeave={() => setHover(0)}>
+        {Array.from({ length: scale }, (_, i) => i + 1).map((star) => (
+          <button
+            key={star}
+            type="button"
+            role="radio"
+            aria-checked={current === star}
+            aria-label={`${star} / ${scale} sao`}
+            disabled={disabled}
+            onMouseEnter={() => setHover(star)}
+            onClick={() => onChange(current === star ? undefined : star)}
+            className="rounded-lg p-1 transition hover:scale-110 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <svg viewBox="0 0 24 24" className={`h-8 w-8 ${star <= shown ? 'fill-gold text-gold' : 'fill-none text-ink/25'}`} stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinejoin="round" d={ICON_PATHS.star} />
+            </svg>
+          </button>
+        ))}
+        <span className="ml-2 font-mono text-sm text-ink/50">{current ? `${current}/${scale}` : ''}</span>
+      </div>
+      {item.lowLabel || item.highLabel ? (
+        <div className="mt-1 flex justify-between gap-4 text-xs text-ink/45" style={{ maxWidth: `${scale * 2.5 + 0.5}rem` }}>
+          <span>1 = {item.lowLabel || '—'}</span>
+          <span>{scale} = {item.highLabel || '—'}</span>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function FieldInput({ field, value, onChange, disabled }) {
   const kind = inferFieldKind(field)
   // `select-text` overrides the form-wide `select-none` guard (see
@@ -527,6 +566,7 @@ function FormSubmissionPanel({
   const submissionItems = Array.isArray(submissionConfig.items) ? submissionConfig.items : []
   const activeFormFields = submissionItems.filter((item) => item.type === 'text')
   const activeQuizItems = submissionItems.filter((item) => item.type === 'quiz')
+  const activeRatingItems = submissionItems.filter((item) => item.type === 'rating')
   const attachmentConfig = submissionItems.find((item) => item.type === 'attachment') || null
   const closure = form?.closure || null
   const [timeStatus, setTimeStatus] = useState('open')
@@ -757,7 +797,10 @@ function FormSubmissionPanel({
       if (item.required === false) return false
       return answers[`quiz:${item.id}`] === undefined
     })
-    if (!skipValidation && (missingRequiredField || missingQuizAnswer)) {
+    const missingRating = activeRatingItems.some((item) => (
+      item.required !== false && !Number.isInteger(answers[`rating:${item.id}`])
+    ))
+    if (!skipValidation && (missingRequiredField || missingQuizAnswer || missingRating)) {
       setSubmitState('error')
       setSubmitMessage('Vui lòng hoàn tất các mục bắt buộc trước khi gửi.')
       return
@@ -802,6 +845,12 @@ function FormSubmissionPanel({
         id: item.id,
         question: item.question || '',
         selectedOption: answers[`quiz:${item.id}`],
+      })),
+      rating: activeRatingItems.map((item) => ({
+        id: item.id,
+        question: item.question || '',
+        scale: item.scale,
+        value: Number.isInteger(answers[`rating:${item.id}`]) ? answers[`rating:${item.id}`] : null,
       })),
     }
 
@@ -1027,6 +1076,25 @@ function FormSubmissionPanel({
                 isAntiCheat={isAntiCheat}
                 disabled={locked || formClosed}
               />
+            )
+          }
+
+          if (item.type === 'rating') {
+            return (
+              <FormFieldCard
+                key={item.id}
+                index={index + 1}
+                label={item.question || `Câu ${index + 1}`}
+                required={item.required}
+                isAntiCheat={isAntiCheat}
+              >
+                <RatingInput
+                  item={item}
+                  value={answers[`rating:${item.id}`]}
+                  onChange={(val) => setAnswer(`rating:${item.id}`, val)}
+                  disabled={locked || formClosed}
+                />
+              </FormFieldCard>
             )
           }
 

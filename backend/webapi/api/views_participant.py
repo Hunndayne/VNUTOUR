@@ -1908,7 +1908,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
 
     config = station.submission_config or {}
     if not isinstance(response_payload, dict) or any(
-        not isinstance(response_payload.get(key, []), list) for key in ("quiz", "form")
+        not isinstance(response_payload.get(key, []), list) for key in ("quiz", "form", "rating")
     ):
         return JsonResponse({"error": "invalid_payload"}, status=400)
     # Hard gate: a station that needs a coop scan only accepts a submission while
@@ -1957,6 +1957,12 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         effective_quiz_items=effective_items
     )
     if isinstance(response_payload, dict):
+        from api.services.submission_config_service import clean_rating_answers
+        ratings = clean_rating_answers(config, response_payload)
+        if ratings:
+            response_payload["rating"] = ratings
+        else:
+            response_payload.pop("rating", None)
         # quiz_result is server-computed only; never trust a client-sent one
         response_payload.pop("quiz_result", None)
         if quiz_result is not None:
