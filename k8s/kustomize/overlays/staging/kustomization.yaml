@@ -47,6 +47,15 @@ patches:
     - op: add
       path: /data/PHOTO_DRIVE_SERVICE_EMAIL
       value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    - op: add
+      path: /data/PHOTO_SEARCH_RATE_LIMIT
+      value: "100000"
+    - op: add
+      path: /data/PHOTO_SEARCH_PAGE_RATE_LIMIT
+      value: "100000"
     - op: add
       path: /data/GOOGLE_CLIENT_ID
       value: 447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com
