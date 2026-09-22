@@ -11,6 +11,7 @@ WORKDIR /app
 
 # OpenCV's headless wheel still needs the system GLib runtime. Keep the image
 # CPU-only; the worker and API use the same verified model artifacts.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libglib2.0-0t64 libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
@@ -20,6 +21,7 @@ RUN apt-get update \
     && chown app:app /tmp/prometheus-multiproc
 
 COPY requirements.txt requirements-photo-ai.txt ./
+# hadolint ignore=DL3013
 RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=83.0.0" wheel \
     && python -m pip install --no-cache-dir -r requirements-photo-ai.txt \
     && python -m pip check \
