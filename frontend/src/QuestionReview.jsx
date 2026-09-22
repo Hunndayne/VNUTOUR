@@ -109,10 +109,10 @@ function ConfirmMarkDialog({ pending, onConfirm, onCancel }) {
  * confirmation; the parent turns the marks into a score. Without them the
  * verdict is read-only.
  */
-export function AnswerReview({ items = [], marks, onMark }) {
+export function AnswerReview({ items = [], marks, onMark, isSurvey = false }) {
   const [pending, setPending] = useState(null)
   if (!items.length) return <p className="py-4 text-sm text-ink/60">Bài nộp này chưa có bản lưu đáp án chi tiết.</p>
-  const markable = Boolean(marks && onMark)
+  const markable = !isSurvey && Boolean(marks && onMark)
   const askMark = (item, index, from, to) => setPending({ item, index, from, to })
   return <div>
     {pending && <ConfirmMarkDialog
@@ -132,7 +132,7 @@ export function AnswerReview({ items = [], marks, onMark }) {
       </p>
       <div className="flex items-start justify-between gap-3">
         <h3 className="whitespace-pre-wrap text-base font-semibold text-ink">{index + 1}. {item.question}</h3>
-        {markable && item.is_correct != null ? (
+        {!isSurvey && (markable && item.is_correct != null ? (
           <FlipMark value={verdict !== false} autoValue={item.is_correct} points={item.points} onChange={mark => askMark(item, index, verdict !== false, mark)} />
         ) : markable ? (
           <MarkToggle value={verdict} points={item.points} onChange={mark => askMark(item, index, verdict, mark)} />
@@ -140,22 +140,22 @@ export function AnswerReview({ items = [], marks, onMark }) {
           <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${verdict === true ? 'bg-trail/10 text-trail' : verdict === false ? 'bg-clay/10 text-clay' : 'bg-paper text-ink/60'}`}>
             {verdict === true ? 'Đúng' : verdict === false ? 'Sai' : 'Chấm thủ công'}
           </span>
-        )}
+        ))}
       </div>
-      <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+      <dl className={`mt-3 grid gap-3 ${isSurvey ? '' : 'sm:grid-cols-2'}`}>
         <div className="rounded-lg border border-stone bg-white p-3">
-          <dt className="text-xs font-medium text-ink/60">Đội chọn / trả lời</dt>
+          <dt className="text-xs font-medium text-ink/60">{isSurvey ? 'Người trả lời' : 'Đội chọn / trả lời'}</dt>
           <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{answerText(item.selected_answer) || 'Chưa trả lời'}</dd>
         </div>
-        <div className="rounded-lg bg-trail/5 p-3">
+        {!isSurvey && <div className="rounded-lg bg-trail/5 p-3">
           <dt className="text-xs font-medium text-trail">Đáp án đúng</dt>
           <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{answerText(item.correct_answer) || 'Theo hướng dẫn chấm của trạm'}</dd>
-        </div>
+        </div>}
       </dl>
-      <div className="mt-3 border-l-2 border-trail/30 pl-3">
+      {!isSurvey && <div className="mt-3 border-l-2 border-trail/30 pl-3">
         <p className="text-xs font-semibold text-ink/70">Giải thích</p>
         <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-ink/75">{item.explanation || 'Chưa có giải thích cho câu này.'}</p>
-      </div>
+      </div>}
     </article>
     })}
   </div>

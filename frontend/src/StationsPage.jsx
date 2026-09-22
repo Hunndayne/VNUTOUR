@@ -2924,7 +2924,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
       ) : null}
 
       <div className="mt-6 border-t border-stone/40 pt-4">
-        {hasReview && <AnswerReview items={reviewItems} marks={marks} onMark={markQuestion} />}
+        {hasReview && <AnswerReview items={reviewItems} marks={marks} onMark={markQuestion} isSurvey={submission.is_survey} />}
 
         {!hasReview && formAnswers.length > 0 && (
           <div className="mt-4 space-y-2">

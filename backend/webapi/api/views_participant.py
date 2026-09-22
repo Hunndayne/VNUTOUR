@@ -2011,10 +2011,11 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
         response_payload.pop("quiz_result", None)
         if quiz_result is not None:
             response_payload["quiz_result"] = quiz_result
-        from api.services.submission_review_service import build_review, review_deadline
-        response_payload["answer_review"] = [] if is_survey else build_review(
-            config, response_payload, variant_item_ids(station, team), effective_items,
+        from api.services.submission_review_service import build_review, review_deadline, survey_review_items
+        review = build_review(
+            config, response_payload, [] if is_survey else variant_item_ids(station, team), effective_items,
         )
+        response_payload["answer_review"] = survey_review_items(review) if is_survey else review
         response_payload["review_available_at"] = None if is_survey else review_deadline(station, team, session)
 
     submission.station_session = session
