@@ -70,6 +70,6 @@ images:
 - name: ghcr.io/hunndayne/vnutour-backend
   newTag: c24607b
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: e993e40
+  newTag: c24607b
 - name: ghcr.io/hunndayne/vnutour-photo-ai
   newTag: c24607b
