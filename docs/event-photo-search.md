@@ -52,8 +52,10 @@ Thứ tự bắt buộc:
 
 1. Push commit chứa `docker/postgres-pgvector` + `.github/workflows/ci-db-image.yml` lên `staging` trước, chờ workflow **CI for DB image** push xong image (có bước smoke test `CREATE EXTENSION vector`).
 2. Tạo `photo-ai-secret` trong `vnutour-staging` (token ngẫu nhiên + key Drive). Thiếu secret thì backend vẫn chạy (token là optional, search trả `search_unavailable`) nhưng pod `photo-ai`/`photo-ai-worker` không khởi động.
-3. Push commit overlay. Postgres restart một lần sang image mới; migration job tạo extension `vector` (user DB staging là superuser). CI backend build image `photo-ai` và tự bump tag trong overlay staging.
-4. Kiểm tra: `kubectl -n vnutour-staging get pods`, `psql -c "\dx"` có `vector`, `photo-ai` Ready. Tạo album nhỏ ở `/admin/photos`, chờ worker xử lý, publish, rồi thử `/photos`.
+3. **Đổi image DB và đợi Postgres Ready trước khi bật gallery.** Migration là PreSync hook, chạy trước mọi resource khác trong cùng lần sync; nếu đổi image DB và bật `photo-ai` trong cùng một commit, migration gặp Postgres cũ và lỗi `extension "vector" is not available`. Lần đầu trên staging (22/09/2026) phải `kubectl set image statefulset/postgres ...` bằng tay rồi để ArgoCD retry. Prod: đưa image DB lên ở một lần sync riêng.
+4. Push commit overlay. Migration job tạo extension `vector` (user DB staging là superuser). CI backend build image `photo-ai` và tự bump tag trong overlay staging.
+5. Worker cần `R2_*` trong `backend-secret`; thiếu thì log `Photo storage cleanup deferred` và ảnh lỗi `storage_unavailable`.
+6. Kiểm tra: `kubectl -n vnutour-staging get pods`, `psql -c "\dx"` có `vector`, `photo-ai` Ready. Tạo album nhỏ ở `/admin/photos`, chờ worker xử lý, publish, rồi thử `/photos`.
 
 Rollback: revert commit overlay. Extension `vector` và bảng gallery vẫn còn trong DB nhưng không ảnh hưởng app khi gallery tắt.
 
