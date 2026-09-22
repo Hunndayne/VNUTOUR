@@ -68,8 +68,8 @@ patches:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: f57fe2c
+  newTag: b38cd9f
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: e993e40
 - name: ghcr.io/hunndayne/vnutour-photo-ai
-  newTag: f57fe2c
+  newTag: b38cd9f
