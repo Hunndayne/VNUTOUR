@@ -123,3 +123,21 @@ def test_unsupported_formats_are_still_rejected():
     with pytest.raises(GalleryError) as error:
         read_image(stream)
     assert error.value.code == "invalid_image"
+
+
+def test_duplicate_boxes_from_overlapping_tiles_are_merged():
+    """A face cut by a tile edge yields a second, offset box for one person."""
+    import numpy as np
+    from photo_gallery.engine import _drop_duplicates
+
+    def box(x, y, w, h, score):
+        face = np.zeros(15, dtype=np.float32)
+        face[:4] = (x, y, w, h)
+        face[-1] = score
+        return face
+
+    strong = box(100, 100, 200, 200, 0.95)
+    partial = box(180, 140, 120, 120, 0.7)   # centre inside `strong`
+    neighbour = box(340, 100, 200, 200, 0.9)  # a different person, kept
+    kept = _drop_duplicates([partial, strong, neighbour])
+    assert [round(float(face[-1]), 2) for face in kept] == [0.95, 0.9]

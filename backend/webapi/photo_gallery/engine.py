@@ -11,6 +11,16 @@ from .errors import GalleryError
 
 MAX_FACES = 256
 MAX_CANDIDATES = 2048
+# A reference photo must show one unmistakable face, so it keeps the strict
+# score. Album photos are indexed at the tunable, more sensitive threshold:
+# at 0.9 YuNet missed people who look down or stand at an angle — exactly the
+# candid shots an event album is full of.
+REFERENCE_SCORE = 0.9
+# Two tiles (or a tile and the whole-frame pass) can return boxes for the same
+# face that overlap too little for IoU-based NMS: a face cut by a tile edge
+# yields an offset partial box. Treat a box as a duplicate when its centre sits
+# in a stronger box, or when it mostly overlaps one.
+CONTAINMENT = 0.5
 
 
 def _sha256(path):
@@ -34,8 +44,9 @@ class FaceEngine:
                 if not path.is_file() or _sha256(path) != expected:
                     raise GalleryError("model_unavailable")
             cv2.setNumThreads(max(1, min(32, int(settings.PHOTO_AI_THREADS))))
+            self.album_score = min(0.99, max(0.05, float(settings.PHOTO_DETECT_THRESHOLD)))
             self.detector = cv2.FaceDetectorYN.create(
-                str(root / DETECTOR_NAME), "", (320, 320), 0.9, 0.3, MAX_CANDIDATES,
+                str(root / DETECTOR_NAME), "", (320, 320), REFERENCE_SCORE, 0.3, MAX_CANDIDATES,
             )
             self.recognizer = cv2.FaceRecognizerSF.create(str(root / RECOGNIZER_NAME), "")
             # Fail readiness if the recognizer artifact does not match the DB
@@ -69,6 +80,8 @@ class FaceEngine:
 
     def _extract(self, image, *, reference, heartbeat):
         cv, np = self.cv, self.np
+        score = REFERENCE_SCORE if reference else self.album_score
+        self.detector.setScoreThreshold(score)
         resized = image.copy()
         edge = 1600 if reference else 4096
         resized.thumbnail((edge, edge))
@@ -108,8 +121,8 @@ class FaceEngine:
             if reference:
                 raise GalleryError("no_face")
             return []
-        keep = cv.dnn.NMSBoxes([f[:4].tolist() for f in candidates], [float(f[-1]) for f in candidates], 0.9, 0.3)
-        selected = [candidates[int(i)] for i in np.asarray(keep).flatten()]
+        keep = cv.dnn.NMSBoxes([f[:4].tolist() for f in candidates], [float(f[-1]) for f in candidates], score, 0.3)
+        selected = _drop_duplicates([candidates[int(i)] for i in np.asarray(keep).flatten()])
         if reference and len(selected) != 1:
             raise GalleryError("multiple_faces")
         if len(selected) > MAX_FACES:
@@ -131,6 +144,29 @@ class FaceEngine:
             result.append({"bbox": [left / width, top / height, (right - left) / width, (bottom - top) / height],
                            "embedding": vector.tolist()})
         return result
+
+
+def _drop_duplicates(faces):
+    """Keep the strongest box of each cluster of heavily overlapping boxes."""
+    ordered = sorted(faces, key=lambda face: float(face[-1]), reverse=True)
+    kept = []
+    for face in ordered:
+        x, y, w, h = (float(v) for v in face[:4])
+        area = max(1.0, w * h)
+        duplicate = False
+        for other in kept:
+            ox, oy, ow, oh = (float(v) for v in other[:4])
+            overlap_w = min(x + w, ox + ow) - max(x, ox)
+            overlap_h = min(y + h, oy + oh) - max(y, oy)
+            if overlap_w <= 0 or overlap_h <= 0:
+                continue
+            inside = ox <= x + w / 2 <= ox + ow and oy <= y + h / 2 <= oy + oh
+            if inside or overlap_w * overlap_h >= CONTAINMENT * min(area, max(1.0, ow * oh)):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(face)
+    return kept
 
 
 @lru_cache(maxsize=1)

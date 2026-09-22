@@ -39,7 +39,8 @@ Component `k8s/kustomize/components/photo-ai` là opt-in; chưa được thêm v
 5. Chỉ bật `PHOTO_GALLERY_ENABLED=1` khi image backend đang chạy ĐÃ có router (`photo_gallery/routers.py`). Trên staging (22/09/2026) component được bật trong cùng lần sync mà backend vẫn là image cũ, nên PreSync job của bản cũ tạo bảng gallery ngay trong database sự kiện; phải drop 5 bảng, xóa dòng `django_migrations` và `DROP EXTENSION vector` để dọn. Môi trường mới: deploy image có router trước, lần sync sau mới thêm component.
 6. Migration của gallery KHÔNG chạy trong PreSync job: worker chạy `migrate photo_gallery --database photos` lúc khởi động, nên database sự kiện và hook PreSync giữ nguyên như trước. Worker sẽ restart cho tới khi `photos-db` sẵn sàng.
 6. Sau rollout, kiểm tra API readiness, trạng thái worker và tạo một album nhỏ bằng API admin. Publish album sau khi kiểm tra preview và link Drive.
-7. Đánh giá tập ảnh tham chiếu thật; patch `backend-config` với `PHOTO_SEARCH_ENABLED=1` và ngưỡng đã hiệu chỉnh trong `PHOTO_SEARCH_THRESHOLD`, rồi restart backend để nhận env mới. Mặc định search tắt và ngưỡng `0.50` chỉ là giá trị khởi đầu.
+7. `PHOTO_DETECT_THRESHOLD` (mặc định 0.60) là ngưỡng phát hiện khuôn mặt cho ảnh album; ảnh tham chiếu luôn dùng 0.9 để chỉ nhận một khuôn mặt rõ. Đo trên ảnh sự kiện thật (22/09/2026): ở 0.9 một ảnh 5 người chỉ ra 1 mặt, ở 0.6 ra đủ 5. Hạ thêm nữa thì bắt cả khung không phải mặt. Đổi ngưỡng phải bump `MODEL_VERSION` rồi đồng bộ lại album để lập chỉ mục lại.
+8. Đánh giá tập ảnh tham chiếu thật; patch `backend-config` với `PHOTO_SEARCH_ENABLED=1` và ngưỡng đã hiệu chỉnh trong `PHOTO_SEARCH_THRESHOLD`, rồi restart backend để nhận env mới. Mặc định search tắt và ngưỡng `0.50` chỉ là giá trị khởi đầu.
 
 `photos-db` và API AI dùng ClusterIP nội bộ, không có Ingress. `photos-db` ghim vào node có nhãn `vnutour/storage=true` vì dùng local-path.
 

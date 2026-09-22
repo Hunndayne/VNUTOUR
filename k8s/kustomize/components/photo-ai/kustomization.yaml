@@ -66,6 +66,9 @@ patches:
         path: /data/PHOTO_SEARCH_ENABLED
         value: "0"
       - op: add
+        path: /data/PHOTO_DETECT_THRESHOLD
+        value: "0.60"
+      - op: add
         path: /data/PHOTO_SEARCH_THRESHOLD
         value: "0.50"
       - op: add

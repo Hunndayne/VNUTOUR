@@ -49,6 +49,9 @@ PHOTO_AI_URL = os.getenv("PHOTO_AI_URL", "http://photo-ai:8000").rstrip("/")
 PHOTO_AI_TOKEN = os.getenv("PHOTO_AI_TOKEN", "")
 PHOTO_AI_MODEL_DIR = os.getenv("PHOTO_AI_MODEL_DIR", "/models")
 PHOTO_AI_THREADS = int(os.getenv("PHOTO_AI_THREADS", "2"))
+# YuNet score for album photos. 0.9 (the OpenCV demo default) only keeps
+# faces looking straight at the camera; candid event photos need 0.6.
+PHOTO_DETECT_THRESHOLD = float(os.getenv("PHOTO_DETECT_THRESHOLD", "0.60"))
 PHOTO_SEARCH_THRESHOLD = float(os.getenv("PHOTO_SEARCH_THRESHOLD", "0.50"))
 PHOTO_SEARCH_ENABLED = os.getenv("PHOTO_SEARCH_ENABLED", "0") == "1"
 PHOTO_SEARCH_TIMEOUT_SECONDS = int(os.getenv("PHOTO_SEARCH_TIMEOUT_SECONDS", "30"))
