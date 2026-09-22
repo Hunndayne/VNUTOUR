@@ -11,12 +11,12 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from .drive import Drive, ID, MIMES, revision, safe_drive_link
-from .constants import MODEL_VERSION
+from .constants import DB_ALIAS, MODEL_VERSION
 from .errors import GalleryError, LeaseLost, WorkerStopping
 from .imaging import read_image, preview
 from .models import Album, Photo, Face, MediaObject, SearchResult
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def locked(query):
-    return query.select_for_update(skip_locked=True) if connection.features.has_select_for_update_skip_locked else query.select_for_update()
+    return query.select_for_update(skip_locked=True) if connections[DB_ALIAS].features.has_select_for_update_skip_locked else query.select_for_update()
 
 
 def invalidate(photo):
@@ -43,7 +43,7 @@ def invalidate(photo):
     photo.lease_until = None
 
 
-@transaction.atomic
+@transaction.atomic(using=DB_ALIAS)
 def queue_import(album_id):
     album = Album.objects.select_for_update().get(pk=album_id)
     if album.import_status not in {"queued", "scanning"}:
@@ -55,7 +55,7 @@ def queue_import(album_id):
     return album
 
 
-@transaction.atomic
+@transaction.atomic(using=DB_ALIAS)
 def retry_photos(*, album_id=None, photo_id=None):
     if album_id is None and photo_id is None:
         return 0
@@ -73,7 +73,7 @@ def retry_photos(*, album_id=None, photo_id=None):
     return count
 
 
-@transaction.atomic
+@transaction.atomic(using=DB_ALIAS)
 def remove_photo(photo_id):
     photo = Photo.objects.select_for_update().get(pk=photo_id)
     invalidate(photo)
@@ -81,7 +81,7 @@ def remove_photo(photo_id):
     photo.save()
 
 
-@transaction.atomic
+@transaction.atomic(using=DB_ALIAS)
 def claim_album():
     now = timezone.now()
     query = Album.objects.filter(import_status__in=["queued", "scanning"])
@@ -108,7 +108,7 @@ def scan_page(album, drive, *, heartbeat=None):
     page = drive.list_page(album.folder_id, album.resource_key, album.page_token)
     if heartbeat:
         heartbeat(force=True)
-    with transaction.atomic():
+    with transaction.atomic(using=DB_ALIAS):
         current = Album.objects.select_for_update().get(pk=album.pk)
         if (
             current.lease_token != album.lease_token
@@ -157,7 +157,7 @@ def scan_page(album, drive, *, heartbeat=None):
         current.save()
 
 
-@transaction.atomic
+@transaction.atomic(using=DB_ALIAS)
 def claim_photo():
     now = timezone.now()
     query = Photo.objects.filter(
@@ -239,7 +239,7 @@ def process_photo(photo, drive, storage, engine=None, *, heartbeat=None):
         keys[variant] = key
         if heartbeat:
             heartbeat(force=True)
-    with transaction.atomic():
+    with transaction.atomic(using=DB_ALIAS):
         current = Photo.objects.select_for_update().get(pk=photo.pk)
         if (
             current.status != "processing"
@@ -265,7 +265,7 @@ def process_photo(photo, drive, storage, engine=None, *, heartbeat=None):
 
 
 def fail_job(job, error):
-    with transaction.atomic():
+    with transaction.atomic(using=DB_ALIAS):
         try:
             current = type(job).objects.select_for_update().get(pk=job.pk)
         except type(job).DoesNotExist:
@@ -283,7 +283,7 @@ def fail_job(job, error):
         current.save()
 
 
-@transaction.atomic
+@transaction.atomic(using=DB_ALIAS)
 def release_job(job):
     """Release an in-flight claim without consuming an attempt on shutdown."""
     try:

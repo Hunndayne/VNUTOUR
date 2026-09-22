@@ -1,3 +1,6 @@
+# Every gallery model lives in its own PostgreSQL instance (pgvector), never in
+# the event database. photo_gallery.routers sends all ORM traffic here.
+DB_ALIAS = "photos"
 MODEL_VERSION = "yunet-2023mar-sface-2021dec-fp32-v1"
 DIMENSIONS = 128
 DETECTOR_NAME = "face_detection_yunet_2023mar.onnx"

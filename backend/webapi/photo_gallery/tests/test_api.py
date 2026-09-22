@@ -20,7 +20,7 @@ from photo_gallery.constants import MODEL_VERSION
 from photo_gallery.errors import GalleryError
 from photo_gallery.models import Album, Photo, Face, SearchResult
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(databases=["default", "photos"])
 
 
 @pytest.fixture(autouse=True)

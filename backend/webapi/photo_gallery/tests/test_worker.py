@@ -17,7 +17,7 @@ from photo_gallery.errors import GalleryError, LeaseLost
 from photo_gallery import jobs
 from photo_gallery.models import Album, Photo, Face, MediaObject
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(databases=["default", "photos"])
 
 
 def picture():

@@ -29,10 +29,16 @@ spec:
         - name: photo-ai-worker
           image: ghcr.io/hunndayne/vnutour-photo-ai
           imagePullPolicy: IfNotPresent
+          # The gallery schema belongs to this worker: it migrates its own
+          # database on start, then processes jobs. A restart loop here is the
+          # retry while photos-db is still coming up; the event database
+          # migration (PreSync hook) never touches the gallery.
           command:
-            - python
-            - webapi/manage.py
-            - process_event_photos
+            - sh
+            - -c
+            - >-
+              python webapi/manage.py migrate photo_gallery --database photos --noinput &&
+              exec python webapi/manage.py process_event_photos
           envFrom:
             - configMapRef:
                 name: backend-config
@@ -47,6 +53,11 @@ spec:
               value: "1"
             - name: PHOTO_DRIVE_CREDENTIALS
               value: /var/run/photo-ai/credentials.json
+            - name: PHOTO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: photo-ai-secret
+                  key: PHOTO_DB_PASSWORD
           resources:
             requests:
               cpu: "1"

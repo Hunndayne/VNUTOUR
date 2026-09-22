@@ -6,22 +6,22 @@ namespace: vnutour-staging
 resources:
 - ../../base
 
-  # Staging keeps a plain single-node Postgres (moved out of base). Prod and the
-  # Linode standby do NOT include this — their DB is external Patroni HA.
-  # Event photo gallery + face search. Needs the pgvector Postgres image below
-  # and the out-of-band photo-ai-secret (see docs/event-photo-search.md).
+# db-simple: staging keeps a plain single-node Postgres for the event data (moved
+#   out of base). Prod and the Linode standby do NOT include it — their DB is
+#   external Patroni HA.
+# photo-ai: event photo gallery + face search. Brings its own pgvector database
+#   (photos-db); it never touches the event database. Needs the out-of-band
+#   photo-ai-secret (see docs/event-photo-search.md).
 components:
 - ../../components/db-simple
 - ../../components/photo-ai
 
-# Staging-only sizing and switches for the photo tier. The component defaults
-# (API 1.5Gi + worker 2Gi limits) are sized for prod and do not fit the small
-# staging node; search is on here so it can be tested end to end.
+# Staging-only sizing and switches for the photo tier: the component defaults are
+# sized for prod and do not fit the small staging node, and search is on here so
+# it can be tested end to end.
+#
 # Selector targets (not name+namespace SMP ids): base objects carry their own
 # namespace, which a plain strategic-merge patch would fail to match.
-    # client_email of the key in photo-ai-secret (not secret itself).
-    # client_email of the key in photo-ai-secret (not secret itself).
-    # client_email of the key in photo-ai-secret (not secret itself).
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -35,7 +35,7 @@ patches:
     - op: replace
       path: /data/PHOTO_SEARCH_ENABLED
       value: "1"
-    # client_email of the key in photo-ai-secret (not secret itself).
+    # client_email of the key in photo-ai-secret (not a secret itself).
     - op: add
       path: /data/PHOTO_DRIVE_SERVICE_EMAIL
       value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
@@ -55,8 +55,6 @@ patches:
 
 # Image tags are updated automatically by the CI pipeline after a successful
 # image push to GHCR. Do NOT edit newTag manually.
-# pgvector build of the same postgres:16-alpine base (docker/postgres-pgvector).
-# Pinned by hand, never bumped by CI: the DB image must not move on its own.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
   newTag: 9f2fded
@@ -64,6 +62,3 @@ images:
   newTag: 9f2fded
 - name: ghcr.io/hunndayne/vnutour-photo-ai
   newTag: 9f2fded
-- name: postgres
-  newName: ghcr.io/hunndayne/vnutour-postgres
-  newTag: 16-alpine-pgvector-0.8.0

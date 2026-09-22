@@ -6,10 +6,10 @@ from collections import defaultdict
 
 import requests
 from django.conf import settings
-from django.db import connection
+from django.db import connections
 from django.db.models import Min
 
-from .constants import DIMENSIONS, MODEL_VERSION
+from .constants import DB_ALIAS, DIMENSIONS, MODEL_VERSION
 from .errors import GalleryError
 from .models import Face
 
@@ -91,7 +91,7 @@ def matching_photo_ids(vector: list[float], *, album_id: int | None) -> tuple[li
     belonging to a photo before the 501-row cap determines truncation.
     """
     maximum = 500
-    if connection.vendor != "postgresql":
+    if connections[DB_ALIAS].vendor != "postgresql":
         return _sqlite_results(vector, album_id=album_id, maximum=maximum)
     from pgvector.django import CosineDistance
 

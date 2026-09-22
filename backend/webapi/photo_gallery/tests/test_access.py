@@ -15,7 +15,7 @@ from api.models import Account, Participant, Team, TeamMembership
 from api.services.auth_service import generate_session
 from photo_gallery.models import Album, SearchResult
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(databases=["default", "photos"])
 
 
 def make_account(role="participant", approval=None, linked=True):

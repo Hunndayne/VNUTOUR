@@ -24,6 +24,7 @@ export const PHOTO_ERROR_MESSAGES = {
   search_expired: 'Phiên tìm kiếm đã hết hạn sau 10 phút. Vui lòng chọn lại ảnh để tìm kiếm mới.',
   not_found: 'Album hoặc ảnh không tồn tại hoặc đã bị gỡ khỏi hệ thống.',
   gallery_disabled: 'Tính năng thư viện ảnh sự kiện tạm thời chưa được kích hoạt.',
+  gallery_unavailable: 'Thư viện ảnh đang tạm gián đoạn. Vui lòng thử lại sau ít phút.',
   missing_token: 'Bạn cần đăng nhập để thực hiện tác vụ này.',
   invalid_token: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
   forbidden: 'Bạn không có quyền thực hiện thao tác này.',

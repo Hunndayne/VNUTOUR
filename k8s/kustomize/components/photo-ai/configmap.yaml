@@ -11,3 +11,9 @@ data:
   # Empty reuses R2_BUCKET from backend-secret; photo keys use event-photos/.
   # Set only when overriding the shared bucket for both backend and worker.
   PHOTO_R2_BUCKET: ""
+  # Dedicated gallery database (components/photo-ai/photos-db.yaml). The event
+  # database is never touched by the gallery.
+  PHOTO_DB_HOST: "photos-db"
+  PHOTO_DB_PORT: "5432"
+  PHOTO_DB_NAME: "vnutour_photos"
+  PHOTO_DB_USER: "vnutour_photos"

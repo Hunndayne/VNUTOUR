@@ -39,8 +39,9 @@ INSTALLED_APPS = [
     "api",
 ]
 
-# Optional gallery: enable only after installing pgvector on the DB server.
-# Keeping its app/migrations gated avoids changing an existing deployment's DB.
+# Optional gallery. Its tables live in a dedicated pgvector PostgreSQL
+# ("photos" database, configured below), never in the event database, so
+# enabling it never requires changing the main DB server or its image.
 PHOTO_GALLERY_ENABLED = os.getenv("PHOTO_GALLERY_ENABLED", "0") == "1"
 if PHOTO_GALLERY_ENABLED:
     INSTALLED_APPS.append("photo_gallery")
@@ -118,6 +119,19 @@ DATABASES = {
         "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
+
+if PHOTO_GALLERY_ENABLED:
+    DATABASES["photos"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("PHOTO_DB_NAME", "vnutour_photos"),
+        "USER": os.getenv("PHOTO_DB_USER", "vnutour_photos"),
+        "PASSWORD": os.getenv("PHOTO_DB_PASSWORD", ""),
+        "HOST": os.getenv("PHOTO_DB_HOST", "photos-db"),
+        "PORT": os.getenv("PHOTO_DB_PORT", "5432"),
+        # Fail fast: a gallery outage must not tie up web workers.
+        "OPTIONS": {"connect_timeout": 5},
+    }
+    DATABASE_ROUTERS = ["photo_gallery.routers.PhotoGalleryRouter"]
 
 LANGUAGE_CODE = "vi"
 TIME_ZONE = "Asia/Ho_Chi_Minh"

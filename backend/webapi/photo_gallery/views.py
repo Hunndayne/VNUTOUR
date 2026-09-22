@@ -6,9 +6,13 @@ receives credentials, storage keys, embeddings, or arbitrary fetched URLs.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
+from functools import wraps
+
 from django.conf import settings
+from django.db import DatabaseError
 from django.db.models import Case, IntegerField, When
 from django.http import JsonResponse
 from django.utils import timezone
@@ -27,6 +31,9 @@ from .search import embed_reference, matching_photo_ids
 from .serializers import album_payload, photo_payloads, with_counts
 
 
+logger = logging.getLogger(__name__)
+
+
 ALBUM_STATUSES = {"draft", "published", "hidden"}
 PUBLIC_PHOTO_STATUSES = {"ready"}
 IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -34,6 +41,23 @@ IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 def _error(code: str, status: int = 400):
     return JsonResponse({"error": code}, status=status)
+
+
+def gallery_view(view):
+    """Answer 503 when the gallery database is unreachable.
+
+    The gallery keeps its own database, so an outage there must degrade this
+    feature only: the rest of the API keeps using the event database.
+    """
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        try:
+            return view(*args, **kwargs)
+        except DatabaseError:
+            logger.warning("Gallery database unavailable for %s", view.__name__)
+            return _error("gallery_unavailable", 503)
+
+    return wrapper
 
 
 def _gallery_enabled():
@@ -89,6 +113,7 @@ def _photo_response(photos, *, admin: bool = False):
 
 
 @never_cache
+@gallery_view
 def public_albums_view(request):
     if request.method != "GET":
         return _error("method_not_allowed", 405)
@@ -107,6 +132,7 @@ def public_albums_view(request):
 
 
 @never_cache
+@gallery_view
 def public_photos_view(request, album_id: int):
     if request.method != "GET":
         return _error("method_not_allowed", 405)
@@ -135,6 +161,7 @@ def public_photos_view(request, album_id: int):
 
 @csrf_exempt
 @never_cache
+@gallery_view
 def search_create_view(request):
     if request.method != "POST":
         return _error("method_not_allowed", 405)
@@ -226,6 +253,7 @@ def _live_search_page(photo_ids: list[int], *, offset: int, limit: int):
 
 
 @never_cache
+@gallery_view
 def search_page_view(request, token):
     if request.method != "GET":
         return _error("method_not_allowed", 405)
@@ -266,6 +294,7 @@ def search_page_view(request, token):
 
 
 @csrf_exempt
+@gallery_view
 def admin_albums_view(request):
     disabled = _gallery_enabled()
     if disabled:
@@ -310,6 +339,7 @@ def admin_albums_view(request):
 
 
 @csrf_exempt
+@gallery_view
 def admin_album_detail_view(request, album_id: int):
     disabled = _gallery_enabled()
     if disabled:
@@ -352,6 +382,7 @@ def admin_album_detail_view(request, album_id: int):
 
 
 @csrf_exempt
+@gallery_view
 def admin_import_view(request, album_id: int):
     disabled = _gallery_enabled()
     if disabled:
@@ -370,6 +401,7 @@ def admin_import_view(request, album_id: int):
     return JsonResponse({"album": album_payload(album, admin=True)}, status=202)
 
 
+@gallery_view
 def admin_photos_view(request, album_id: int):
     disabled = _gallery_enabled()
     if disabled:
@@ -392,6 +424,7 @@ def admin_photos_view(request, album_id: int):
 
 
 @csrf_exempt
+@gallery_view
 def admin_album_retry_view(request, album_id: int):
     disabled = _gallery_enabled()
     if disabled:
@@ -409,6 +442,7 @@ def admin_album_retry_view(request, album_id: int):
 
 
 @csrf_exempt
+@gallery_view
 def admin_photo_retry_view(request, photo_id: int):
     disabled = _gallery_enabled()
     if disabled:
@@ -426,6 +460,7 @@ def admin_photo_retry_view(request, photo_id: int):
 
 
 @csrf_exempt
+@gallery_view
 def admin_photo_remove_view(request, photo_id: int):
     disabled = _gallery_enabled()
     if disabled:

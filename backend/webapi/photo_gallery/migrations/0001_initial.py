@@ -13,7 +13,8 @@ def create_vector_extension(apps, schema_editor):
 
 
 def keep_vector_extension(apps, schema_editor):
-    # The extension may serve another optional application; never drop it.
+    # Reversing the app's tables leaves the extension installed in the
+    # dedicated gallery database; dropping it gains nothing.
     pass
 
 
