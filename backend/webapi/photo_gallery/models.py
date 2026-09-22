@@ -96,7 +96,9 @@ class Face(models.Model):
 class MediaObject(models.Model):
     """Record an R2 photo object BEFORE writing, so abandoned writes can be reaped."""
     # `objects` would shadow Photo.objects through the reverse relation.
-    photo = models.ForeignKey(Photo, on_delete=models.CASCADE, related_name="media_objects")
+    # SET_NULL, not CASCADE: deleting an album must leave these rows behind so
+    # the worker still knows which stored objects to remove.
+    photo = models.ForeignKey(Photo, on_delete=models.SET_NULL, null=True, related_name="media_objects")
     key = models.CharField(max_length=500, unique=True)
     active = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)

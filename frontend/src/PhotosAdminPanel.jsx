@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createAdminAlbum,
+  deleteAdminAlbum,
   getAdminAlbumPhotos,
   getAdminLoadedPhotoPages,
   copyTextToClipboard,
@@ -8,6 +9,7 @@ import {
   isAlbumProcessing,
   listAdminAlbums,
   mergePhotoList,
+  reindexAlbum,
   removePhotoFromGallery,
   retryAlbumProcessing,
   retryPhotoProcessing,
@@ -83,6 +85,10 @@ export default function PhotosAdminPanel() {
   // Action loading states
   const [syncingAlbumId, setSyncingAlbumId] = useState(null)
   const [retryingAlbumId, setRetryingAlbumId] = useState(null)
+  const [reindexingAlbumId, setReindexingAlbumId] = useState(null)
+  const [albumToDelete, setAlbumToDelete] = useState(null)
+  const [deletingAlbum, setDeletingAlbum] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [retryingPhotoId, setRetryingPhotoId] = useState(null)
   const [actionSuccessMessage, setActionSuccessMessage] = useState('')
 
@@ -345,6 +351,42 @@ export default function PhotosAdminPanel() {
       setActionSuccessMessage(getPhotoErrorMessage(err, 'Thử lại ảnh lỗi không thành công.'))
     } finally {
       setRetryingAlbumId(null)
+    }
+  }
+
+  // Re-run detection on the whole album, finished photos included
+  const handleReindexAlbum = async (albumId) => {
+    if (reindexingAlbumId) return
+    setReindexingAlbumId(albumId)
+    try {
+      const res = await reindexAlbum(albumId)
+      setActionSuccessMessage(`Đã xếp hàng lập chỉ mục lại ${res?.queued ?? 0} ảnh.`)
+      if (selectedAlbumIdRef.current === albumId) {
+        fetchSelectedAlbumPhotos(albumId)
+      }
+    } catch (err) {
+      setActionSuccessMessage(getPhotoErrorMessage(err, 'Không thể lập chỉ mục lại album.'))
+    } finally {
+      setReindexingAlbumId(null)
+    }
+  }
+
+  // Delete the album and everything the system stored for it
+  const handleDeleteAlbum = async () => {
+    if (!albumToDelete || deletingAlbum) return
+    setDeletingAlbum(true)
+    setDeleteError('')
+    try {
+      await deleteAdminAlbum(albumToDelete.id)
+      setAlbums((prev) => prev.filter((a) => a.id !== albumToDelete.id))
+      setSelectedAlbum((current) => (current?.id === albumToDelete.id ? null : current))
+      setPhotos([])
+      setAlbumToDelete(null)
+      setActionSuccessMessage('Đã xóa album và toàn bộ dữ liệu ảnh của nó.')
+    } catch (err) {
+      setDeleteError(getPhotoErrorMessage(err, 'Không thể xóa album.'))
+    } finally {
+      setDeletingAlbum(false)
     }
   }
 
@@ -638,10 +680,28 @@ export default function PhotosAdminPanel() {
 
               <button
                 type="button"
+                onClick={() => handleReindexAlbum(selectedAlbum.id)}
+                disabled={reindexingAlbumId === selectedAlbum.id}
+                className={SECONDARY_BTN}
+                title="Chạy lại nhận diện khuôn mặt cho mọi ảnh, kể cả ảnh đã xong"
+              >
+                {reindexingAlbumId === selectedAlbum.id ? 'Đang gửi...' : 'Lập chỉ mục lại'}
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleOpenEdit(selectedAlbum)}
                 className={SECONDARY_BTN}
               >
                 Đổi trạng thái / Sửa
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setDeleteError(''); setAlbumToDelete(selectedAlbum) }}
+                className={DANGER_BTN}
+              >
+                Xóa album
               </button>
             </div>
           </div>
@@ -1032,6 +1092,55 @@ export default function PhotosAdminPanel() {
       )}
 
       {/* Remove Photo Confirmation Dialog */}
+      {albumToDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-album-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-stone bg-white p-6 shadow-xl">
+            <h3 id="delete-album-title" className="font-display text-base font-bold text-clay">
+              Xác Nhận Xóa Album
+            </h3>
+            <p className="mt-2 text-xs text-ink/80">
+              Xóa album <strong className="text-ink">{albumToDelete.title}</strong> và toàn bộ dữ liệu ảnh của nó
+              trong hệ thống: {albumToDelete.counts?.total ?? 0} ảnh, dữ liệu nhận diện khuôn mặt và các bản preview.
+              Thao tác này không hoàn tác được.
+            </p>
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              ℹ️ <strong>Lưu ý:</strong> Thư mục và ảnh gốc trên Google Drive được giữ nguyên. Muốn dùng lại, hãy tạo
+              album mới từ cùng đường dẫn Drive.
+            </div>
+
+            {deleteError && (
+              <div className="mt-3 rounded-lg border border-clay/30 bg-clay/10 p-2 text-xs text-clay">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAlbumToDelete(null)}
+                disabled={deletingAlbum}
+                className={SECONDARY_BTN}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAlbum}
+                disabled={deletingAlbum}
+                className="inline-flex items-center justify-center rounded-lg bg-clay px-4 py-2 text-xs font-semibold text-white transition hover:bg-clay/90 disabled:opacity-50"
+              >
+                {deletingAlbum ? 'Đang xóa...' : 'Xóa album'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {photoToRemove && (
         <div
           role="dialog"

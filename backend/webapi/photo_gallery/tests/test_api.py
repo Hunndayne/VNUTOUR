@@ -240,3 +240,50 @@ def test_admin_album_list_exposes_drive_share_email_to_admins_only(client, admin
     assert "drive_service_email" not in client.get("/api/photo-albums").json()
     settings.PHOTO_DRIVE_SERVICE_EMAIL = ""
     assert client.get("/api/admin/photo-albums", **admin_headers).json()["drive_service_email"] is None
+
+
+def test_reindex_requeues_finished_photos_and_clears_their_vectors(client, admin_headers, published):
+    ready = make_photo(published, face_count=1, thumbnail_key="event-photos/k/t.webp")
+    add_face(ready)
+    failed = make_photo(published)
+    Photo.objects.filter(pk=failed.pk).update(status="failed", error="processing_failed")
+    response = client.post(f"/api/admin/photo-albums/{published.id}/reindex", data="{}", content_type="application/json", **admin_headers)
+    assert response.status_code == 202
+    assert response.json() == {"queued": 2}
+    ready.refresh_from_db()
+    failed.refresh_from_db()
+    assert ready.status == "pending" and ready.face_count == 0 and ready.thumbnail_key == ""
+    assert failed.status == "pending"
+    assert Face.objects.count() == 0
+    # Retry still leaves finished photos alone.
+    assert client.post(f"/api/admin/photo-albums/{published.id}/retry", data="{}", content_type="application/json", **admin_headers).json() == {"queued": 0}
+
+
+def test_deleting_an_album_removes_its_rows_and_leaves_objects_for_cleanup(client, admin_headers, published):
+    from photo_gallery.models import MediaObject
+
+    photo = make_photo(published, thumbnail_key="event-photos/1/1/lease/thumbnail.webp")
+    add_face(photo)
+    MediaObject.objects.create(photo=photo, key=photo.thumbnail_key, active=True)
+    response = client.delete(f"/api/admin/photo-albums/{published.id}", **admin_headers)
+    assert response.status_code == 200 and response.json() == {"deleted": True}
+    assert not Album.objects.filter(pk=published.id).exists()
+    assert Photo.objects.count() == 0 and Face.objects.count() == 0
+    # The stored object survives as bookkeeping so the worker can delete it.
+    asset = MediaObject.objects.get()
+    assert asset.photo_id is None and asset.active is False
+    assert client.delete(f"/api/admin/photo-albums/{published.id}", **admin_headers).status_code == 404
+
+
+def test_cleanup_deletes_objects_orphaned_by_an_album_delete(published):
+    from photo_gallery.jobs import cleanup, delete_album
+    from photo_gallery.models import MediaObject
+
+    photo = make_photo(published)
+    asset = MediaObject.objects.create(photo=photo, key="event-photos/1/1/lease/preview.webp", active=True)
+    delete_album(published.id)
+    MediaObject.objects.filter(pk=asset.pk).update(created_at=timezone.now() - timedelta(hours=1))
+    storage = Mock()
+    cleanup(storage)
+    storage.delete.assert_called_once_with(asset.key)
+    assert MediaObject.objects.count() == 0

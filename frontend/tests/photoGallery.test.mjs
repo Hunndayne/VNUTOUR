@@ -12,6 +12,8 @@ import {
   getPublicAlbumPhotos,
   refreshPhotoUrls,
   createAdminAlbum,
+  deleteAdminAlbum,
+  reindexAlbum,
   updateAdminAlbum,
   triggerDriveImport,
   getAdminAlbumPhotos,
@@ -301,4 +303,19 @@ test('refreshPhotoUrls returns null when the photo is no longer public', async (
   const request = async () => ({ photos: [{ id: 43, album_id: 7 }] })
   assert.equal(await refreshPhotoUrls({ photo: { id: 42, album_id: 7 }, request }), null)
   assert.equal(await refreshPhotoUrls({ photo: { id: 42 }, request }), null)
+})
+
+test('reindexAlbum posts to the album reindex endpoint', async () => {
+  const calls = []
+  const request = async (path, options) => { calls.push([path, options.method]); return { queued: 12 } }
+  const res = await reindexAlbum(7, { request })
+  assert.deepEqual(calls, [['/admin/photo-albums/7/reindex', 'POST']])
+  assert.equal(res.queued, 12)
+})
+
+test('deleteAdminAlbum sends DELETE for that album only', async () => {
+  const calls = []
+  const request = async (path, options) => { calls.push([path, options.method]); return { deleted: true } }
+  assert.deepEqual(await deleteAdminAlbum(7, { request }), { deleted: true })
+  assert.deepEqual(calls, [['/admin/photo-albums/7', 'DELETE']])
 })

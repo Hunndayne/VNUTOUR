@@ -25,7 +25,7 @@ from api.views_shared import _consume_rate_limit, _json_body, _require_role
 from .drive import parse_folder
 from .access import require_gallery_access
 from .errors import GalleryError
-from .jobs import queue_import, remove_photo, retry_photos
+from .jobs import delete_album, queue_import, remove_photo, retry_photos
 from .models import Album, Photo, SearchResult
 from .search import embed_reference, matching_photo_ids
 from .serializers import album_payload, photo_payloads, with_counts
@@ -347,6 +347,13 @@ def admin_album_detail_view(request, album_id: int):
     _account, error = _require_role(request, Account.ROLE_ADMIN)
     if error:
         return error
+    if request.method == "DELETE":
+        # Removes the album and every row it owns. Stored previews are reaped
+        # by the worker; the Drive folder and its files are never touched.
+        if not Album.objects.filter(pk=album_id).exists():
+            return _error("not_found", 404)
+        delete_album(album_id)
+        return JsonResponse({"deleted": True})
     if request.method != "PATCH":
         return _error("method_not_allowed", 405)
     data = _json_body(request)
@@ -439,6 +446,29 @@ def admin_album_retry_view(request, album_id: int):
     if not Album.objects.filter(pk=album_id).exists():
         return _error("not_found", 404)
     return JsonResponse({"queued": retry_photos(album_id=album_id)}, status=202)
+
+
+@csrf_exempt
+@gallery_view
+def admin_album_reindex_view(request, album_id: int):
+    """Re-run detection on every photo of an album, including finished ones.
+
+    Retry only picks up failures, so a detection-threshold change would never
+    reach photos that already succeeded.
+    """
+    disabled = _gallery_enabled()
+    if disabled:
+        return disabled
+    _account, error = _require_role(request, Account.ROLE_ADMIN)
+    if error:
+        return error
+    if request.method != "POST":
+        return _error("method_not_allowed", 405)
+    if _json_body(request) is None:
+        return _error("invalid_json")
+    if not Album.objects.filter(pk=album_id).exists():
+        return _error("not_found", 404)
+    return JsonResponse({"queued": retry_photos(album_id=album_id, include_ready=True)}, status=202)
 
 
 @csrf_exempt

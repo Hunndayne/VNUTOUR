@@ -304,6 +304,29 @@ export async function retryAlbumProcessing(id, { request } = {}) {
 }
 
 /**
+ * Lập chỉ mục lại toàn album, kể cả ảnh đã xử lý xong.
+ * Dùng khi đổi ngưỡng nhận diện hoặc phiên bản model.
+ * POST /admin/photo-albums/<id>/reindex
+ */
+export async function reindexAlbum(id, { request } = {}) {
+  const req = await resolveRequest(request)
+  return req(`/admin/photo-albums/${id}/reindex`, {
+    method: 'POST',
+    body: {},
+  })
+}
+
+/**
+ * Xóa album và toàn bộ dữ liệu ảnh của nó trong hệ thống.
+ * Không đụng tới thư mục và ảnh gốc trên Google Drive.
+ * DELETE /admin/photo-albums/<id>
+ */
+export async function deleteAdminAlbum(id, { request } = {}) {
+  const req = await resolveRequest(request)
+  return req(`/admin/photo-albums/${id}`, { method: 'DELETE' })
+}
+
+/**
  * Thử lại một ảnh lỗi cụ thể.
  * POST /admin/photos/<id>/retry
  */

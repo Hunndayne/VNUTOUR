@@ -56,10 +56,13 @@ def queue_import(album_id):
 
 
 @transaction.atomic(using=DB_ALIAS)
-def retry_photos(*, album_id=None, photo_id=None):
+def retry_photos(*, album_id=None, photo_id=None, include_ready=False):
+    """Re-queue photos. `include_ready` also picks up photos that succeeded,
+    which is how a detection or model change is applied to an existing album."""
     if album_id is None and photo_id is None:
         return 0
-    query = Photo.objects.filter(Q(status="failed") | (Q(status="ready") & ~Q(indexing_error="")))
+    retryable = Q(status="failed") | (Q(status="ready") & ~Q(indexing_error=""))
+    query = Photo.objects.filter(Q(status="ready") | Q(status="failed") if include_ready else retryable)
     if album_id is not None:
         query = query.filter(album_id=album_id)
     if photo_id is not None:
@@ -71,6 +74,14 @@ def retry_photos(*, album_id=None, photo_id=None):
         photo.save()
         count += 1
     return count
+
+
+@transaction.atomic(using=DB_ALIAS)
+def delete_album(album_id):
+    """Delete an album and every row it owns, leaving stored objects to the
+    worker's cleanup. Files in Drive are never touched."""
+    MediaObject.objects.filter(photo__album_id=album_id).update(active=False)
+    Album.objects.filter(pk=album_id).delete()
 
 
 @transaction.atomic(using=DB_ALIAS)

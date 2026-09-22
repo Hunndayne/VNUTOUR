@@ -13,6 +13,7 @@ urlpatterns = [
     path("admin/photo-albums/<int:album_id>/import-drive", views.admin_import_view),
     path("admin/photo-albums/<int:album_id>/photos", views.admin_photos_view),
     path("admin/photo-albums/<int:album_id>/retry", views.admin_album_retry_view),
+    path("admin/photo-albums/<int:album_id>/reindex", views.admin_album_reindex_view),
     path("admin/photos/<int:photo_id>/retry", views.admin_photo_retry_view),
     path("admin/photos/<int:photo_id>", views.admin_photo_remove_view),
 ]
