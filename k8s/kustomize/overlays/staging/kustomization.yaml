@@ -22,15 +22,6 @@ components:
 #
 # Selector targets (not name+namespace SMP ids): base objects carry their own
 # namespace, which a plain strategic-merge patch would fail to match.
-patches:
-- path: photo-ai-staging.yaml
-  target:
-    kind: Deployment
-    name: photo-ai
-- path: photo-ai-worker-staging.yaml
-  target:
-    kind: Deployment
-    name: photo-ai-worker
 # GOOGLE_CLIENT_ID is the same public OAuth client prod uses (prod-config adds
 # it there). It used to be patched into the live ConfigMap by hand, so an
 # ArgoCD apply dropped it and Google sign-in broke with
@@ -40,6 +31,15 @@ patches:
 # it on the album form so they know which address to share a Drive folder with.
 # Keep comments OUT of the patch bodies below — `kustomize edit` (CI tag bumps)
 # hoists them to the top of the file and duplicates them on every run.
+patches:
+- path: photo-ai-staging.yaml
+  target:
+    kind: Deployment
+    name: photo-ai
+- path: photo-ai-worker-staging.yaml
+  target:
+    kind: Deployment
+    name: photo-ai-worker
 - patch: |-
     - op: replace
       path: /data/PHOTO_SEARCH_ENABLED
@@ -68,8 +68,8 @@ patches:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: e993e40
+  newTag: f57fe2c
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: e993e40
 - name: ghcr.io/hunndayne/vnutour-photo-ai
-  newTag: e993e40
+  newTag: f57fe2c
