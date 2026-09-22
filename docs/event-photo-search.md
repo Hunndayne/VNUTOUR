@@ -44,6 +44,19 @@ API AI dùng ClusterIP, không có Ingress. API/worker chạy user 10001, root f
 
 Worker không dùng probe giả chỉ kiểm tra import thư viện. Tiến trình chết sẽ được Deployment restart; SIGTERM dừng có phối hợp, lease hết hạn sau 10 phút cho phép nhận lại job nếu pod bị kill. API có startup/readiness/liveness HTTP probes. Cần theo dõi queue không tiến triển, ảnh lỗi và việc pod restart trong hệ thống monitoring hiện có; chưa bổ sung bộ metrics/alerts chuyên biệt.
 
+## Lên staging (vnutour.hunn.io.vn)
+
+Overlay `staging` đã bật component `photo-ai`, hạ tài nguyên cho node nhỏ (API 1 GiB, worker 1,5 GiB), bật `PHOTO_SEARCH_ENABLED=1` và đổi Postgres sang `ghcr.io/hunndayne/vnutour-postgres:16-alpine-pgvector-0.8.0`. Image này build từ `docker/postgres-pgvector` trên cùng nền `postgres:16-alpine` nên volume hiện có giữ nguyên major version và thư viện collation. Không dùng image Debian `pgvector/pgvector`.
+
+Thứ tự bắt buộc:
+
+1. Push commit chứa `docker/postgres-pgvector` + `.github/workflows/ci-db-image.yml` lên `staging` trước, chờ workflow **CI for DB image** push xong image (có bước smoke test `CREATE EXTENSION vector`).
+2. Tạo `photo-ai-secret` trong `vnutour-staging` (token ngẫu nhiên + key Drive). Thiếu secret thì backend vẫn chạy (token là optional, search trả `search_unavailable`) nhưng pod `photo-ai`/`photo-ai-worker` không khởi động.
+3. Push commit overlay. Postgres restart một lần sang image mới; migration job tạo extension `vector` (user DB staging là superuser). CI backend build image `photo-ai` và tự bump tag trong overlay staging.
+4. Kiểm tra: `kubectl -n vnutour-staging get pods`, `psql -c "\dx"` có `vector`, `photo-ai` Ready. Tạo album nhỏ ở `/admin/photos`, chờ worker xử lý, publish, rồi thử `/photos`.
+
+Rollback: revert commit overlay. Extension `vector` và bảng gallery vẫn còn trong DB nhưng không ảnh hưởng app khi gallery tắt.
+
 ## Vận hành
 
 - **Import/sync:** `POST /api/admin/photo-albums/<id>/import-drive {}`. Có checkpoint theo trang; bấm lại khi đang quét không khởi tạo scan trùng. Metadata/links được cập nhật khi sync; ảnh không đổi revision không xử lý lại. Model version đổi sẽ reindex ảnh khi sync.

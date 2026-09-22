@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: photo-ai-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: photo-ai-worker
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1500m"
+              memory: 1536Mi

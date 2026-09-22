@@ -10,12 +10,52 @@ resources:
   # Linode standby do NOT include this — their DB is external Patroni HA.
 components:
 - ../../components/db-simple
+  # Event photo gallery + face search. Needs the pgvector Postgres image below
+  # and the out-of-band photo-ai-secret (see docs/event-photo-search.md).
+- ../../components/photo-ai
+
+# Staging-only sizing and switches for the photo tier. The component defaults
+# (API 1.5Gi + worker 2Gi limits) are sized for prod and do not fit the small
+# staging node; search is on here so it can be tested end to end.
+# Selector targets (not name+namespace SMP ids): base objects carry their own
+# namespace, which a plain strategic-merge patch would fail to match.
+patches:
+- path: photo-ai-staging.yaml
+  target:
+    kind: Deployment
+    name: photo-ai
+- path: photo-ai-worker-staging.yaml
+  target:
+    kind: Deployment
+    name: photo-ai-worker
+- target:
+    kind: ConfigMap
+    name: backend-config
+  patch: |-
+    - op: replace
+      path: /data/PHOTO_SEARCH_ENABLED
+      value: "1"
+- target:
+    kind: ConfigMap
+    name: photo-ai-config
+  patch: |-
+    - op: replace
+      path: /data/PHOTO_SEARCH_ENABLED
+      value: "1"
+    - op: replace
+      path: /data/PHOTO_AI_THREADS
+      value: "1"
 
 # Image tags are updated automatically by the CI pipeline after a successful
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
   newTag: afa341f
+# pgvector build of the same postgres:16-alpine base (docker/postgres-pgvector).
+# Pinned by hand, never bumped by CI: the DB image must not move on its own.
+- name: postgres
+  newName: ghcr.io/hunndayne/vnutour-postgres
+  newTag: 16-alpine-pgvector-0.8.0
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: afa341f
 - name: ghcr.io/hunndayne/vnutour-photo-ai
