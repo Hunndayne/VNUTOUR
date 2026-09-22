@@ -13,6 +13,7 @@ import TaiTro from './tai-tro.jsx'
 import ForgotPasswordPage from './ForgotPasswordPage.jsx'
 import ResetPasswordPage from './ResetPasswordPage.jsx'
 import JoinTeamPage from './JoinTeamPage.jsx'
+import PhotoGalleryPage from './PhotoGalleryPage.jsx'
 import { getStoredAuthToken, getStoredUser, isAdminRole, roleHomePath } from './api.js'
 import { navigate, useLocation } from './router.js'
 
@@ -30,6 +31,8 @@ const ROUTES = {
   '/form': { render: () => <FormResponses />, allows: (role) => role === 'participant' },
   '/stations': { render: () => <StationRunPage />, allows: (role) => role === 'participant' },
   '/feed': { render: () => <FeedPage />, allows: (role) => role === 'participant' || isAdminRole(role) },
+  // Team approval is checked by the gallery API on every request.
+  '/photos': { render: () => <PhotoGalleryPage />, allows: (role) => role === 'participant' || role === 'collab' || isAdminRole(role) },
 }
 
 // Paths that used to exist, kept alive so old links and bookmarks still land
@@ -137,7 +140,7 @@ function resolveRedirect({ path, search }, user) {
 
   const route = ROUTES[routeRoot(path)]
   if (!route) return home
-  if (!user) return '/'
+  if (!user) return routeRoot(path) === '/photos' ? '/login' : '/'
   if (!route.allows(user.role)) return home
   return null
 }

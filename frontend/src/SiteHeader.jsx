@@ -8,6 +8,7 @@ const navigationItems = [
   { label: 'SPONSORSHIP', href: '/tai-tro' },
   { label: 'FAQ', href: '/#faq' },
   { label: 'FRAME', href: '/frame' },
+  { label: 'GALLERY', href: '/photos' },
 ]
 
 function handleNavigation(event, href) {
@@ -28,7 +29,8 @@ export function NavLinks({ className = '' }) {
       {navigationItems.map(item => {
         const isActive =
           (item.href === '/tai-tro' && path === '/tai-tro') ||
-          (item.href === '/frame' && (path === '/frame' || path.startsWith('/frame/')))
+          (item.href === '/frame' && (path === '/frame' || path.startsWith('/frame/'))) ||
+          (item.href === '/photos' && (path === '/photos' || path.startsWith('/photos/')))
 
         return (
           <a

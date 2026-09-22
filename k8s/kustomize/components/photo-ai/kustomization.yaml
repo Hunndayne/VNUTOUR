@@ -1,0 +1,74 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Opt-in photo AI tier. Add this component to an environment overlay only after
+# pgvector, the photo-ai image, and the out-of-band secrets are ready. This
+# component is intentionally not referenced by any active overlay.
+resources:
+  - configmap.yaml
+  - service.yaml
+  - api-deployment.yaml
+  - worker-deployment.yaml
+
+# Enabling the component enables the gallery app for the existing backend
+# migration hook. PHOTO_SEARCH_ENABLED remains false until the threshold has
+# been measured on the target CPU and image set.
+patches:
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backend
+                env:
+                  - name: PHOTO_R2_BUCKET
+                    valueFrom:
+                      configMapKeyRef:
+                        name: photo-ai-config
+                        key: PHOTO_R2_BUCKET
+                  - name: PHOTO_AI_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: photo-ai-secret
+                        key: PHOTO_AI_TOKEN
+  # PreSync runs before the updated ConfigMap is applied. The explicit env
+  # enables this app's migration on the very first component rollout too.
+  - target:
+      kind: Job
+      name: vnutour-migrate
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: vnutour-migrate
+      spec:
+        template:
+          spec:
+            containers:
+              - name: migrate
+                env:
+                  - name: PHOTO_GALLERY_ENABLED
+                    value: "1"
+  - target:
+      kind: ConfigMap
+      name: backend-config
+    patch: |-
+      - op: add
+        path: /data/PHOTO_GALLERY_ENABLED
+        value: "1"
+      - op: add
+        path: /data/PHOTO_AI_URL
+        value: "http://photo-ai:8000"
+      - op: add
+        path: /data/PHOTO_SEARCH_ENABLED
+        value: "0"
+      - op: add
+        path: /data/PHOTO_SEARCH_THRESHOLD
+        value: "0.50"

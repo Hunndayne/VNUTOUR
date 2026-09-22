@@ -39,6 +39,35 @@ INSTALLED_APPS = [
     "api",
 ]
 
+# Optional gallery: enable only after installing pgvector on the DB server.
+# Keeping its app/migrations gated avoids changing an existing deployment's DB.
+PHOTO_GALLERY_ENABLED = os.getenv("PHOTO_GALLERY_ENABLED", "0") == "1"
+if PHOTO_GALLERY_ENABLED:
+    INSTALLED_APPS.append("photo_gallery")
+PHOTO_AI_URL = os.getenv("PHOTO_AI_URL", "http://photo-ai:8000").rstrip("/")
+PHOTO_AI_TOKEN = os.getenv("PHOTO_AI_TOKEN", "")
+PHOTO_AI_MODEL_DIR = os.getenv("PHOTO_AI_MODEL_DIR", "/models")
+PHOTO_AI_THREADS = int(os.getenv("PHOTO_AI_THREADS", "2"))
+PHOTO_SEARCH_THRESHOLD = float(os.getenv("PHOTO_SEARCH_THRESHOLD", "0.50"))
+PHOTO_SEARCH_ENABLED = os.getenv("PHOTO_SEARCH_ENABLED", "0") == "1"
+PHOTO_SEARCH_TIMEOUT_SECONDS = int(os.getenv("PHOTO_SEARCH_TIMEOUT_SECONDS", "30"))
+PHOTO_SEARCH_RATE_LIMIT = int(os.getenv("PHOTO_SEARCH_RATE_LIMIT", "10"))
+PHOTO_SEARCH_RATE_WINDOW_SECONDS = int(os.getenv("PHOTO_SEARCH_RATE_WINDOW_SECONDS", "600"))
+PHOTO_SEARCH_PAGE_RATE_LIMIT = int(os.getenv("PHOTO_SEARCH_PAGE_RATE_LIMIT", "120"))
+PHOTO_SEARCH_PAGE_RATE_WINDOW_SECONDS = int(os.getenv("PHOTO_SEARCH_PAGE_RATE_WINDOW_SECONDS", "600"))
+PHOTO_DRIVE_CREDENTIALS = os.getenv("PHOTO_DRIVE_CREDENTIALS", "")
+# Empty means use R2_BUCKET, with photo keys under event-photos/.
+PHOTO_R2_BUCKET = os.getenv("PHOTO_R2_BUCKET", "")
+PHOTO_MAX_IMAGE_BYTES = 30 * 1024 * 1024
+PHOTO_MAX_PIXELS = 60_000_000
+PHOTO_REFERENCE_MAX_BYTES = 10 * 1024 * 1024
+# Let a maximum-size multipart reference reach the view, which then applies
+# the tighter per-file check and returns the documented JSON error response.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("DATA_UPLOAD_MAX_MEMORY_SIZE", str(PHOTO_REFERENCE_MAX_BYTES + 64 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", str(PHOTO_REFERENCE_MAX_BYTES + 64 * 1024)))
+PHOTO_LEASE_SECONDS = 600
+PHOTO_MAX_ATTEMPTS = 3
+
 MIDDLEWARE = [
     # The Prometheus pair has to bracket everything else: latency is measured
     # between the two, so any middleware placed outside them is invisible to
