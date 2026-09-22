@@ -10,6 +10,7 @@ import {
   getMoreSearchResults,
   listPublicAlbums,
   getPublicAlbumPhotos,
+  refreshPhotoUrls,
   createAdminAlbum,
   updateAdminAlbum,
   triggerDriveImport,
@@ -283,4 +284,21 @@ test('abort signal cancels active requests cleanly', () => {
   const controller = new AbortController()
   controller.abort()
   assert.equal(controller.signal.aborted, true)
+})
+
+test('refreshPhotoUrls fetches exactly that photo through the album page cursor', async () => {
+  const calls = []
+  const request = async (path) => {
+    calls.push(path)
+    return { photos: [{ id: 42, album_id: 7, preview_url: 'https://r2/new' }] }
+  }
+  const fresh = await refreshPhotoUrls({ photo: { id: 42, album_id: 7 }, request })
+  assert.deepEqual(calls, ['/photo-albums/7/photos?cursor=41&limit=1'])
+  assert.equal(fresh.preview_url, 'https://r2/new')
+})
+
+test('refreshPhotoUrls returns null when the photo is no longer public', async () => {
+  const request = async () => ({ photos: [{ id: 43, album_id: 7 }] })
+  assert.equal(await refreshPhotoUrls({ photo: { id: 42, album_id: 7 }, request }), null)
+  assert.equal(await refreshPhotoUrls({ photo: { id: 42 }, request }), null)
 })

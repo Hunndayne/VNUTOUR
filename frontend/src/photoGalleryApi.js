@@ -122,6 +122,25 @@ export async function getPublicAlbumPhotos({ albumId, cursor = null, limit = 48,
 }
 
 /**
+ * Lấy lại link R2 mới cho một ảnh khi link cũ (hạn 5 phút) đã hết hạn.
+ * Dùng cursor = id - 1, limit = 1 của trang album để nhận đúng ảnh đó; áp dụng
+ * được cả cho ảnh trong kết quả tìm kiếm vì mọi kết quả đều thuộc album đã xuất bản.
+ * Trả về null nếu ảnh không còn hiển thị công khai.
+ */
+export async function refreshPhotoUrls({ photo, signal, request } = {}) {
+  if (!photo?.id || !photo?.album_id) return null
+  const data = await getPublicAlbumPhotos({
+    albumId: photo.album_id,
+    cursor: photo.id - 1,
+    limit: 1,
+    signal,
+    request,
+  })
+  const fresh = Array.isArray(data?.photos) ? data.photos[0] : null
+  return fresh?.id === photo.id ? fresh : null
+}
+
+/**
  * Tìm ảnh theo khuôn mặt bằng cách tải lên một ảnh chân dung tham chiếu.
  * POST /photo-search (multipart FormData)
  */

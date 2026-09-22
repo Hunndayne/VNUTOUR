@@ -33,11 +33,15 @@ patches:
                       configMapKeyRef:
                         name: photo-ai-config
                         key: PHOTO_R2_BUCKET
+                  # optional: a missing secret only disables search (the
+                  # backend answers search_unavailable) instead of blocking
+                  # every backend pod from starting.
                   - name: PHOTO_AI_TOKEN
                     valueFrom:
                       secretKeyRef:
                         name: photo-ai-secret
                         key: PHOTO_AI_TOKEN
+                        optional: true
   # PreSync runs before the updated ConfigMap is applied. The explicit env
   # enables this app's migration on the very first component rollout too.
   - target:

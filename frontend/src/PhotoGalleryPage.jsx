@@ -8,12 +8,15 @@ import {
   getPublicAlbumPhotos,
   listPublicAlbums,
   mergePhotoList,
+  refreshPhotoUrls,
   searchPhotosByFace,
 } from './photoGalleryApi.js'
 import { useSearchParam } from './router.js'
 import { createPhotoRequestSlot } from './photoGalleryRequests.js'
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
+// R2 links expire after 5 minutes; refresh a broken image at most once a minute.
+const URL_REFRESH_COOLDOWN_MS = 60 * 1000
 
 export default function PhotoGalleryPage() {
   const [selectedAlbumIdStr, setSelectedAlbumId] = useSearchParam('album', '')
@@ -56,6 +59,26 @@ export default function PhotoGalleryPage() {
   const [albumRequests] = useState(createPhotoRequestSlot)
   const [searchRequests] = useState(createPhotoRequestSlot)
   const fileInputRef = useRef(null)
+  const urlRefreshedAtRef = useRef(new Map())
+
+  // A signed R2 URL that has expired fails to load; fetch a fresh one for that
+  // photo and swap it into both the album list and the search results.
+  const handleImageError = useCallback(async (photo) => {
+    const now = Date.now()
+    const last = urlRefreshedAtRef.current.get(photo.id)
+    if (last && now - last < URL_REFRESH_COOLDOWN_MS) return
+    urlRefreshedAtRef.current.set(photo.id, now)
+    let fresh
+    try {
+      fresh = await refreshPhotoUrls({ photo })
+    } catch {
+      return
+    }
+    if (!fresh) return
+    const swap = (list) => list.map((item) => (item.id === fresh.id ? { ...item, ...fresh } : item))
+    setPhotos(swap)
+    setSearchResult((prev) => (prev ? { ...prev, photos: swap(prev.photos) } : prev))
+  }, [])
 
   const resetSearch = useCallback(() => {
     searchRequests.cancel()
@@ -264,7 +287,7 @@ export default function PhotoGalleryPage() {
         truncated: Boolean(response.truncated),
         searchedAlbumId: scopeAlbum,
       })
-      setStatusMessage(`Đã tìm thấy ${response.photos?.length || 0} ảnh phù hợp.`)
+      setStatusMessage(`Đã tìm thấy ${response.total ?? (response.photos?.length || 0)} ảnh phù hợp.`)
     } catch (err) {
       if (!request.isCurrent() || err.name === 'AbortError') return
       if (handleAccessError(err)) return
@@ -486,7 +509,7 @@ export default function PhotoGalleryPage() {
                     />
                   </svg>
                   <p className="mt-2 text-sm font-medium text-ink">Bấm để chọn ảnh chân dung</p>
-                  <p className="text-xs text-ink/50">Khuyên dùng ảnh chụp một mình, đủ sáng, nhìn thẳng</p>
+                  <p className="text-xs text-ink/50">Ảnh chỉ được có một khuôn mặt: chụp một mình, đủ sáng, nhìn thẳng, không đeo khẩu trang hay kính râm</p>
                 </div>
               ) : (
                 <div className="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-stone bg-paper/40 p-3">
@@ -893,6 +916,7 @@ export default function PhotoGalleryPage() {
                           src={photoSrc}
                           alt={altText}
                           loading="lazy"
+                          onError={() => handleImageError(photo)}
                           className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
                         />
                       ) : (
@@ -1084,6 +1108,7 @@ export default function PhotoGalleryPage() {
 
             <img
               src={activePhoto.preview_url || activePhoto.thumbnail_url}
+              onError={() => handleImageError(activePhoto)}
               alt={activePhoto.filename || 'Ảnh sự kiện kích thước lớn'}
               className="max-h-[75vh] max-w-full rounded-lg object-contain shadow-2xl"
             />
