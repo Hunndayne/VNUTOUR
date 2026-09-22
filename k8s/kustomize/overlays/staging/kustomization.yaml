@@ -24,6 +24,7 @@ components:
 # namespace, which a plain strategic-merge patch would fail to match.
     # client_email of the key in photo-ai-secret (not a secret itself).
     # client_email of the key in photo-ai-secret (not a secret itself).
+    # client_email of the key in photo-ai-secret (not a secret itself).
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -61,6 +62,6 @@ images:
 - name: ghcr.io/hunndayne/vnutour-backend
   newTag: e993e40
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: 9f2fded
+  newTag: e993e40
 - name: ghcr.io/hunndayne/vnutour-photo-ai
   newTag: e993e40
