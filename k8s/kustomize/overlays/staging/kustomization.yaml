@@ -22,6 +22,8 @@ components:
 #
 # Selector targets (not name+namespace SMP ids): base objects carry their own
 # namespace, which a plain strategic-merge patch would fail to match.
+    # client_email of the key in photo-ai-secret (not a secret itself).
+    # client_email of the key in photo-ai-secret (not a secret itself).
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -57,8 +59,8 @@ patches:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: 9f2fded
+  newTag: e993e40
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: 9f2fded
 - name: ghcr.io/hunndayne/vnutour-photo-ai
-  newTag: 9f2fded
+  newTag: e993e40
