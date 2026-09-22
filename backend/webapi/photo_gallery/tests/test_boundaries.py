@@ -96,3 +96,30 @@ def test_download_accepts_verified_unchanged_source():
     output = io.BytesIO()
     drive.download(photo, output)
     assert output.read() == b"abc"
+
+
+def test_camera_jpegs_detected_as_mpo_are_accepted():
+    """Most camera/phone JPEGs carry a second frame and identify as MPO."""
+    from PIL import Image
+    from photo_gallery.imaging import read_image
+
+    stream = io.BytesIO()
+    Image.new("RGB", (64, 48), (200, 10, 10)).save(
+        stream, "MPO", append_images=[Image.new("RGB", (64, 48), (10, 10, 200))],
+    )
+    stream.seek(0)
+    image = read_image(stream)
+    assert image.size == (64, 48) and image.mode == "RGB"
+
+
+def test_unsupported_formats_are_still_rejected():
+    from PIL import Image
+    from photo_gallery.errors import GalleryError
+    from photo_gallery.imaging import read_image
+
+    stream = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(stream, "BMP")
+    stream.seek(0)
+    with pytest.raises(GalleryError) as error:
+        read_image(stream)
+    assert error.value.code == "invalid_image"

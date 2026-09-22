@@ -12,7 +12,10 @@ def read_image(source):
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(source) as original:
-                if original.format not in {"JPEG", "PNG", "WEBP"}:
+                # MPO is a JPEG container with extra frames; most camera and
+                # phone JPEGs identify as MPO, and Pillow decodes the first
+                # frame exactly like a JPEG. Rejecting it fails real photos.
+                if original.format not in {"JPEG", "PNG", "WEBP", "MPO"}:
                     raise GalleryError("invalid_image")
                 if original.width <= 0 or original.height <= 0:
                     raise GalleryError("invalid_image")
