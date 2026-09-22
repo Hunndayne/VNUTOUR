@@ -31,6 +31,11 @@ patches:
   target:
     kind: Deployment
     name: photo-ai-worker
+# GOOGLE_CLIENT_ID is the same public OAuth client prod uses (prod-config adds
+# it there). It used to be patched into the live ConfigMap by hand, so an
+# ArgoCD apply dropped it and Google sign-in broke with
+# google_auth_not_configured; keep it in git.
+#
 # PHOTO_DRIVE_SERVICE_EMAIL is the key's client_email, not a secret: admins see
 # it on the album form so they know which address to share a Drive folder with.
 # Keep comments OUT of the patch bodies below — `kustomize edit` (CI tag bumps)
@@ -42,6 +47,9 @@ patches:
     - op: add
       path: /data/PHOTO_DRIVE_SERVICE_EMAIL
       value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
+    - op: add
+      path: /data/GOOGLE_CLIENT_ID
+      value: 447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com
   target:
     kind: ConfigMap
     name: backend-config

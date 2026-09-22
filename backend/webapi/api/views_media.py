@@ -24,6 +24,11 @@ from .views_shared import _auth_or_401
 
 SUBMISSION_KEY = re.compile(r"^submissions/st(?P<station_id>\d+)/(?P<team_code>[^/]+)/[^/]+$")
 FEED_KEY = re.compile(r"^feed/[^/]+$")
+# Gallery derivatives, written by the photo worker when R2 is not configured:
+# event-photos/<album>/<photo>/<lease uuid>/thumbnail|preview.webp
+EVENT_PHOTO_KEY = re.compile(
+    r"^event-photos/\d+/\d+/[0-9a-fA-F-]{36}/(thumbnail|preview)\.webp$"
+)
 
 
 def _forbidden():
@@ -68,7 +73,11 @@ def submission_media_view(request: HttpRequest, path: str):
     # Feed images are public announcement assets (covers + inline body images),
     # loaded from <img> tags that can't carry the Authorization header. Serve
     # them without the submission auth gate — same posture as frame images.
-    if FEED_KEY.match(key):
+    # Event photos follow the same posture: an <img> tag cannot send the
+    # Authorization header, and the session cookie is scoped to /api, so the
+    # random lease segment in the key is what keeps these URLs unguessable.
+    # Gallery membership is still enforced on the API that hands them out.
+    if FEED_KEY.match(key) or EVENT_PHOTO_KEY.match(key):
         target = (root / key).resolve()
         if not target.is_relative_to(root) or not target.is_file():
             return _not_found()

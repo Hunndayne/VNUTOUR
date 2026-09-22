@@ -17,6 +17,11 @@ spec:
       labels:
         app: photo-ai-worker
     spec:
+      # media-data is a ReadWriteOnce local-path claim shared with the backend:
+      # the worker writes derivatives there when R2 is not configured, and the
+      # backend serves them at /media/. Same storage node, same volume.
+      nodeSelector:
+        vnutour/storage: "true"
       terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
@@ -76,10 +81,15 @@ spec:
             - name: drive-credentials
               mountPath: /var/run/photo-ai
               readOnly: true
+            - name: media
+              mountPath: /app/webapi/media
       volumes:
         - name: scratch
           emptyDir:
             sizeLimit: 1Gi
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
         - name: drive-credentials
           secret:
             secretName: photo-ai-secret
