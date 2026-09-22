@@ -20,6 +20,8 @@ components:
 # Selector targets (not name+namespace SMP ids): base objects carry their own
 # namespace, which a plain strategic-merge patch would fail to match.
     # client_email of the key in photo-ai-secret (not secret itself).
+    # client_email of the key in photo-ai-secret (not secret itself).
+    # client_email of the key in photo-ai-secret (not secret itself).
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -57,11 +59,11 @@ patches:
 # Pinned by hand, never bumped by CI: the DB image must not move on its own.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: afa341f
+  newTag: 9f2fded
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: 9f2fded
 - name: ghcr.io/hunndayne/vnutour-photo-ai
-  newTag: afa341f
+  newTag: 9f2fded
 - name: postgres
   newName: ghcr.io/hunndayne/vnutour-postgres
   newTag: 16-alpine-pgvector-0.8.0
