@@ -22,9 +22,6 @@ components:
 #
 # Selector targets (not name+namespace SMP ids): base objects carry their own
 # namespace, which a plain strategic-merge patch would fail to match.
-    # client_email of the key in photo-ai-secret (not a secret itself).
-    # client_email of the key in photo-ai-secret (not a secret itself).
-    # client_email of the key in photo-ai-secret (not a secret itself).
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -34,11 +31,14 @@ patches:
   target:
     kind: Deployment
     name: photo-ai-worker
+# PHOTO_DRIVE_SERVICE_EMAIL is the key's client_email, not a secret: admins see
+# it on the album form so they know which address to share a Drive folder with.
+# Keep comments OUT of the patch bodies below — `kustomize edit` (CI tag bumps)
+# hoists them to the top of the file and duplicates them on every run.
 - patch: |-
     - op: replace
       path: /data/PHOTO_SEARCH_ENABLED
       value: "1"
-    # client_email of the key in photo-ai-secret (not a secret itself).
     - op: add
       path: /data/PHOTO_DRIVE_SERVICE_EMAIL
       value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
