@@ -56,6 +56,9 @@ PHOTO_SEARCH_RATE_WINDOW_SECONDS = int(os.getenv("PHOTO_SEARCH_RATE_WINDOW_SECON
 PHOTO_SEARCH_PAGE_RATE_LIMIT = int(os.getenv("PHOTO_SEARCH_PAGE_RATE_LIMIT", "120"))
 PHOTO_SEARCH_PAGE_RATE_WINDOW_SECONDS = int(os.getenv("PHOTO_SEARCH_PAGE_RATE_WINDOW_SECONDS", "600"))
 PHOTO_DRIVE_CREDENTIALS = os.getenv("PHOTO_DRIVE_CREDENTIALS", "")
+# Shown to admins so they know whom to share a Drive folder with. Only the
+# worker mounts the key file, so the backend gets the address as plain config.
+PHOTO_DRIVE_SERVICE_EMAIL = os.getenv("PHOTO_DRIVE_SERVICE_EMAIL", "")
 # Empty means use R2_BUCKET, with photo keys under event-photos/.
 PHOTO_R2_BUCKET = os.getenv("PHOTO_R2_BUCKET", "")
 PHOTO_MAX_IMAGE_BYTES = 30 * 1024 * 1024

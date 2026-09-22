@@ -231,3 +231,12 @@ def test_import_rejects_non_drive_targets(client, admin_headers, url):
     response = client.post("/api/admin/photo-albums", data=json.dumps({"title": "x", "drive_folder_url": url}), content_type="application/json", **admin_headers)
     assert response.status_code == 400, response.content
     assert not Album.objects.exists()
+
+
+def test_admin_album_list_exposes_drive_share_email_to_admins_only(client, admin_headers, published, settings):
+    settings.PHOTO_DRIVE_SERVICE_EMAIL = "worker@example.iam.gserviceaccount.com"
+    response = client.get("/api/admin/photo-albums", **admin_headers)
+    assert response.json()["drive_service_email"] == "worker@example.iam.gserviceaccount.com"
+    assert "drive_service_email" not in client.get("/api/photo-albums").json()
+    settings.PHOTO_DRIVE_SERVICE_EMAIL = ""
+    assert client.get("/api/admin/photo-albums", **admin_headers).json()["drive_service_email"] is None

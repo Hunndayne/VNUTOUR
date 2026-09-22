@@ -3,6 +3,7 @@ import {
   createAdminAlbum,
   getAdminAlbumPhotos,
   getAdminLoadedPhotoPages,
+  copyTextToClipboard,
   getPhotoErrorMessage,
   isAlbumProcessing,
   listAdminAlbums,
@@ -62,6 +63,8 @@ export default function PhotosAdminPanel() {
   const [newTitle, setNewTitle] = useState('')
   const [newDescription, setNewDescription] = useState('')
   const [newDriveUrl, setNewDriveUrl] = useState('')
+  const [driveServiceEmail, setDriveServiceEmail] = useState('')
+  const [emailCopied, setEmailCopied] = useState(false)
   const [creatingAlbum, setCreatingAlbum] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -110,6 +113,7 @@ export default function PhotosAdminPanel() {
       const list = Array.isArray(data?.albums) ? data.albums : []
       setAlbums(list)
       setAlbumsCursor(data?.next_cursor ?? null)
+      setDriveServiceEmail(data?.drive_service_email || '')
     } catch (err) {
       setAlbumsError(getPhotoErrorMessage(err, 'Không thể tải danh sách album quản trị.'))
     } finally {
@@ -893,9 +897,36 @@ export default function PhotosAdminPanel() {
                   onChange={(e) => setNewDriveUrl(e.target.value)}
                   className={FIELD_CLASS}
                 />
-                <p className="mt-1 text-[11px] text-ink/50">
-                  Đảm bảo thư mục Google Drive đã được cấp quyền đọc cho tài khoản hệ thống VNUTour.
-                </p>
+                {driveServiceEmail ? (
+                  <div className="mt-2 rounded-lg border border-stone bg-paper/60 p-2.5 text-[11px] text-ink/70">
+                    <p>
+                      Trên Google Drive, chia sẻ thư mục (quyền <strong>Người xem</strong>) cho email hệ thống bên dưới.
+                      Thư mục chỉ nên chứa ảnh JPEG, PNG hoặc WebP; ảnh RAW và thư mục con sẽ bị bỏ qua.
+                    </p>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <code className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1 font-mono text-[11px] text-ink">
+                        {driveServiceEmail}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (await copyTextToClipboard(driveServiceEmail)) {
+                            setEmailCopied(true)
+                            setTimeout(() => setEmailCopied(false), 2000)
+                          }
+                        }}
+                        className="shrink-0 rounded-md border border-stone bg-white px-2 py-1 text-[11px] font-semibold text-ink transition hover:bg-paper"
+                      >
+                        {emailCopied ? 'Đã sao chép' : 'Sao chép'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[11px] text-ink/50">
+                    Đảm bảo thư mục Google Drive đã được cấp quyền đọc cho tài khoản hệ thống VNUTour.
+                    Thư mục chỉ nên chứa ảnh JPEG, PNG hoặc WebP.
+                  </p>
+                )}
               </div>
 
               {createError && (

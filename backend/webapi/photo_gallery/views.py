@@ -277,7 +277,11 @@ def admin_albums_view(request):
         albums, next_cursor, error = _id_page(request, with_counts(Album.objects.all()), default=24, maximum=48)
         if error:
             return error
-        return JsonResponse({"albums": [album_payload(album, admin=True) for album in albums], "next_cursor": next_cursor})
+        return JsonResponse({
+            "albums": [album_payload(album, admin=True) for album in albums],
+            "next_cursor": next_cursor,
+            "drive_service_email": settings.PHOTO_DRIVE_SERVICE_EMAIL or None,
+        })
     if request.method != "POST":
         return _error("method_not_allowed", 405)
     data = _json_body(request)
