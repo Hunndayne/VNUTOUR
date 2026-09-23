@@ -105,19 +105,19 @@ patches:
         value: 1Gi
 
 
-  # --- Prod serving backend: 8 replicas, spread across nodes -----------------
+  # --- Prod serving backend: 3 replicas, spread across nodes -----------------
   # The serving `backend` is unpinned by components/backend-ops (media/backups
-  # moved to the pinned backend-ops pod), so it can schedule on any node. Run 5
+  # moved to the pinned backend-ops pod), so it can schedule on any node. Run 3
   # replicas and spread them evenly across hosts so no single node carries the
   # whole app tier. Soft (ScheduleAnyway) so a single-node zone (e.g. a
-  # one-node standby) still schedules all five instead of leaving pods Pending.
+  # one-node standby) still schedules all three instead of leaving pods Pending.
   - target:
       kind: Deployment
       name: backend
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 8
+        value: 3
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
         value:
@@ -128,14 +128,14 @@ patches:
               matchLabels:
                 app: backend
 
-  # --- Prod frontend: 8 replicas, spread across nodes -----------------------
+  # --- Prod frontend: 3 replicas, spread across nodes -----------------------
   - target:
       kind: Deployment
       name: frontend
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 8
+        value: 3
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
         value:

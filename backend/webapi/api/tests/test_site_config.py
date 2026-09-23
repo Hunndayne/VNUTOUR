@@ -9,7 +9,7 @@ Covers:
 
 import json
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from api.models import Account, SystemSetting, Participant, Team, TeamMembership
 from api.services.auth_service import generate_session
@@ -37,6 +37,18 @@ class PublicSiteConfigViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["allow_signup"], False)
         self.assertIn("antibot", response.json())
+
+    @override_settings(PHOTO_GALLERY_ENABLED=False)
+    def test_get_reports_photo_gallery_off(self):
+        response = self.client.get("/api/public/site-config")
+
+        self.assertIs(response.json()["photo_gallery"], False)
+
+    @override_settings(PHOTO_GALLERY_ENABLED=True)
+    def test_get_reports_photo_gallery_on(self):
+        response = self.client.get("/api/public/site-config")
+
+        self.assertIs(response.json()["photo_gallery"], True)
 
     def test_get_reflects_registration_full(self):
         # Only members of a submitted team count toward the cap.

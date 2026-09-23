@@ -6,15 +6,88 @@ namespace: vnutour-staging
 resources:
 - ../../base
 
-  # Staging keeps a plain single-node Postgres (moved out of base). Prod and the
-  # Linode standby do NOT include this — their DB is external Patroni HA.
+# db-simple: staging keeps a plain single-node Postgres for the event data (moved
+#   out of base). Prod and the Linode standby do NOT include it — their DB is
+#   external Patroni HA.
+# photo-ai: event photo gallery + face search. Brings its own pgvector database
+#   (photos-db); it never touches the event database. Needs the out-of-band
+#   photo-ai-secret (see docs/event-photo-search.md).
 components:
 - ../../components/db-simple
+- ../../components/photo-ai
+
+# Staging-only sizing and switches for the photo tier: the component defaults are
+# sized for prod and do not fit the small staging node, and search is on here so
+# it can be tested end to end.
+#
+# Selector targets (not name+namespace SMP ids): base objects carry their own
+# namespace, which a plain strategic-merge patch would fail to match.
+# GOOGLE_CLIENT_ID is the same public OAuth client prod uses (prod-config adds
+# it there). It used to be patched into the live ConfigMap by hand, so an
+# ArgoCD apply dropped it and Google sign-in broke with
+# google_auth_not_configured; keep it in git.
+#
+# PHOTO_DRIVE_SERVICE_EMAIL is the key's client_email, not a secret: admins see
+# it on the album form so they know which address to share a Drive folder with.
+# Keep comments OUT of the patch bodies below — `kustomize edit` (CI tag bumps)
+# hoists them to the top of the file and duplicates them on every run.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+patches:
+- path: photo-ai-staging.yaml
+  target:
+    kind: Deployment
+    name: photo-ai
+- path: photo-ai-worker-staging.yaml
+  target:
+    kind: Deployment
+    name: photo-ai-worker
+- patch: |-
+    - op: replace
+      path: /data/PHOTO_SEARCH_ENABLED
+      value: "1"
+    - op: add
+      path: /data/PHOTO_DRIVE_SERVICE_EMAIL
+      value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    - op: add
+      path: /data/PHOTO_SEARCH_RATE_LIMIT
+      value: "100000"
+    - op: add
+      path: /data/PHOTO_SEARCH_PAGE_RATE_LIMIT
+      value: "100000"
+    - op: add
+      path: /data/GOOGLE_CLIENT_ID
+      value: 447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com
+  target:
+    kind: ConfigMap
+    name: backend-config
+- patch: |-
+    - op: replace
+      path: /data/PHOTO_SEARCH_ENABLED
+      value: "1"
+    - op: replace
+      path: /data/PHOTO_AI_THREADS
+      value: "1"
+  target:
+    kind: ConfigMap
+    name: photo-ai-config
 
 # Image tags are updated automatically by the CI pipeline after a successful
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: b25e411
+  newTag: d1802ee
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: 5c43a2c
+  newTag: d1802ee
+- name: ghcr.io/hunndayne/vnutour-photo-ai
+  newTag: d1802ee

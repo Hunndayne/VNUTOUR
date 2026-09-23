@@ -1,0 +1,45 @@
+FROM python:3.11-slim-trixie
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=UTF-8 \
+    LANG=C.UTF-8 \
+    PHOTO_AI_MODEL_DIR=/models \
+    PHOTO_AI_THREADS=1
+
+WORKDIR /app
+
+# OpenCV's headless wheel still needs the system GLib runtime. Keep the image
+# CPU-only; the worker and API use the same verified model artifacts.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libglib2.0-0t64 libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system --gid 10001 app \
+    && adduser --system --uid 10001 --ingroup app app \
+    && mkdir -p /models /tmp/prometheus-multiproc \
+    && chown app:app /tmp/prometheus-multiproc
+
+COPY requirements.txt requirements-photo-ai.txt ./
+# hadolint ignore=DL3013
+RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=83.0.0" wheel \
+    && python -m pip install --no-cache-dir -r requirements-photo-ai.txt \
+    && python -m pip check \
+    && python -m pip uninstall --yes pip wheel \
+    && python -c "import pathlib, shutil, sysconfig; shutil.rmtree(pathlib.Path(sysconfig.get_path('stdlib')) / 'ensurepip')"
+
+COPY scripts/fetch_photo_models.py ./scripts/fetch_photo_models.py
+COPY photo_models/ ./photo_models/
+RUN python scripts/fetch_photo_models.py --output /models \
+    && cp photo_models/* /models/ \
+    && chmod 0555 /models \
+    && chmod 0444 /models/*
+
+COPY --chown=app:app . .
+
+# /models is intentionally root-owned and read-only at runtime. Temporary
+# image downloads use a bounded disk-backed emptyDir mounted by Kubernetes.
+USER 10001:10001
+EXPOSE 8000
+
+CMD ["gunicorn", "--chdir", "webapi", "--workers", "1", "--threads", "1", "--bind", "0.0.0.0:8000", "--timeout", "120", "--access-logfile=-", "--error-logfile=-", "serverapi.wsgi:application"]

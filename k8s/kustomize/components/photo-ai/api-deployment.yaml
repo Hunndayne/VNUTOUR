@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: photo-ai
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: photo-ai
+  template:
+    metadata:
+      labels:
+        app: photo-ai
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: photo-ai
+          image: ghcr.io/hunndayne/vnutour-photo-ai
+          imagePullPolicy: IfNotPresent
+          command:
+            - gunicorn
+            - --chdir
+            - webapi
+            - --workers
+            - "1"
+            - --threads
+            - "1"
+            - --bind
+            - 0.0.0.0:8000
+            - --timeout
+            - "120"
+            - --access-logfile=-
+            - --error-logfile=-
+            - serverapi.wsgi:application
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - configMapRef:
+                name: photo-ai-config
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: serverapi.settings_photo_ai
+            # The API only embeds a reference image; it must not receive Drive
+            # service-account, database or R2 credentials.
+            - name: PHOTO_GALLERY_ENABLED
+              value: "0"
+            - name: PHOTO_AI_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: photo-ai-secret
+                  key: PHOTO_AI_TOKEN
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: DJANGO_SECRET_KEY
+          ports:
+            - name: http
+              containerPort: 8000
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 768Mi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
