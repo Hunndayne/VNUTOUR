@@ -84,7 +84,12 @@ class ReplayLimitTests(StationJourneyTestBase):
         self.assertIsNone(self.state()['attempts_remaining'])
         self.assertEqual(self._enter(self.station).status_code, 201)
         self._exit(self.station)  # no grade on this attempt
-        self.assertEqual(self._enter(self.station).json()['error'], 'replay_locked_pending_result')
+        # A closed attempt awaiting a manual verdict must NOT block the next
+        # one — graders lag behind during an event.
+        self.assertEqual(self._enter(self.station).status_code, 201)
+        # The attempt this just opened still blocks, via the active-session
+        # guard that runs ahead of the replay check.
+        self.assertEqual(self._enter(self.station).json()['error'], 'session_already_active')
 
     def test_admin_config_round_trip_and_strict_validation(self):
         self.admin.role = Account.ROLE_MASTER_ADMIN
@@ -223,8 +228,11 @@ class FreePlayReplayTests(FormsApiTestBase):
             self.station.save()
             self.assertEqual(self.start().status_code, 200)
             self.assertEqual(self.answer(True).status_code, 201)
-            self.assertEqual(self.detail()['replay_reason'], 'pending_result')
-            self.assertFalse(self.detail()['can_replay'])
+            # No score yet (the verdict is still pending, which is what this
+            # test guards), but waiting on a grader no longer locks the next
+            # attempt.
+            self.assertIsNone(self.detail()['replay_reason'])
+            self.assertTrue(self.detail()['can_replay'])
             self.assertFalse(ScoreEntry.objects.exists())
             # Cancel this fixture so the next mode begins with a clean attempt.
             StationSession.objects.filter(team=self.team).update(status='cancelled')

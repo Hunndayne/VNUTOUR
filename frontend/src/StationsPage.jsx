@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STATIONS_STORAGE_KEY, SUB_EVENT_TYPE_META } from './adminProgram.js'
-import { Icon, CARD, Badge } from './ui.jsx'
+import { Icon, ICON_PATHS, CARD, Badge } from './ui.jsx'
 import { apiRequest, formatDateTime, isMasterAdmin, logoutAndRedirect, API_BASE_URL } from './api.js'
 import { useSearchParam } from './router.js'
 import { useDraftState, DraftNotice } from './drafts.jsx'
@@ -85,6 +85,14 @@ const MODE_META = {
     icon: 'paperclip',
     cls: 'bg-trail/12 text-trail',
     selectedCls: 'border-trail/30 bg-trail/10 text-trail',
+  },
+  rating: {
+    label: 'Đánh giá',
+    hint: 'Thang sao (vd 1–5) để khảo sát mức độ hài lòng; không tính điểm.',
+    addLabel: 'Câu đánh giá sao',
+    icon: 'star',
+    cls: 'bg-clay/12 text-clay',
+    selectedCls: 'border-clay/30 bg-clay/10 text-clay',
   },
 }
 
@@ -177,10 +185,33 @@ function createAttachmentItem(attachment = {}) {
   }
 }
 
+// Thang đánh giá: số sao tối đa, kẹp trong [2, 10]; mặc định 5.
+const RATING_MIN_SCALE = 2
+const RATING_MAX_SCALE = 10
+
+function clampRatingScale(value) {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n) || n === 0) return 5
+  return Math.min(RATING_MAX_SCALE, Math.max(RATING_MIN_SCALE, n))
+}
+
+function createRatingItem(item = {}) {
+  return {
+    id: item.id ?? makeLocalId('rating'),
+    type: 'rating',
+    question: item.question ?? item.label ?? '',
+    scale: clampRatingScale(item.scale),
+    lowLabel: item.lowLabel ?? '',
+    highLabel: item.highLabel ?? '',
+    required: item.required ?? true,
+  }
+}
+
 const ITEM_FACTORIES = {
   text: createTextItem,
   quiz: createQuizItem,
   attachment: createAttachmentItem,
+  rating: createRatingItem,
 }
 
 function createSubmissionItem(type, raw = {}) {
@@ -304,20 +335,43 @@ function CheckoutPanel({ eventId }) {
 
 // Trạm check-in không có phiên chơi riêng — điểm danh QR ghi nhận theo cả sự
 // kiện, nên log của trạm này chính là toàn bộ lượt điểm danh của event.
+// Hiển thị 50 lượt mỗi trang. Vẫn tải toàn bộ về trước rồi mới cắt trang ở
+// client, để ô tìm kiếm tra được cả sự kiện chứ không chỉ trang đang mở.
+const CHECKIN_PAGE_SIZE = 50
+// Trần cứng của API là 200/lượt gọi; kéo tối đa 20 lượt (4000 dòng) rồi dừng,
+// đủ xa cho một sự kiện mà vẫn không để vòng lặp chạy vô hạn nếu API đổi hành vi.
+const CHECKIN_FETCH_LIMIT = 200
+const CHECKIN_MAX_PAGES = 20
+
 function CheckinLogPanel({ eventId }) {
   const [rows, setRows] = useState([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState(() => new Set())
+  const [page, setPage] = useState(1)
+  const [truncated, setTruncated] = useState(false)
 
   const load = useCallback(async () => {
     if (!eventId) return
     setLoading(true)
     setError('')
     try {
-      const data = await apiRequest(`/event-checkins?event_id=${encodeURIComponent(eventId)}&limit=200`)
-      setRows(Array.isArray(data?.items) ? data.items : [])
+      const all = []
+      let hitCap = false
+      for (let p = 1; p <= CHECKIN_MAX_PAGES; p += 1) {
+        const data = await apiRequest(
+          `/event-checkins?event_id=${encodeURIComponent(eventId)}`
+          + `&limit=${CHECKIN_FETCH_LIMIT}&page=${p}`,
+        )
+        const batch = Array.isArray(data?.items) ? data.items : []
+        all.push(...batch)
+        // A short page means the server has nothing left to give.
+        if (batch.length < CHECKIN_FETCH_LIMIT) break
+        if (p === CHECKIN_MAX_PAGES) hitCap = true
+      }
+      setRows(all)
+      setTruncated(hitCap)
     } catch (err) {
       setError(err?.message || 'Không tải được danh sách điểm danh.')
     } finally {
@@ -348,6 +402,18 @@ function CheckinLogPanel({ eventId }) {
       ))
     })
   }, [sorted, query])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / CHECKIN_PAGE_SIZE))
+  // Typing a filter, or rows disappearing on refresh, can strand the view past
+  // the last page — clamp instead of showing an empty list.
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
+  useEffect(() => { setPage(1) }, [query])
+
+  const paged = useMemo(() => (
+    filtered.slice((page - 1) * CHECKIN_PAGE_SIZE, page * CHECKIN_PAGE_SIZE)
+  ), [filtered, page])
 
   const toggle = (id) => {
     setExpanded((current) => {
@@ -380,7 +446,7 @@ function CheckinLogPanel({ eventId }) {
       </div>
       {error && <p className="px-4 py-2 text-xs text-clay" role="alert">{error}</p>}
       <div className="max-h-[28rem] divide-y divide-stone/50 overflow-y-auto">
-        {filtered.map(row => {
+        {paged.map(row => {
           const isOpen = expanded.has(row.id)
           const checkedInMembers = (row.members_detail || []).filter(member => member.checked_in)
           const totalMembers = row.members_detail?.length ?? 0
@@ -429,6 +495,27 @@ function CheckinLogPanel({ eventId }) {
           </p>
         )}
       </div>
+      {filtered.length > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-stone px-4 py-2.5">
+          <p className="text-xs text-ink/45">
+            {`${(page - 1) * CHECKIN_PAGE_SIZE + 1}–${Math.min(page * CHECKIN_PAGE_SIZE, filtered.length)}`}
+            {` / ${filtered.length} lượt`}
+            {query.trim() ? ` (lọc từ ${rows.length})` : ''}
+            {truncated ? ' · đã đạt trần tải, có thể còn lượt cũ hơn' : ''}
+          </p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="rounded-lg border border-stone bg-white px-2.5 py-1 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-40">
+              Trước
+            </button>
+            <span className="font-mono text-xs text-ink/45">{page}/{pageCount}</span>
+            <button type="button" onClick={() => setPage(p => Math.min(pageCount, p + 1))} disabled={page >= pageCount}
+              className="rounded-lg border border-stone bg-white px-2.5 py-1 text-xs font-semibold text-ink/60 hover:bg-paper disabled:opacity-40">
+              Sau
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1141,7 +1228,7 @@ function makeStationId(phase, stations) {
 
 function getSubmissionModes(submission) {
   const items = createSubmissionConfig(submission ?? {}).items
-  const order = ['text', 'quiz', 'attachment']
+  const order = ['text', 'quiz', 'rating', 'attachment']
   return order
     .filter(type => items.some(item => item.type === type))
     .map(type => ({ key: type, ...MODE_META[type] }))
@@ -1374,6 +1461,14 @@ function sanitizeSubmission(submission) {
         ...item,
         question: item.question.trim(),
         options: item.options.map(option => option.trim()),
+      }
+    }
+    if (item.type === 'rating') {
+      return {
+        ...item,
+        question: item.question.trim(),
+        lowLabel: item.lowLabel.trim(),
+        highLabel: item.highLabel.trim(),
       }
     }
     if (item.type === 'attachment') {
@@ -1709,6 +1804,58 @@ function SubmissionItemCard({
             />
           </div>
         </>
+      )}
+
+      {item.type === 'rating' && (
+        <div className="grid gap-3">
+          <textarea
+            rows={2}
+            value={item.question}
+            onChange={event => onChange('question', event.target.value)}
+            placeholder="Nội dung câu hỏi, vd: Bạn đánh giá trạm này thế nào?"
+            className={`${INPUT_CLS} resize-y leading-6 placeholder:text-ink/30`}
+          />
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className={MICRO_LABEL_CLS}>Số sao tối đa</label>
+              <input
+                type="number"
+                min={RATING_MIN_SCALE}
+                max={RATING_MAX_SCALE}
+                value={item.scale}
+                onChange={event => onChange('scale', clampRatingScale(event.target.value))}
+                className={INPUT_CLS}
+              />
+            </div>
+            <div>
+              <label className={MICRO_LABEL_CLS}>Nhãn mức thấp nhất</label>
+              <input
+                value={item.lowLabel}
+                onChange={event => onChange('lowLabel', event.target.value)}
+                placeholder="Rất tệ"
+                className={INPUT_CLS}
+              />
+            </div>
+            <div>
+              <label className={MICRO_LABEL_CLS}>Nhãn mức cao nhất</label>
+              <input
+                value={item.highLabel}
+                onChange={event => onChange('highLabel', event.target.value)}
+                placeholder="Rất tốt"
+                className={INPUT_CLS}
+              />
+            </div>
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm text-ink/60">
+            <input
+              type="checkbox"
+              checked={item.required}
+              onChange={event => onChange('required', event.target.checked)}
+              className="h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            Bắt buộc
+          </label>
+        </div>
       )}
 
       {(item.type === 'quiz' || item.type === 'text') && <label className="mt-3 block text-sm font-medium text-ink/70">
@@ -2339,7 +2486,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           title="Nội dung bài nộp"
           action={(
             <div className="flex flex-wrap gap-1.5">
-              {['text', 'quiz', 'attachment'].map(type => {
+              {['text', 'quiz', 'rating', 'attachment'].map(type => {
                 const meta = MODE_META[type]
                 const blocked = type === 'attachment' && hasAttachmentItem
                 return (
@@ -2707,11 +2854,27 @@ function resolveAttachmentUrl(url) {
   return url.startsWith('/') ? `${API_BASE_URL}${url}` : url
 }
 
+function RatingStars({ value, scale, className = '' }) {
+  const max = Number(scale) || 5
+  if (!Number.isInteger(value)) return <p className={`text-base text-ink/40 ${className}`}>Không đánh giá</p>
+  return (
+    <p className={`flex items-center gap-0.5 ${className}`} aria-label={`${value}/${max} sao`}>
+      {Array.from({ length: max }, (_, i) => (
+        <svg key={i} viewBox="0 0 24 24" className={`h-5 w-5 ${i < value ? 'fill-gold text-gold' : 'fill-none text-ink/25'}`} stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinejoin="round" d={ICON_PATHS.star} />
+        </svg>
+      ))}
+      <span className="ml-2 font-mono text-sm text-ink/60">{value}/{max}</span>
+    </p>
+  )
+}
+
 function StationSubmissionDetailView({ submission, onGrade, busy }) {
   const files = submission.files || []
   const formAnswers = submission.response_payload?.form || []
   const quizAnswers = submission.response_payload?.quiz || []
   const autoQuizResult = submission.response_payload?.quiz_result || null
+  const ratingAnswers = submission.response_payload?.rating || []
   // Per-question review (question, the team's answer as text, the key) and the
   // grader's verdicts on it; older attempts are rebuilt server-side.
   const reviewItems = useMemo(() => submission.answer_review || [], [submission.answer_review])
@@ -2735,8 +2898,8 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
     <div className={`${CARD} px-5 py-5`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-xl font-bold text-ink">{submission.team_name}</p>
-          <p className="font-mono text-sm text-ink/40">{submission.team_code}</p>
+          <p className="truncate text-xl font-bold text-ink">{submission.is_survey ? (submission.participant_name || 'Khảo sát cũ · chưa xác định người trả lời') : submission.team_name}</p>
+          <p className="font-mono text-sm text-ink/40">{submission.is_survey ? [submission.participant_mssv, submission.team_code].filter(Boolean).join(' · ') : submission.team_code}</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge {...statusMeta} />
@@ -2761,7 +2924,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
       ) : null}
 
       <div className="mt-6 border-t border-stone/40 pt-4">
-        {hasReview && <AnswerReview items={reviewItems} marks={marks} onMark={markQuestion} />}
+        {hasReview && <AnswerReview items={reviewItems} marks={marks} onMark={markQuestion} isSurvey={submission.is_survey} />}
 
         {!hasReview && formAnswers.length > 0 && (
           <div className="mt-4 space-y-2">
@@ -2786,6 +2949,18 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
                     ? 'Chưa chọn đáp án'
                     : `Đã chọn: đáp án ${Number(item.selectedOption) + 1}`}
                 </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {ratingAnswers.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Đánh giá</p>
+            {ratingAnswers.map((item, index) => (
+              <div key={item.id || index} className="rounded-xl border border-stone bg-paper px-4 py-3">
+                <p className="text-sm font-medium text-ink/60">{item.question || `Câu ${index + 1}`}</p>
+                <RatingStars value={item.value} scale={item.scale} className="mt-1" />
               </div>
             ))}
           </div>
@@ -2822,7 +2997,7 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
           </div>
         )}
 
-        <div className="mt-8 flex flex-wrap items-center gap-2">
+        {!submission.is_survey && <div className="mt-8 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => onGrade(submission.id, { is_correct: true })}
@@ -2869,13 +3044,13 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
               Lưu điểm
             </button>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   )
 }
 
-function StationSubmissionsView({ stationId, stationName, onBack }) {
+function StationSubmissionsView({ stationId, stationName, stationKind, eventId, onBack }) {
   const [submissions, setSubmissions] = useState([])
   const [stationLabel, setStationLabel] = useState(stationName || '')
   const [loading, setLoading] = useState(true)
@@ -2905,6 +3080,21 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
   useEffect(() => {
     if (stationId) void load()
   }, [stationId, load])
+
+  // Average of every `rating` question across the submissions that answered it.
+  const ratingSummary = useMemo(() => {
+    const rows = new Map()
+    for (const submission of submissions) {
+      for (const answer of submission.response_payload?.rating || []) {
+        if (!Number.isInteger(answer.value)) continue
+        const row = rows.get(answer.id) || { id: answer.id, question: answer.question, scale: answer.scale, sum: 0, count: 0 }
+        row.sum += answer.value
+        row.count += 1
+        rows.set(answer.id, row)
+      }
+    }
+    return [...rows.values()].map(row => ({ ...row, average: row.sum / row.count }))
+  }, [submissions])
 
   if (!stationId) return null
 
@@ -2961,6 +3151,25 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
     )
   }
 
+  // A check-in station never produces submissions — the QR scan writes an
+  // EventCheckIn for the whole event instead. Showing "chưa có đội nào nộp
+  // bài" here reads like lost data, so serve the check-in log instead.
+  if (stationKind === 'checkin') {
+    return (
+      <div className="space-y-4">
+        <div className={`${CARD} px-5 py-4`}>
+          <StationBackLink onClick={onBack} />
+          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Trạm điểm danh</p>
+          <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{stationLabel}</h2>
+          <p className="mt-1 text-sm text-ink/45">
+            Trạm check-in không có bài nộp. Dưới đây là toàn bộ lượt điểm danh của sự kiện.
+          </p>
+        </div>
+        <CheckinLogPanel eventId={eventId} />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <StationErrorBanner message={apiError} />
@@ -2972,6 +3181,13 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
             <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Bài nộp trạm</p>
             <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{stationLabel}</h2>
             <p className="mt-1 text-sm text-ink/45">{submissions.length} bài nộp</p>
+            {ratingSummary.map(row => (
+              <p key={row.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-ink/60">
+                <Icon name="star" className="h-4 w-4 text-gold" />
+                <span className="font-semibold text-ink">{row.average.toFixed(2)}/{row.scale}</span>
+                <span className="text-ink/45">· {row.count} lượt · {row.question || 'Câu đánh giá'}</span>
+              </p>
+            ))}
           </div>
         </div>
       </div>
@@ -2996,11 +3212,11 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="truncate text-base font-semibold text-ink">{submission.team_name}</p>
+                        <p className="truncate text-base font-semibold text-ink">{submission.is_survey ? (submission.participant_name || 'Khảo sát cũ · chưa xác định người trả lời') : submission.team_name}</p>
                         <Badge {...statusMeta} />
                       </div>
                       <p className="mt-1 text-sm text-ink/50">
-                        {submission.team_code} · {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
+                        {submission.is_survey && submission.participant_mssv ? `${submission.participant_mssv} · ` : ''}{submission.team_code} · {submission.submitted_at ? formatDateTime(submission.submitted_at) : 'Chưa nộp'}
                         {submission.score !== null && submission.score !== undefined ? ` · Điểm: ${submission.score}` : ''}
                       </p>
                     </div>
@@ -3014,7 +3230,7 @@ function StationSubmissionsView({ stationId, stationName, onBack }) {
           </div>
         ) : (
           <div className={`${CARD} border-dashed px-4 py-10 text-center text-sm text-ink/40`}>
-            Trạm này chưa có đội nào nộp bài.
+            Trạm này chưa có bài nộp.
           </div>
         )}
       </div>
@@ -3581,6 +3797,8 @@ function StationsPage({
       <StationSubmissionsView
         stationId={submissionsStationId}
         stationName={stations.find(station => station.id === submissionsStationId)?.name}
+        stationKind={stations.find(station => station.id === submissionsStationId)?.kind}
+        eventId={selectedEventId}
         onBack={() => setSubmissionsStationId(null)}
       />
     )

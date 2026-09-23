@@ -98,6 +98,19 @@ grafana:
       limits:
         cpu: 100m
         memory: 128Mi
+  # The VPS reaches the homelab controller through WireGuard. Prometheus is
+  # exposed only as a private NodePort on the homelab LAN; do not publish 30900
+  # through the home router or a public firewall.
+  additionalDataSources:
+    - name: Prometheus Homelab
+      uid: prometheus-homelab
+      type: prometheus
+      access: proxy
+      url: http://192.168.1.110:30900
+      isDefault: false
+      editable: false
+      jsonData:
+        timeInterval: 15s
   grafana.ini:
     auth.anonymous:
       enabled: false

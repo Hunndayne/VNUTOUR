@@ -112,18 +112,24 @@ mkdir -p "$work/payload/install" "$work/payload/dashboard"
 cp "$here/monitoring-install.sh" "$here/values.yaml" \
   "$here/ingress-values.yaml" "$here/certificate.yaml" \
   "$here/ingress.yaml" "$work/payload/install/"
-dashboard_source="$here/../dashboard/vps_k3s_dashboard.json"
-jq -S -c . "$dashboard_source" > "$work/payload/dashboard/vps_k3s_dashboard.json" || {
-  echo '[error] Dashboard is not valid JSON and cannot be added to the SSH payload.' >&2
-  exit 1
-}
-echo '[payload] Dashboard JSON validated and canonicalized with jq -S -c .'
+dashboard_sources=(
+  "$here/../dashboard/vps_k3s_dashboard.json"
+  "$here/../dashboard/homelab_k3s_dashboard.json"
+)
+for dashboard_source in "${dashboard_sources[@]}"; do
+  dashboard_name=$(basename "$dashboard_source")
+  jq -S -c . "$dashboard_source" > "$work/payload/dashboard/$dashboard_name" || {
+    echo "[error] Dashboard $dashboard_name is not valid JSON and cannot be added to the SSH payload." >&2
+    exit 1
+  }
+  echo "[payload] Dashboard $dashboard_name: validated and canonicalized with jq -S -c ."
+done
 printf '%s' "$GRAFANA_ADMIN_PASSWORD" > "$work/payload/grafana-admin-password"
 printf '%s' "$GRAFANA_HOSTNAME" > "$work/payload/grafana-hostname"
 printf '%s\n' "$VPS_SSH_PASSWORD" > "$work/ssh-password"
 printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$work/known_hosts"
 unset GRAFANA_ADMIN_PASSWORD VPS_SSH_PASSWORD VPS_SSH_KNOWN_HOSTS
-echo '[payload] Script, values, TLS/Ingress templates, dashboard and protected inputs are ready'
+echo '[payload] Script, values, TLS/Ingress templates, dashboards and protected inputs are ready'
 
 remote_commands=$(cat <<'SSH'
 set -eu

@@ -1,4 +1,5 @@
 """Safety tests for monitoring install decisions; no cluster or network is used."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -112,15 +113,57 @@ esac
         self.assertIn("cookie_secure: true", values)
 
     def test_dashboard_is_valid_json_and_can_be_canonicalized(self):
-        dashboard = INSTALL_DIR.parent / "dashboard" / "vps_k3s_dashboard.json"
-        canonical = subprocess.run(
-            ["jq", "-S", "-c", ".", str(dashboard)],
-            check=True,
-            capture_output=True,
-        ).stdout
+        dashboard_dir = INSTALL_DIR.parent / "dashboard"
+        for dashboard_name in (
+            "vps_k3s_dashboard.json",
+            "homelab_k3s_dashboard.json",
+        ):
+            canonical = subprocess.run(
+                ["jq", "-S", "-c", ".", str(dashboard_dir / dashboard_name)],
+                check=True,
+                capture_output=True,
+            ).stdout
+            self.assertTrue(canonical)
 
-        self.assertTrue(canonical)
-        self.assertIn('jq -S -c . "$dashboard_source"', DEPLOY.read_text())
+        deploy = DEPLOY.read_text()
+        self.assertIn('jq -S -c . "$dashboard_source"', deploy)
+        self.assertIn("homelab_k3s_dashboard.json", deploy)
+
+    def test_homelab_dashboard_combines_cluster_and_workload_panels(self):
+        dashboard_dir = INSTALL_DIR.parent / "dashboard"
+        vps = json.loads((dashboard_dir / "vps_k3s_dashboard.json").read_text())
+        homelab = json.loads(
+            (dashboard_dir / "homelab_k3s_dashboard.json").read_text()
+        )
+        vps_titles = {panel.get("title") for panel in vps["panels"]}
+        homelab_titles = {panel.get("title") for panel in homelab["panels"]}
+        workload_titles = {
+            "API requests/sec by view",
+            "API latency p95 / p50",
+            "Responses by status",
+            "Replicas: desired vs available",
+            "CPU cores per pod",
+            "Memory working set per pod",
+            "Postgres connections by state",
+            "Nginx requests/sec (edge)",
+        }
+
+        self.assertEqual(homelab["title"], "K3S cluster monitoring on Homelab")
+        self.assertEqual(homelab["uid"], "k3s-homelab")
+        self.assertTrue(vps_titles.issubset(homelab_titles))
+        self.assertTrue(workload_titles.issubset(homelab_titles))
+        self.assertEqual(len(homelab["panels"]), len(vps["panels"]) + 9)
+        for panel in homelab["panels"]:
+            if panel.get("type") != "row":
+                self.assertEqual(panel.get("datasource"), "${DS_PROMETHEUS}")
+
+    def test_vps_grafana_has_private_homelab_datasource(self):
+        values = (INSTALL_DIR / "values.yaml").read_text()
+
+        self.assertIn("name: Prometheus Homelab", values)
+        self.assertIn("uid: prometheus-homelab", values)
+        self.assertIn("url: http://192.168.1.110:30900", values)
+        self.assertIn("isDefault: false", values)
 
 if __name__ == "__main__":
     unittest.main()

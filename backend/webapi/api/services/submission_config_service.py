@@ -12,7 +12,9 @@ questions, quiz questions and the file-upload block in any order:
         {"id": "quiz-b2", "type": "quiz", "question": "...",
          "options": ["...", "..."], "correctOption": 0, "points": 1},
         {"id": "file-c3", "type": "attachment", "maxFiles": 1, "maxSizeMb": 20,
-         "allowedTypes": "JPG, PNG, PDF", "note": ""}
+         "allowedTypes": "JPG, PNG, PDF", "note": ""},
+        {"id": "rating-d4", "type": "rating", "question": "...", "scale": 5,
+         "lowLabel": "Rất tệ", "highLabel": "Rất tốt", "required": true}
       ],
       "quiz": {"autoScore": false, "randomCount": 0},
       "limits": {"maxSubmissions": 0, "closeOnCorrect": false, "manualClosed": false},
@@ -46,8 +48,14 @@ from copy import deepcopy
 TYPE_TEXT = "text"
 TYPE_QUIZ = "quiz"
 TYPE_ATTACHMENT = "attachment"
+TYPE_RATING = "rating"
 
-ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT)
+ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT, TYPE_RATING)
+
+# A rating item is a star scale 1..scale — survey feedback, never graded.
+RATING_MIN_SCALE = 2
+RATING_MAX_SCALE = 10
+RATING_DEFAULT_SCALE = 5
 
 # Keys that would leak the right answer to participants.
 _ANSWER_KEYS = (
@@ -125,10 +133,31 @@ def _attachment_item(raw: dict, index: int) -> dict:
     }
 
 
+def _rating_scale(value) -> int:
+    try:
+        scale = int(value)
+    except (TypeError, ValueError):
+        return RATING_DEFAULT_SCALE
+    return min(RATING_MAX_SCALE, max(RATING_MIN_SCALE, scale))
+
+
+def _rating_item(raw: dict, index: int) -> dict:
+    return {
+        "id": _clean_str(raw.get("id")) or f"rating-{index}",
+        "type": TYPE_RATING,
+        "question": _clean_str(raw.get("question") or raw.get("label")),
+        "scale": _rating_scale(raw.get("scale")),
+        "lowLabel": _clean_str(raw.get("lowLabel")),
+        "highLabel": _clean_str(raw.get("highLabel")),
+        "required": raw.get("required", True) is not False,
+    }
+
+
 _BUILDERS = {
     TYPE_TEXT: _text_item,
     TYPE_QUIZ: _quiz_item,
     TYPE_ATTACHMENT: _attachment_item,
+    TYPE_RATING: _rating_item,
 }
 
 
@@ -568,3 +597,28 @@ def grade_quiz(
         "manual_count": len(items) - total,
         "all_correct": total > 0 and correct_count == total,
     }
+
+
+def clean_rating_answers(config: dict | None, response_payload: dict | None) -> list[dict]:
+    """Server-side copy of the `rating` answers, keyed to the configured items.
+
+    Answers to unknown ids are dropped and values outside 1..scale become None,
+    so the stored payload can be averaged without re-validating it.
+    """
+    sent = {}
+    for answer in (response_payload or {}).get("rating") or []:
+        if isinstance(answer, dict):
+            sent[str(answer.get("id"))] = answer.get("value")
+
+    cleaned = []
+    for item in submission_items(config, TYPE_RATING):
+        value = sent.get(item["id"])
+        if type(value) is not int or not 1 <= value <= item["scale"]:
+            value = None
+        cleaned.append({
+            "id": item["id"],
+            "question": item["question"],
+            "scale": item["scale"],
+            "value": value,
+        })
+    return cleaned
