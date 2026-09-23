@@ -31,6 +31,9 @@ components:
 # it on the album form so they know which address to share a Drive folder with.
 # Keep comments OUT of the patch bodies below — `kustomize edit` (CI tag bumps)
 # hoists them to the top of the file and duplicates them on every run.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -79,6 +82,6 @@ images:
 - name: ghcr.io/hunndayne/vnutour-backend
   newTag: c24607b
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: c24607b
+  newTag: d1802ee
 - name: ghcr.io/hunndayne/vnutour-photo-ai
   newTag: c24607b
