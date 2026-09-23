@@ -1,5 +1,6 @@
 import logoImage from './assets/vnutour-logo.webp'
 import { navigate, useLocation } from './router.js'
+import { usePhotoGalleryEnabled } from './siteFeatures.js'
 
 const navigationItems = [
   { label: 'HOME', href: '/#home' },
@@ -20,13 +21,15 @@ function handleNavigation(event, href) {
 
 export function NavLinks({ className = '' }) {
   const { path } = useLocation()
+  const galleryEnabled = usePhotoGalleryEnabled()
+  const items = navigationItems.filter(item => item.href !== '/photos' || galleryEnabled)
 
   return (
     <nav
       aria-label="Điều hướng VNUTour"
       className={`items-center gap-7 text-xs font-bold uppercase tracking-[0.08em] text-[#0c1d33] ${className}`}
     >
-      {navigationItems.map(item => {
+      {items.map(item => {
         const isActive =
           (item.href === '/tai-tro' && path === '/tai-tro') ||
           (item.href === '/frame' && (path === '/frame' || path.startsWith('/frame/'))) ||

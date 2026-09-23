@@ -2,6 +2,7 @@
 Public views — unauthenticated config the FE needs before anyone signs in.
 """
 
+from django.conf import settings
 from django.http import JsonResponse, HttpRequest
 
 from api.services.antibot_service import antibot_config
@@ -27,4 +28,7 @@ def site_config_view(request: HttpRequest):
             "enabled": antibot["enabled"],
             "site_key": antibot["site_key"],
         },
+        # One frontend build serves every environment, so the gallery link and
+        # admin tab follow this instead of a build-time switch.
+        "photo_gallery": settings.PHOTO_GALLERY_ENABLED,
     })

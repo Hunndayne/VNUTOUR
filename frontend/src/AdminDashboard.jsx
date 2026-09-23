@@ -14,6 +14,7 @@ import LinksAdminPanel from './LinksAdminPanel.jsx'
 import FeedAdminPanel from './FeedAdminPanel.jsx'
 import PhotosAdminPanel from './PhotosAdminPanel.jsx'
 import OperationsPage from './OperationsPage.jsx'
+import { usePhotoGalleryEnabled } from './siteFeatures.js'
 import { FIXED_PHASES, PROGRAM_STORAGE_KEY, getPhaseInfo } from './adminProgram.js'
 import { apiRequest, formatDateTime, getStoredUser, isMasterAdmin, logoutAndRedirect, normalizeProgramForFrontend } from './api.js'
 import { normalizeMinCheckinMembers } from './attendanceCheckin.js'
@@ -329,6 +330,7 @@ function NavLink({ href, onNavigate, className, children }) {
 }
 
 function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
+  const galleryEnabled = usePhotoGalleryEnabled()
   return (
     <>
       {open && <div className="fixed inset-0 z-40 bg-ink/30 backdrop-blur-sm lg:hidden" onClick={onClose} />}
@@ -355,7 +357,7 @@ function Sidebar({ activeTab, onTabChange, open, onClose, user }) {
                 </p>
               )}
               <div className="space-y-0.5">
-                {group.items.map(item => {
+                {group.items.filter(item => item.key !== 'photos' || galleryEnabled).map(item => {
                   const active = !item.href && activeTab === item.key
                   return (
                     <NavLink
