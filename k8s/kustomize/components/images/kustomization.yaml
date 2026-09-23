@@ -15,3 +15,5 @@ images:
   newTag: 614d8ad
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: 614d8ad
+- name: ghcr.io/hunndayne/vnutour-photo-ai
+  newTag: d1802ee
