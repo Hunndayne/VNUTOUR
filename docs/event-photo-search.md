@@ -61,6 +61,16 @@ Thứ tự:
 
 Rollback: revert commit overlay. Dữ liệu gallery nằm trong `photos-db`, tách hẳn khỏi database sự kiện; xóa PVC `photos-db-data` là xóa sạch, và import lại từ Drive dựng lại được toàn bộ.
 
+## Lên prod (vnutour.suctremmt.com)
+
+Chỉ overlay `prod` (homelab) có component `photo-ai`; `prod-standby` (Linode) cố ý không có. Khi failover sang Linode, backend ở đó trả `photo_gallery=false` trong `/public/site-config` nên frontend ẩn gallery thay vì hiện trang lỗi. Gallery quay lại khi failback.
+
+- Toàn bộ tầng gallery (`photos-db`, `photo-ai`, worker) ghim vào `vnutour-w2`: `vnutour-w1` giữ Patroni primary và gần hết request. `photos-db` gắn volume local-path vào node đầu tiên nó chạy, nên không được đổi node sau khi đã có dữ liệu.
+- Prod lưu thumbnail/preview lên R2 (`R2_*` trong `backend-secret`, prefix `event-photos/`), URL ký 5 phút. Worker prod vì vậy không mount `media-data` (claim đó bị buộc vào w1).
+- `photo-ai-secret` có ở cả hai zone, giá trị giống hệt nhau (token/mật khẩu DB khác staging).
+- CI build image `photo-ai` trên cả `staging` và `main`; trên `main` tag được bump ở `components/images` cùng backend. Backend chỉ được bump khi cả hai image build xong, để worker luôn chạy cùng bản code gallery với API.
+- Giới hạn tìm kiếm giữ mặc định (10 lượt / 10 phút mỗi IP); staging đã nới riêng.
+
 ## Vận hành
 
 - **Import/sync:** `POST /api/admin/photo-albums/<id>/import-drive {}`. Có checkpoint theo trang; bấm lại khi đang quét không khởi tạo scan trùng. Metadata/links được cập nhật khi sync; ảnh không đổi revision không xử lý lại. Model version đổi sẽ reindex ảnh khi sync.

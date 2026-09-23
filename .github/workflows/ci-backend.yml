@@ -183,11 +183,13 @@ jobs:
 
   # Photo AI image (OpenCV + verified YuNet/SFace models). Same scan-then-push
   # flow as build-push; a separate cache scope keeps the two images apart.
-  # Staging only until prod enables the component: a photo-ai build failure
-  # must never hold back a prod backend release.
+  # Built on staging and main: prod runs the gallery too, and its worker must
+  # run the same gallery code as the backend that serves it.
   build-push-photo-ai:
     needs: [secret-scan, dockerfile-backend-lint, backend-lint-build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -264,12 +266,11 @@ jobs:
   # Omit skip markers: they can enter a merge message and skip release CI.
   update-manifest:
     needs: [build-push, build-push-photo-ai]
-    # always() lets this run when build-push-photo-ai is skipped (main).
+    # Both images must build: bumping only the backend would leave the photo
+    # worker on older gallery code than the API it pairs with.
     if: >-
-      always() && github.event_name == 'push' &&
-      (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main') &&
-      needs.build-push.result == 'success' &&
-      contains(fromJSON('["success", "skipped"]'), needs.build-push-photo-ai.result)
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write # needed to push the manifest commit back to the repo
@@ -317,10 +318,7 @@ jobs:
           SHA="${{ steps.meta.outputs.sha }}"
           cd "${{ steps.target.outputs.dir }}"
           kustomize edit set image ghcr.io/hunndayne/vnutour-backend:${SHA}
-          # Staging only: the photo-ai image is built for staging alone.
-          if [ "${{ github.ref_name }}" = "staging" ]; then
-            kustomize edit set image ghcr.io/hunndayne/vnutour-photo-ai:${SHA}
-          fi
+          kustomize edit set image ghcr.io/hunndayne/vnutour-photo-ai:${SHA}
 
       - name: Commit and push manifest update
         run: |
