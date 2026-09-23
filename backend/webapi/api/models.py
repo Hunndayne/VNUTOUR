@@ -848,6 +848,12 @@ class StationSubmission(models.Model):
     team = models.ForeignKey(
         Team, on_delete=models.CASCADE, related_name="station_submissions",
     )
+    # Set for individual surveys; null retains the existing team submission
+    # semantics, including legacy surveys whose respondent was never recorded.
+    participant = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="survey_submissions",
+    )
     station = models.ForeignKey(
         Station, on_delete=models.CASCADE, related_name="submissions",
     )
@@ -875,9 +881,31 @@ class StationSubmission(models.Model):
 
     class Meta:
         db_table = "station_submission"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "participant"], name="uq_survey_station_participant",
+            ),
+        ]
 
     def __str__(self) -> str:
-        return f"Submission by {self.team.code} @ {self.station.code} ({self.status})"
+        respondent = self.participant.mssv if self.participant_id else self.team.code
+        return f"Submission by {respondent} @ {self.station.code} ({self.status})"
+
+
+class SurveyFormSession(models.Model):
+    """Individual survey timer, independent of the team's station attempt."""
+
+    participant = models.ForeignKey(Participant, on_delete=models.CASCADE)
+    station = models.ForeignKey(Station, on_delete=models.CASCADE)
+    started_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "survey_form_session"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "participant"], name="uq_survey_session_participant",
+            ),
+        ]
 
 
 # =====================================================================

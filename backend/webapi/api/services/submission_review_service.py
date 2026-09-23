@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from api.models import Station, StationSession, TeamFormSession
+from api.models import Station, StationSession, SubEvent, TeamFormSession
 from api.services.submission_config_service import (
     normalize_config, submission_items, _served_items, item_points,
 )
@@ -44,6 +44,16 @@ def build_review(config, response, item_ids=None, effective_items=None):
             "explanation": item.get("explanation", ""),
         })
     return result
+
+
+def survey_review_items(items):
+    """Keep question/answer snapshots for surveys without grading metadata."""
+    return [{
+        "id": item["id"], "type": item["type"],
+        "question": item.get("question", ""),
+        "selected_answer": item.get("selected_answer"),
+        "correct_answer": None, "is_correct": None, "points": 0, "explanation": "",
+    } for item in items]
 
 
 def review_deadline(station, team, session):
@@ -91,8 +101,11 @@ def submission_answer_review(submission):
     """
     payload = submission.response_payload or {}
     stored = payload.get("answer_review")
-    if stored is not None:
-        return stored
+    is_survey = submission.station.sub_event.type == SubEvent.TYPE_SURVEY
+    # The initial individual-survey release stored [] instead of a snapshot.
+    # Rebuild those responses on read, while retaining real saved snapshots.
+    if stored is not None and (stored or not is_survey):
+        return survey_review_items(stored) if is_survey else stored
     answered = [
         str(answer.get("id"))
         for answer in (payload.get("quiz") or []) + (payload.get("form") or [])
@@ -102,7 +115,8 @@ def submission_answer_review(submission):
         return []
     from api.services.question_bank_service import effective_quiz_items
     station = submission.station
-    return build_review(station.submission_config, payload, answered, effective_quiz_items(station))
+    review = build_review(station.submission_config, payload, answered, effective_quiz_items(station))
+    return survey_review_items(review) if is_survey else review
 
 
 def clean_item_marks(submission, marks):

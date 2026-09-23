@@ -18,3 +18,4 @@ psycopg2-binary>=2.9.0
 boto3>=1.34.0
 pytest>=8.0.0
 pytest-django>=4.8.0
+pgvector==0.4.2

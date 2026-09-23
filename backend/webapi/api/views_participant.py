@@ -9,13 +9,13 @@ from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import never_cache
 from django.db import IntegrityError, transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from api.models import (
     Account, CaptainVote, Participant, Team, TeamFormDraft, TeamFormSession, TeamMembership,
     PhaseRoster, ProgramPhase, Station, SubEvent, StationSession, StationSubmission,
-    MssvLinkAudit,
+    MssvLinkAudit, SurveyFormSession,
 )
 from api.services.registration_service import (
     UIT_CODE, get_schema, validate_account_mssv_claim, validate_person_submission,
@@ -273,13 +273,16 @@ def _submission_limits(config: dict | None) -> dict:
     }
 
 
-def _form_closure_state(station: Station, team: Team | None = None) -> dict:
+def _form_closure_state(station: Station, team: Team | None = None, participant_id=None) -> dict:
     """Whether the station form stopped accepting submissions, and why."""
     limits = _submission_limits(station.submission_config)
     submitted = StationSubmission.objects.filter(
         station=station,
         status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
     )
+    is_survey = _is_survey_station(station)
+    if is_survey:
+        submitted = submitted.filter(participant_id=participant_id) if participant_id else submitted.none()
     submitted_count = submitted.count()
 
     reason = None
@@ -289,7 +292,7 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
     # Free-play forms also require an explicit attempt before accepting an
     # initial submission, even when they have no duration.
     free_play_active = None
-    if team and station.checkin_policy == Station.POLICY_FREE_PLAY:
+    if team and not is_survey and station.checkin_policy == Station.POLICY_FREE_PLAY:
         free_play_active = StationSession.objects.filter(
             team=team, station=station, status=StationSession.STATUS_ACTIVE,
         ).order_by("-entered_at").first()
@@ -325,7 +328,7 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
 
         # Absolute form windows are evaluated before attempt eligibility so a
         # click on Start cannot consume a play while the form is not open.
-        if team and station.checkin_policy == Station.POLICY_FREE_PLAY and free_play_active is None and not reason:
+        if team and not is_survey and station.checkin_policy == Station.POLICY_FREE_PLAY and free_play_active is None and not reason:
             reason = "not_started"
 
         if limits.get("duration_seconds") and team and not reason:
@@ -333,7 +336,12 @@ def _form_closure_state(station: Station, team: Team | None = None) -> dict:
             # station that is the active StationSession's check-in (so a replay,
             # which opens a new session, gets a fresh clock); for a free-play
             # station it is the team's explicit TeamFormSession start.
-            if station.checkin_policy != Station.POLICY_FREE_PLAY:
+            if is_survey:
+                form_session = SurveyFormSession.objects.filter(
+                    participant_id=participant_id, station=station,
+                ).first() if participant_id else None
+                started_at = form_session.started_at if form_session else None
+            elif station.checkin_policy != Station.POLICY_FREE_PLAY:
                 active = StationSession.objects.filter(
                     team=team, station=station, status=StationSession.STATUS_ACTIVE,
                 ).order_by("-entered_at").first()
@@ -399,7 +407,7 @@ def _station_has_form(station: Station, bank_counts: dict | None = None) -> bool
     return submission_has_form(config, bank_counts[sub_event_id])
 
 
-def _station_form_payload(station: Station, team: Team | None = None, replay: dict | None = None) -> dict:
+def _station_form_payload(station: Station, team: Team | None = None, replay: dict | None = None, participant_id=None) -> dict:
     from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
     event = station.sub_event
@@ -419,10 +427,10 @@ def _station_form_payload(station: Station, team: Team | None = None, replay: di
         }
     # Drawing here (rather than only on submit) is what pins the question set:
     # whichever member opens the form first fixes it for the whole team.
-    closure = _form_closure_state(station, team)
+    closure = _form_closure_state(station, team, participant_id)
     # Do not materialize a question draw before a free-play attempt passes the
     # start/eligibility transaction.  Reload after Start receives the draw.
-    drawn_items = [] if closure.get("reason") == "not_started" else variant_item_ids(station, team)
+    drawn_items = [] if _is_survey_station(station) or closure.get("reason") == "not_started" else variant_item_ids(station, team)
     effective_items = effective_quiz_items(station)
     payload = {
         "station_id": station.id,
@@ -437,6 +445,20 @@ def _station_form_payload(station: Station, team: Team | None = None, replay: di
         "closure": closure,
         "is_survey": _is_survey_station(station),
     }
+    if _is_survey_station(station):
+        mine = StationSubmission.objects.filter(
+            station=station, participant_id=participant_id,
+        ).first() if participant_id else None
+        payload.update({
+            "participant_id": participant_id,
+            "attempt_id": None,
+            "requires_start": closure.get("reason") == "not_started",
+            "my_submission": {
+                "status": mine.status,
+                "submitted_at": mine.submitted_at.isoformat() if mine.submitted_at else None,
+            } if mine else None,
+        })
+        return payload
     if team is not None:
         if replay is None:
             replay = get_event_replay_state(team, station.sub_event)["by_station"].get(station.id, {})
@@ -1563,6 +1585,9 @@ def my_team_stations_view(request: HttpRequest):
     my_submissions: dict[int, StationSubmission] = {}
     for submission in StationSubmission.objects.filter(
         team=team, station_id__in=station_ids,
+    ).filter(
+        ~Q(station__sub_event__type=SubEvent.TYPE_SURVEY)
+        | Q(participant_id=membership.participant_id),
     ).order_by("station_id", "-created_at"):
         my_submissions.setdefault(submission.station_id, submission)
     # The journey needs every non-cancelled play of every station, not just the
@@ -1737,6 +1762,7 @@ def my_team_forms_view(request: HttpRequest):
             event_replays[station.sub_event_id] = get_event_replay_state(team, station.sub_event)["by_station"]
         accessible_forms.append(_station_form_payload(
             station, team=team, replay=event_replays[station.sub_event_id].get(station.id, {}),
+            participant_id=membership.participant_id,
         ))
 
     return JsonResponse({
@@ -1783,9 +1809,18 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
     if gate_error:
         return JsonResponse({"error": gate_error}, status=409)
 
-    closure = _form_closure_state(station, team)
+    closure = _form_closure_state(station, team, membership.participant_id)
     if closure["closed"] and closure.get("reason") != "not_started":
         return JsonResponse({"error": "form_closed"}, status=403)
+
+    if _is_survey_station(station):
+        timer, _ = SurveyFormSession.objects.get_or_create(
+            participant_id=membership.participant_id, station=station,
+        )
+        return JsonResponse({
+            "status": "started", "started_at": timer.started_at.isoformat(),
+            "server_now": timezone.now().isoformat(),
+        })
 
     # Scan-gated stations start their clock at check-in, so "start" here only
     # confirms the team is actually checked in; free-play stations self-start.
@@ -1817,7 +1852,7 @@ def my_team_form_start_view(request: HttpRequest, station_id: int):
 @csrf_exempt
 @transaction.atomic
 def my_team_form_submit_view(request: HttpRequest, station_id: int):
-    """POST a participant station form submission for the current team."""
+    """POST a team form response, or an individual response for a survey."""
     if request.method != "POST":
         return JsonResponse({"error": "method_not_allowed"}, status=405)
 
@@ -1871,9 +1906,10 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     if current_event and station.sub_event_id != current_event.id:
         return JsonResponse({"error": "event_not_found"}, status=404)
 
-    closure = _form_closure_state(station, team)
+    is_survey = _is_survey_station(station)
+    closure = _form_closure_state(station, team, membership.participant_id)
     resumable_submission = None
-    if closure["reason"] == "not_started" and station.checkin_policy == Station.POLICY_FREE_PLAY:
+    if not is_survey and closure["reason"] == "not_started" and station.checkin_policy == Station.POLICY_FREE_PLAY:
         # Preserve edits within the allowed edit window of the same
         # finished attempt. This never starts or spends another attempt.
         resumable_submission = StationSubmission.objects.filter(
@@ -1908,32 +1944,40 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
 
     config = station.submission_config or {}
     if not isinstance(response_payload, dict) or any(
-        not isinstance(response_payload.get(key, []), list) for key in ("quiz", "form")
+        not isinstance(response_payload.get(key, []), list) for key in ("quiz", "form", "rating")
     ):
         return JsonResponse({"error": "invalid_payload"}, status=400)
     # Hard gate: a station that needs a coop scan only accepts a submission while
     # the team holds an ACTIVE session there — i.e. a coop/admin actually scanned
     # them in for this attempt. Without it a team could open any form from the
     # list and submit without ever being checked in.
-    session = StationSession.objects.filter(
+    session = None if is_survey else StationSession.objects.filter(
         team=team, station=station, status=StationSession.STATUS_ACTIVE,
     ).order_by("-entered_at").first()
     if session is None and resumable_submission:
         session = resumable_submission.station_session
-    if session is None:
+    if session is None and not is_survey:
         return JsonResponse({"error": "not_checked_in"}, status=403)
 
     # Scope the submission to THIS attempt. A replay opens a fresh session, so it
     # gets its own submission row — a later attempt never overwrites an earlier
     # attempt's answers, including free-play forms.
-    submission = StationSubmission.objects.filter(
-        team=team, station=station, station_session=session,
-    ).order_by("-created_at").first()
+    if is_survey:
+        submission = StationSubmission.objects.filter(
+            station=station, participant_id=membership.participant_id,
+        ).first()
+    else:
+        submission = StationSubmission.objects.filter(
+            team=team, station=station, station_session=session, participant__isnull=True,
+        ).order_by("-created_at").first()
     if not submission:
-        submission = StationSubmission(team=team, station=station)
+        submission = StationSubmission(
+            team=team, station=station,
+            participant_id=membership.participant_id if is_survey else None,
+        )
     elif submission.status in (StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED):
         from api.services.submission_review_service import attempt_is_finished
-        if attempt_is_finished(submission):
+        if is_survey or attempt_is_finished(submission):
             return JsonResponse({"error": "attempt_finished"}, status=409)
 
     # Reject finished/stale attempts before creating any uploaded objects.
@@ -1950,22 +1994,29 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     # Same draw the team was served; answers to any other question are ignored.
     from api.services.question_bank_service import effective_quiz_items
     effective_items = effective_quiz_items(station)
-    quiz_result = grade_submission_quiz(
+    quiz_result = None if is_survey else grade_submission_quiz(
         config, 
         response_payload, 
         variant_item_ids(station, team),
         effective_quiz_items=effective_items
     )
     if isinstance(response_payload, dict):
+        from api.services.submission_config_service import clean_rating_answers
+        ratings = clean_rating_answers(config, response_payload)
+        if ratings:
+            response_payload["rating"] = ratings
+        else:
+            response_payload.pop("rating", None)
         # quiz_result is server-computed only; never trust a client-sent one
         response_payload.pop("quiz_result", None)
         if quiz_result is not None:
             response_payload["quiz_result"] = quiz_result
-        from api.services.submission_review_service import build_review, review_deadline
-        response_payload["answer_review"] = build_review(
-            config, response_payload, variant_item_ids(station, team), effective_items,
+        from api.services.submission_review_service import build_review, review_deadline, survey_review_items
+        review = build_review(
+            config, response_payload, [] if is_survey else variant_item_ids(station, team), effective_items,
         )
-        response_payload["review_available_at"] = review_deadline(station, team, session)
+        response_payload["answer_review"] = survey_review_items(review) if is_survey else review
+        response_payload["review_available_at"] = None if is_survey else review_deadline(station, team, session)
 
     submission.station_session = session
     submission.status = StationSubmission.STATUS_SUBMITTED
@@ -1999,7 +2050,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
     # A free-play form has no coop checkout.  Sending the form closes exactly
     # this attempt; a pending manual verdict remains pending and blocks replay
     # until grading resolves it.
-    if station.checkin_policy == Station.POLICY_FREE_PLAY or not checkout_after_submit(config):
+    if not is_survey and (station.checkin_policy == Station.POLICY_FREE_PLAY or not checkout_after_submit(config)):
         if station.scoring_mode == Station.SCORING_SCORE_ONLY:
             StationSession.objects.filter(id=session.id).update(outcome=StationSession.OUTCOME_PASSED)
         StationSession.objects.filter(id=session.id, status=StationSession.STATUS_ACTIVE).update(
@@ -2120,12 +2171,13 @@ def my_experience_view(request: HttpRequest):
         stations = Station.objects.select_related("sub_event__phase").filter(
             sub_event=current_event,
             active=True,
-            checkin_policy=Station.POLICY_FREE_PLAY,
+        ).filter(
+            Q(checkin_policy=Station.POLICY_FREE_PLAY) | Q(sub_event__type=SubEvent.TYPE_SURVEY),
         ).order_by("order", "id")
         bank_counts: dict = {}
         for station in stations:
             if _station_has_form(station, bank_counts):
-                open_forms.append(_station_form_payload(station, team=team))
+                open_forms.append(_station_form_payload(station, team=team, participant_id=membership.participant_id))
 
     return JsonResponse({
         "current_phase": current_phase_key,
@@ -2299,7 +2351,10 @@ def my_team_station_state_view(request: HttpRequest):
             }
 
     sessions = StationSession.objects.filter(team=team)
-    submissions = StationSubmission.objects.filter(team=team)
+    submissions = StationSubmission.objects.filter(team=team).filter(
+        ~Q(station__sub_event__type=SubEvent.TYPE_SURVEY)
+        | Q(participant_id=membership.participant_id),
+    )
     if station_id is not None:
         sessions = sessions.filter(station_id=station_id)
         submissions = submissions.filter(station_id=station_id)
@@ -2311,7 +2366,7 @@ def my_team_station_state_view(request: HttpRequest):
     session = sessions.order_by("-entered_at").values(
         "station_id", "status", "entered_at", "exited_at", "id",
     ).first()
-    if session:
+    if session and not (station_id is not None and station_for_replay and _is_survey_station(station_for_replay)):
         submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
         "station_id", "status", "submitted_at", "score", "response_payload", "item_marks",
@@ -2330,7 +2385,7 @@ def my_team_station_state_view(request: HttpRequest):
     ):
         form_station = station_for_replay  # already loaded above for this station_id
         if form_station is not None and form_station.submission_config:
-            closure = _form_closure_state(form_station, team)
+            closure = _form_closure_state(form_station, team, membership.participant_id)
             if closure["closed"] and closure["reason"] != "not_started":
                 form_closed_reason = closure["reason"]
 
@@ -2414,7 +2469,9 @@ def my_team_question_history_view(request: HttpRequest):
     submissions = StationSubmission.objects.filter(
         team_id=membership.team_id,
         status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
-    ).select_related("station__sub_event", "station_session", "team").order_by("-submitted_at", "-id")
+    ).exclude(station__sub_event__type=SubEvent.TYPE_SURVEY).select_related(
+        "station__sub_event", "station_session", "team",
+    ).order_by("-submitted_at", "-id")
     return JsonResponse({"attempts": [{
         "id": sub.id, "station_id": sub.station_id, "station_name": sub.station.name,
         "event_name": sub.station.sub_event.name,

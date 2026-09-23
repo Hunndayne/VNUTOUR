@@ -59,6 +59,11 @@ jobs:
         with:
           dockerfile: backend/Dockerfile
 
+      - name: Lint photo-ai Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: backend/Dockerfile.photo-ai
+
   backend-lint-build:
     runs-on: ubuntu-latest
     steps:
@@ -95,6 +100,14 @@ jobs:
       - name: Run tests
         working-directory: backend
         run: python -m pytest webapi/api/tests/ -q
+
+      # The gallery app is only installed when PHOTO_GALLERY_ENABLED=1, so it
+      # runs under its own settings module rather than settings_test.
+      - name: Run photo gallery tests
+        working-directory: backend/webapi
+        run: |
+          python -m pytest photo_gallery/tests --ds=serverapi.settings_test_photos -q
+          python manage.py makemigrations photo_gallery --check --dry-run --settings=serverapi.settings_test_photos
 
   # Perform the build-push process in two stages: first, build with `load: true` (without pushing) so Trivy can scan the image; then, perform the actual push. Thanks to the `type=gha` cache, the second stage is nearly instantaneous, avoiding a full rebuild from scratch.
   build-push:
@@ -168,6 +181,82 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Photo AI image (OpenCV + verified YuNet/SFace models). Same scan-then-push
+  # flow as build-push; a separate cache scope keeps the two images apart.
+  # Built on staging and main: prod runs the gallery too, and its worker must
+  # run the same gallery code as the backend that serves it.
+  build-push-photo-ai:
+    needs: [secret-scan, dockerfile-backend-lint, backend-lint-build]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Short SHA and rolling tag
+        id: meta
+        run: |
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            echo "rolling=staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "rolling=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image (local)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.photo-ai
+          push: false
+          load: true
+          tags: ghcr.io/hunndayne/vnutour-photo-ai:${{ steps.meta.outputs.sha }}
+          cache-from: type=gha,scope=photo-ai
+          cache-to: type=gha,mode=max,scope=photo-ai
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/hunndayne/vnutour-photo-ai:${{ steps.meta.outputs.sha }}
+          format: sarif
+          output: trivy-results-vnutour-photo-ai-${{ steps.meta.outputs.sha }}.sarif
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results-vnutour-photo-ai-${{ steps.meta.outputs.sha }}.sarif
+          category: photo-ai
+
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.photo-ai
+          push: true
+          tags: |
+            ghcr.io/hunndayne/vnutour-photo-ai:${{ steps.meta.outputs.sha }}
+            ghcr.io/hunndayne/vnutour-photo-ai:${{ steps.meta.outputs.rolling }}
+          cache-from: type=gha,scope=photo-ai
+          cache-to: type=gha,mode=max,scope=photo-ai
+
   # Update the Kustomize image tag with the new SHA so ArgoCD picks it up.
   # staging -> overlays/staging/kustomization.yaml (staging cluster only).
   # main    -> components/images/kustomization.yaml, the SINGLE source shared by
@@ -176,8 +265,12 @@ jobs:
   # GITHUB_TOKEN pushes do not trigger another push workflow.
   # Omit skip markers: they can enter a merge message and skip release CI.
   update-manifest:
-    needs: [build-push]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+    needs: [build-push, build-push-photo-ai]
+    # Both images must build: bumping only the backend would leave the photo
+    # worker on older gallery code than the API it pairs with.
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write # needed to push the manifest commit back to the repo
@@ -225,6 +318,7 @@ jobs:
           SHA="${{ steps.meta.outputs.sha }}"
           cd "${{ steps.target.outputs.dir }}"
           kustomize edit set image ghcr.io/hunndayne/vnutour-backend:${SHA}
+          kustomize edit set image ghcr.io/hunndayne/vnutour-photo-ai:${SHA}
 
       - name: Commit and push manifest update
         run: |
@@ -250,6 +344,7 @@ jobs:
         dockerfile-backend-lint,
         backend-lint-build,
         build-push,
+        build-push-photo-ai,
         update-manifest,
       ]
     uses: ./.github/workflows/notify.yml
@@ -268,4 +363,5 @@ jobs:
         dockerfile-backend-lint=${{ needs.dockerfile-backend-lint.result }}
         backend-lint-build=${{ needs.backend-lint-build.result }}
         build-push=${{ needs.build-push.result }}
+        build-push-photo-ai=${{ needs.build-push-photo-ai.result }}
         update-manifest=${{ needs.update-manifest.result }}

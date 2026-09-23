@@ -100,6 +100,7 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
     submissions = StationSubmission.objects.filter(
         station_id=station_id,
         station_session__isnull=True,
+        participant__isnull=True,
     ).select_related("team").order_by("-created_at")[:limit]
 
     out = []
@@ -248,6 +249,10 @@ def replay_lock_reason(
     The optional defaults retain compatibility with older direct callers while
     keeping the precedence used by every API path: passed, exhausted, pending,
     then the event's first-loop requirement.
+
+    `pending_result` means "an attempt is still open", not "a verdict is still
+    missing": a closed attempt awaiting a manual grade no longer blocks the
+    next one.
     """
     if not has_prior_closed:
         return None
@@ -318,6 +323,7 @@ def get_event_replay_states(
             team_id__in=team_ids,
             station_id__in=station_ids,
             station_session__isnull=True,
+            participant__isnull=True,
             status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
         ).only("id", "team_id", "station_id", "score", "is_correct", "created_at", "status")
         .order_by("team_id", "station_id", "created_at", "id")
@@ -380,6 +386,8 @@ def _assemble_replay_state(
         has_passed = StationSession.OUTCOME_PASSED in outcomes
         latest_outcome = outcomes[-1] if outcomes else None
         has_active = any(row["status"] == StationSession.STATUS_ACTIVE for row in rows)
+        # Still reported to the UI so a team can see "đang chờ chấm", but it no
+        # longer gates the next attempt — see the call below.
         pending_result = has_active or latest_outcome == StationSession.OUTCOME_PENDING
         has_prior = attempts_used > 0
         reason = replay_lock_reason(
@@ -388,7 +396,11 @@ def _assemble_replay_state(
             has_passed=has_passed,
             attempts_used=attempts_used,
             max_attempts=station.max_attempts,
-            pending_result=pending_result,
+            # Only an attempt that is STILL OPEN blocks the next one; a closed
+            # attempt waiting on a manual verdict does not. Graders lag behind
+            # during an event and teams were getting stuck queueing on them.
+            # `attempts_exhausted` above is what keeps replays bounded.
+            pending_result=has_active,
             replay_after_all=sub_event.replay_after_all,
             allow_replay_after_pass=sub_event.replay_after_pass,
         )
@@ -462,6 +474,7 @@ def _materialize_legacy_attempt(team: Team, station: Station) -> None:
     """
     submissions = list(StationSubmission.objects.filter(
         team=team, station=station, station_session__isnull=True,
+        participant__isnull=True,
         status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
     ).order_by("created_at", "id"))
     if not submissions:
@@ -812,6 +825,8 @@ def set_submission_score(
     lần chơi mới nhất. Bài nộp tự do (trạm free-play chưa từng có phiên nào)
     thì khoá entry theo submission như trước, vì không có phiên nào để tổng hợp.
     """
+    if submission.station.sub_event.type == SubEvent.TYPE_SURVEY:
+        return "survey_not_graded"
     _lock_attempt_scope(submission.team_id, submission.station_id)
     if results_are_locked():
         return "results_locked"

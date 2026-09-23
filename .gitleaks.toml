@@ -15,4 +15,5 @@ disabledRules = ["discord-client-id"]
 description = "Non-secret high-entropy strings flagged by generic rules"
 paths = [
     '''backend/webapi/api/migrations/.*\.py''',
+    '''backend/webapi/photo_gallery/migrations/.*\.py''',
 ]

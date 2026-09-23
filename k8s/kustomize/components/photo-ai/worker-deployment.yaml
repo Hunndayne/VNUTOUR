@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: photo-ai-worker
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: photo-ai-worker
+  template:
+    metadata:
+      labels:
+        app: photo-ai-worker
+    spec:
+      # media-data is a ReadWriteOnce local-path claim shared with the backend:
+      # the worker writes derivatives there when R2 is not configured, and the
+      # backend serves them at /media/. Same storage node, same volume.
+      nodeSelector:
+        vnutour/storage: "true"
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: photo-ai-worker
+          image: ghcr.io/hunndayne/vnutour-photo-ai
+          imagePullPolicy: IfNotPresent
+          # The gallery schema belongs to this worker: it migrates its own
+          # database on start, then processes jobs. A restart loop here is the
+          # retry while photos-db is still coming up; the event database
+          # migration (PreSync hook) never touches the gallery.
+          command:
+            - sh
+            - -c
+            - >-
+              python webapi/manage.py migrate photo_gallery --database photos --noinput &&
+              exec python webapi/manage.py process_event_photos
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - configMapRef:
+                name: photo-ai-config
+            - secretRef:
+                name: backend-secret
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: serverapi.settings
+            - name: PHOTO_GALLERY_ENABLED
+              value: "1"
+            - name: PHOTO_DRIVE_CREDENTIALS
+              value: /var/run/photo-ai/credentials.json
+            - name: PHOTO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: photo-ai-secret
+                  key: PHOTO_DB_PASSWORD
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: "3"
+              memory: 2Gi
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+            - name: drive-credentials
+              mountPath: /var/run/photo-ai
+              readOnly: true
+            - name: media
+              mountPath: /app/webapi/media
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
+        - name: drive-credentials
+          secret:
+            secretName: photo-ai-secret
+            items:
+              - key: credentials.json
+                path: credentials.json
+            defaultMode: 0440

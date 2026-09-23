@@ -1,0 +1,7 @@
+# Shared Django/runtime dependencies. Keep this file beside requirements.txt so
+# the AI image receives the same application dependency set as the web image.
+-r requirements.txt
+
+# CPU inference runtime. These versions match the local photo-engine baseline.
+numpy==1.26.4
+opencv-python-headless==4.10.0.84

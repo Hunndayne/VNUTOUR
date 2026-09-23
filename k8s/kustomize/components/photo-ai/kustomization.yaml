@@ -1,0 +1,85 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Opt-in photo AI tier: model API, import worker and the gallery's own pgvector
+# database. The event database is never modified by this component. Add it to an
+# overlay once the photo-ai image and the out-of-band photo-ai-secret
+# (PHOTO_AI_TOKEN, PHOTO_DB_PASSWORD, credentials.json) exist.
+resources:
+  - configmap.yaml
+  - photos-db.yaml
+  - service.yaml
+  - api-deployment.yaml
+  - worker-deployment.yaml
+
+# Enabling the component enables the gallery app for the existing backend
+# migration hook. PHOTO_SEARCH_ENABLED remains false until the threshold has
+# been measured on the target CPU and image set.
+patches:
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backend
+                env:
+                  - name: PHOTO_R2_BUCKET
+                    valueFrom:
+                      configMapKeyRef:
+                        name: photo-ai-config
+                        key: PHOTO_R2_BUCKET
+                  # optional: a missing secret only disables search (the
+                  # backend answers search_unavailable) instead of blocking
+                  # every backend pod from starting.
+                  - name: PHOTO_AI_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: photo-ai-secret
+                        key: PHOTO_AI_TOKEN
+                        optional: true
+                  - name: PHOTO_DB_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: photo-ai-secret
+                        key: PHOTO_DB_PASSWORD
+                        optional: true
+  # The event-database migration hook is deliberately left alone: the gallery
+  # has its own database and the worker migrates it.
+  - target:
+      kind: ConfigMap
+      name: backend-config
+    patch: |-
+      - op: add
+        path: /data/PHOTO_GALLERY_ENABLED
+        value: "1"
+      - op: add
+        path: /data/PHOTO_AI_URL
+        value: "http://photo-ai:8000"
+      - op: add
+        path: /data/PHOTO_SEARCH_ENABLED
+        value: "0"
+      - op: add
+        path: /data/PHOTO_DETECT_THRESHOLD
+        value: "0.60"
+      - op: add
+        path: /data/PHOTO_SEARCH_THRESHOLD
+        value: "0.50"
+      - op: add
+        path: /data/PHOTO_DB_HOST
+        value: "photos-db"
+      - op: add
+        path: /data/PHOTO_DB_PORT
+        value: "5432"
+      - op: add
+        path: /data/PHOTO_DB_NAME
+        value: "vnutour_photos"
+      - op: add
+        path: /data/PHOTO_DB_USER
+        value: "vnutour_photos"

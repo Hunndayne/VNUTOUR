@@ -9,7 +9,7 @@ export function explainReplayLock(reason) {
     passed: 'Đội đã đạt trạm này nên không thể chơi lại.',
     incomplete: 'Đội phải đi hết tất cả các trạm khác rồi mới được quay lại trạm này.',
     attempts_exhausted: 'Đội đã dùng hết số lượt chơi của trạm này.',
-    pending_result: 'Lượt chơi đang chờ chấm kết quả. Đội có thể chơi lại nếu chưa đạt và còn lượt.',
+    pending_result: 'Đội đang trong một lượt chơi chưa kết thúc ở trạm này.',
   }
   return messages[reason] || 'Trạm này hiện đang khóa lượt chơi lại.'
 }

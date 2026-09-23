@@ -84,12 +84,16 @@ Trước khi chạy, tạo bản ghi DNS A/AAAA của `GRAFANA_HOSTNAME` trỏ t
    - Pod Ready, PVC Bound: `sudo k3s kubectl -n monitoring get pods,pvc`.
    - Prometheus → **Status → Target health**: kubelet/cAdvisor, node-exporter, kube-state-metrics có trạng thái UP.
    - Query `up`, `count(container_cpu_usage_seconds_total)`, `count(container_memory_working_set_bytes)`, `count(node_memory_MemTotal_bytes)`, `count(kube_pod_info)` trả dữ liệu.
-   - Grafana datasource **Prometheus** kết nối thành công; dashboard **K3S cluster monitoring** có dữ liệu CPU/RAM khi chọn Node/Namespace, khoảng thời gian 15 phút.
+   - Grafana datasource **Prometheus** kết nối thành công với cụm VPS. Datasource **Prometheus Homelab** kết nối tới `http://192.168.1.110:30900` qua WireGuard; dashboard **K3S cluster monitoring on Homelab** có dữ liệu cluster và workload VNUTour.
    - Nếu pod Pending: `sudo k3s kubectl -n monitoring describe pod <POD>`; nếu PVC Pending, kiểm tra provisioner local-path/node scheduling. Nếu target DOWN, xem lỗi target và đường mạng/TLS tới kubelet; Pod Ready chưa chứng minh scrape thành công.
 
 ## Dashboard 15282 và phạm vi metrics
 
-[Dashboard 15282](https://grafana.com/grafana/dashboards/15282-k8s-rke-cluster-monitoring/) được lưu trong repo dưới tên [vps_k3s_dashboard.json](../dashboard/vps_k3s_dashboard.json) và hiển thị với tên **K3S cluster monitoring on VPS**. Pipeline kiểm tra và chuẩn hóa JSON bằng `jq -S -c .`, sau đó thay `${DS_PROMETHEUS}` bằng datasource UID `prometheus`. Grafana sidecar tự nạp ConfigMap `vps-k3s-monitoring-dashboard`, không cần import thủ công. Các dashboard mặc định của chart vẫn được giữ.
+[Dashboard 15282](https://grafana.com/grafana/dashboards/15282-k8s-rke-cluster-monitoring/) được lưu trong repo dưới tên [vps_k3s_dashboard.json](../dashboard/vps_k3s_dashboard.json) và hiển thị với tên **K3S cluster monitoring on VPS**. Dashboard này vẫn dùng datasource UID `prometheus` của VPS và ConfigMap `vps-k3s-monitoring-dashboard`.
+
+[homelab_k3s_dashboard.json](../dashboard/homelab_k3s_dashboard.json) giữ toàn bộ panel của dashboard K3s trên, đồng thời thêm nguyên nhóm 8 panel workload VNUTour từ manifest homelab. Dashboard tổng hợp có tên **K3S cluster monitoring on Homelab**, UID `k3s-homelab`, dùng datasource UID `prometheus-homelab` và ConfigMap riêng `homelab-k3s-monitoring-dashboard`. Vì dùng UID và ConfigMap riêng, dashboard VPS và dashboard mặc định của chart không bị ghi đè hoặc xóa. Pipeline kiểm tra, chuẩn hóa cả hai JSON bằng `jq -S -c .` rồi Grafana sidecar tự nạp chúng.
+
+Datasource **Prometheus Homelab** trỏ tới `http://192.168.1.110:30900`. Đây là NodePort riêng qua route WireGuard từ VPS tới LAN `192.168.1.0/24`; không port-forward `30900` trên router ra Internet. Trước khi chạy pipeline, từ VPS kiểm tra `curl --fail http://192.168.1.110:30900/-/ready`. Nếu host truy cập được nhưng Grafana báo lỗi datasource, kiểm tra tiếp đường egress từ pod Grafana tới cùng URL.
 
 Dashboard dùng cAdvisor, có cả query root/system cgroups và `container_spec_*`. Vì chart mặc định lọc bỏ một phần metrics đó, values đặt `cAdvisorMetricRelabelings: []`. Việc này tăng lượng series; theo dõi RAM/disk Prometheus. Kubelet/cAdvisor mới có thể không xuất một số metrics cũ: panel systemd/filesystem trống cần kiểm tra query và metric thật, không thể đảm bảo mọi panel của revision 1 đều tương thích chỉ nhờ cài chart. Khi sửa hoặc thay dashboard JSON, CI xác nhận file vẫn là JSON hợp lệ; nội dung thay đổi được review trực tiếp qua Git diff và không cần cập nhật checksum thủ công.
 

@@ -1,0 +1,106 @@
+# Dedicated PostgreSQL for the photo gallery (pgvector).
+#
+# Deliberately separate from the event database: the gallery needs the pgvector
+# extension and runs vector scans, and neither belongs on the database that
+# carries teams, check-ins and scores. Keeping it here also means enabling the
+# gallery never changes the event DB image — on prod that database is external
+# Patroni HA, outside this GitOps tree.
+#
+# Disposable by design: every row can be rebuilt by re-importing the Drive
+# folders, so this single pod needs no HA. Album state and tombstones are worth
+# a periodic pg_dump before an event.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: photos-db-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: photos-db
+spec:
+  clusterIP: None
+  selector:
+    app: photos-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: photos-db
+spec:
+  serviceName: photos-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: photos-db
+  template:
+    metadata:
+      labels:
+        app: photos-db
+    spec:
+      # local-path binds the volume to one node, like the staging event DB.
+      nodeSelector:
+        vnutour/storage: "true"
+      containers:
+        - name: photos-db
+          # Upstream pgvector image, pinned. Nothing here is built by this repo,
+          # and the event database keeps its own stock Postgres image.
+          image: pgvector/pgvector:0.8.0-pg16
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: photo-ai-config
+                  key: PHOTO_DB_NAME
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: photo-ai-config
+                  key: PHOTO_DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: photo-ai-secret
+                  key: PHOTO_DB_PASSWORD
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          volumeMounts:
+            - name: photos-db-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: photos-db-data
+          persistentVolumeClaim:
+            claimName: photos-db-data

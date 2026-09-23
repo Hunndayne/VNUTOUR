@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: photo-ai-config
+data:
+  PHOTO_AI_URL: "http://photo-ai:8000"
+  PHOTO_AI_MODEL_DIR: "/models"
+  PHOTO_AI_THREADS: "2"
+  PHOTO_SEARCH_ENABLED: "0"
+  # YuNet score for album photos; lower finds more faces at more angles.
+  PHOTO_DETECT_THRESHOLD: "0.60"
+  PHOTO_SEARCH_THRESHOLD: "0.50"
+  # Empty reuses R2_BUCKET from backend-secret; photo keys use event-photos/.
+  # Set only when overriding the shared bucket for both backend and worker.
+  PHOTO_R2_BUCKET: ""
+  # Dedicated gallery database (components/photo-ai/photos-db.yaml). The event
+  # database is never touched by the gallery.
+  PHOTO_DB_HOST: "photos-db"
+  PHOTO_DB_PORT: "5432"
+  PHOTO_DB_NAME: "vnutour_photos"
+  PHOTO_DB_USER: "vnutour_photos"

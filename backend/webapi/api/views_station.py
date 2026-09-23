@@ -8,7 +8,7 @@ from django.http import JsonResponse, HttpRequest
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Account, Station, StationSession, StationAssignment, StationSubmission
+from api.models import Account, Station, StationSession, StationAssignment, StationSubmission, SubEvent
 from api.services.station_service import (
     create_station, update_station, delete_station,
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
@@ -190,6 +190,10 @@ def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
         "id": sub.id,
         "team_code": sub.team.code,
         "team_name": sub.team.name,
+        "is_survey": sub.station.sub_event.type == SubEvent.TYPE_SURVEY,
+        "participant_id": sub.participant_id,
+        "participant_name": sub.participant.full_name if sub.participant_id else None,
+        "participant_mssv": sub.participant.mssv if sub.participant_id else None,
         "status": sub.status,
         "is_correct": sub.is_correct,
         "score": sub.score,
@@ -221,7 +225,7 @@ def station_submissions_view(request: HttpRequest, station_id: int):
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
-    submissions = StationSubmission.objects.select_related("team", "graded_by", "station").filter(
+    submissions = StationSubmission.objects.select_related("team", "graded_by", "station__sub_event", "participant").filter(
         station=station,
     ).order_by(F("submitted_at").desc(nulls_last=True))
 
@@ -270,6 +274,9 @@ def submission_grade_view(request: HttpRequest, submission_id: int):
         collab=acc, station=submission.station, active=True,
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    if submission.station.sub_event.type == SubEvent.TYPE_SURVEY:
+        return JsonResponse({"error": "survey_not_graded"}, status=400)
 
     if "is_correct" in data and not isinstance(data.get("is_correct"), (bool, type(None))):
         return JsonResponse({"error": "invalid_is_correct"}, status=400)

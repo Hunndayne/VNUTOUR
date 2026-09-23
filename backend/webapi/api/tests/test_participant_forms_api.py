@@ -539,6 +539,48 @@ class SubmissionItemOrderTests(FormsApiTestBase):
         )
 
 
+class RatingItemTests(FormsApiTestBase):
+    """Star-rating questions: served as-is, stored cleaned, never graded."""
+
+    def setUp(self):
+        super().setUp()
+        self.station.submission_config = {"items": [
+            {"id": "r1", "type": "rating", "question": "Trạm vui không?",
+             "scale": 5, "lowLabel": "Chán", "highLabel": "Rất vui"},
+            {"id": "r2", "type": "rating", "question": "Scale ngoài khoảng", "scale": 99},
+        ]}
+        self.station.save(update_fields=["submission_config"])
+
+    def test_rating_item_is_served_with_clamped_scale(self):
+        response = self.client.get(
+            "/api/my-team/forms", HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+        items = response.json()["accessible_forms"][0]["submission_config"]["items"]
+        self.assertEqual([(i["id"], i["type"], i["scale"]) for i in items],
+                         [("r1", "rating", 5), ("r2", "rating", 10)])
+        self.assertEqual(items[0]["highLabel"], "Rất vui")
+
+    def test_submit_stores_valid_ratings_and_drops_bad_ones(self):
+        response = self._submit({"response_payload": {"rating": [
+            {"id": "r1", "value": 4},
+            {"id": "r2", "value": 11},
+            {"id": "ghost", "value": 3},
+        ]}})
+
+        self.assertEqual(response.status_code, 201)
+        submission = StationSubmission.objects.get(team=self.team, station=self.station)
+        self.assertEqual(
+            [(r["id"], r["value"]) for r in submission.response_payload["rating"]],
+            [("r1", 4), ("r2", None)],
+        )
+        self.assertNotIn("quiz_result", submission.response_payload)
+        self.assertIsNone(submission.is_correct)
+
+    def test_rating_must_be_a_list(self):
+        response = self._submit({"response_payload": {"rating": {"r1": 4}}})
+        self.assertEqual(response.status_code, 400)
+
+
 class AnswerLeakTests(FormsApiTestBase):
     """Nothing a participant can reach may carry the correct answer."""
 

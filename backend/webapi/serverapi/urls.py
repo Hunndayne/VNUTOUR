@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.conf import settings
 from django.urls import path, include, re_path
 
 from api.views_media import submission_media_view
@@ -21,4 +22,7 @@ urlpatterns = [
     # URLs poster-friendly; nginx proxies /s/ to this process like /api/.
     path("s/<str:code>", short_link_redirect_view),
 ]
+
+if settings.PHOTO_GALLERY_ENABLED:
+    urlpatterns.append(path("api/", include("photo_gallery.urls")))
 

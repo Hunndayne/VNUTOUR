@@ -39,6 +39,42 @@ INSTALLED_APPS = [
     "api",
 ]
 
+# Optional gallery. Its tables live in a dedicated pgvector PostgreSQL
+# ("photos" database, configured below), never in the event database, so
+# enabling it never requires changing the main DB server or its image.
+PHOTO_GALLERY_ENABLED = os.getenv("PHOTO_GALLERY_ENABLED", "0") == "1"
+if PHOTO_GALLERY_ENABLED:
+    INSTALLED_APPS.append("photo_gallery")
+PHOTO_AI_URL = os.getenv("PHOTO_AI_URL", "http://photo-ai:8000").rstrip("/")
+PHOTO_AI_TOKEN = os.getenv("PHOTO_AI_TOKEN", "")
+PHOTO_AI_MODEL_DIR = os.getenv("PHOTO_AI_MODEL_DIR", "/models")
+PHOTO_AI_THREADS = int(os.getenv("PHOTO_AI_THREADS", "2"))
+# YuNet score for album photos. 0.9 (the OpenCV demo default) only keeps
+# faces looking straight at the camera; candid event photos need 0.6.
+PHOTO_DETECT_THRESHOLD = float(os.getenv("PHOTO_DETECT_THRESHOLD", "0.60"))
+PHOTO_SEARCH_THRESHOLD = float(os.getenv("PHOTO_SEARCH_THRESHOLD", "0.50"))
+PHOTO_SEARCH_ENABLED = os.getenv("PHOTO_SEARCH_ENABLED", "0") == "1"
+PHOTO_SEARCH_TIMEOUT_SECONDS = int(os.getenv("PHOTO_SEARCH_TIMEOUT_SECONDS", "30"))
+PHOTO_SEARCH_RATE_LIMIT = int(os.getenv("PHOTO_SEARCH_RATE_LIMIT", "10"))
+PHOTO_SEARCH_RATE_WINDOW_SECONDS = int(os.getenv("PHOTO_SEARCH_RATE_WINDOW_SECONDS", "600"))
+PHOTO_SEARCH_PAGE_RATE_LIMIT = int(os.getenv("PHOTO_SEARCH_PAGE_RATE_LIMIT", "120"))
+PHOTO_SEARCH_PAGE_RATE_WINDOW_SECONDS = int(os.getenv("PHOTO_SEARCH_PAGE_RATE_WINDOW_SECONDS", "600"))
+PHOTO_DRIVE_CREDENTIALS = os.getenv("PHOTO_DRIVE_CREDENTIALS", "")
+# Shown to admins so they know whom to share a Drive folder with. Only the
+# worker mounts the key file, so the backend gets the address as plain config.
+PHOTO_DRIVE_SERVICE_EMAIL = os.getenv("PHOTO_DRIVE_SERVICE_EMAIL", "")
+# Empty means use R2_BUCKET, with photo keys under event-photos/.
+PHOTO_R2_BUCKET = os.getenv("PHOTO_R2_BUCKET", "")
+PHOTO_MAX_IMAGE_BYTES = 30 * 1024 * 1024
+PHOTO_MAX_PIXELS = 60_000_000
+PHOTO_REFERENCE_MAX_BYTES = 10 * 1024 * 1024
+# Let a maximum-size multipart reference reach the view, which then applies
+# the tighter per-file check and returns the documented JSON error response.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("DATA_UPLOAD_MAX_MEMORY_SIZE", str(PHOTO_REFERENCE_MAX_BYTES + 64 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", str(PHOTO_REFERENCE_MAX_BYTES + 64 * 1024)))
+PHOTO_LEASE_SECONDS = 600
+PHOTO_MAX_ATTEMPTS = 3
+
 MIDDLEWARE = [
     # The Prometheus pair has to bracket everything else: latency is measured
     # between the two, so any middleware placed outside them is invisible to
@@ -86,6 +122,19 @@ DATABASES = {
         "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
+
+if PHOTO_GALLERY_ENABLED:
+    DATABASES["photos"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("PHOTO_DB_NAME", "vnutour_photos"),
+        "USER": os.getenv("PHOTO_DB_USER", "vnutour_photos"),
+        "PASSWORD": os.getenv("PHOTO_DB_PASSWORD", ""),
+        "HOST": os.getenv("PHOTO_DB_HOST", "photos-db"),
+        "PORT": os.getenv("PHOTO_DB_PORT", "5432"),
+        # Fail fast: a gallery outage must not tie up web workers.
+        "OPTIONS": {"connect_timeout": 5},
+    }
+    DATABASE_ROUTERS = ["photo_gallery.routers.PhotoGalleryRouter"]
 
 LANGUAGE_CODE = "vi"
 TIME_ZONE = "Asia/Ho_Chi_Minh"

@@ -24,6 +24,12 @@ components:
   - ../../components/db-patroni
   - ../../components/failover-workloads
   - ../../components/site-failover
+  # Event photo gallery (homelab only). prod-standby deliberately leaves it out:
+  # photos-db is a single local-path pod, so during a failover to Linode the
+  # backend there reports photo_gallery=false and the frontend hides the gallery
+  # instead of showing a broken page. Needs the out-of-band photo-ai-secret
+  # (present in both zones, identical) and R2 in backend-secret.
+  - ../../components/photo-ai
   # Set image tags after all workloads are added, including bot and email-worker.
   - ../../components/images
 
@@ -52,3 +58,86 @@ patches:
                     value: "vpn.hunn.io.vn"
                   - name: FAILBACK_STABILIZE
                     value: "300"
+
+  # --- Photo gallery placement and switches ----------------------------------
+  # vnutour-w1 carries the Patroni primary and is nearly fully requested, so the
+  # whole gallery tier (database, worker and the search API, which bursts to
+  # 2 CPUs per search) lives on vnutour-w2. photos-db binds its local-path volume to
+  # the node it first lands on, which is why it is pinned by hostname.
+  - target:
+      kind: StatefulSet
+      name: photos-db
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: vnutour-w2
+  # Prod stores derivatives in R2, so the worker does not need media-data. That
+  # claim is bound to w1 (backend-ops); mounting it would pin the worker there.
+  # The test ops make the build fail loudly if the component's volume order
+  # ever changes, instead of silently removing the wrong volume.
+  - target:
+      kind: Deployment
+      name: photo-ai-worker
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/1/name
+        value: media
+      - op: remove
+        path: /spec/template/spec/volumes/1
+      - op: test
+        path: /spec/template/spec/containers/0/volumeMounts/2/name
+        value: media
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts/2
+      - op: replace
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: vnutour-w2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+            ephemeral-storage: 1Gi
+  - target:
+      kind: Deployment
+      name: photo-ai
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: vnutour-w2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 384Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "2"
+            memory: 1536Mi
+            ephemeral-storage: 1Gi
+  - target:
+      kind: ConfigMap
+      name: backend-config
+    patch: |-
+      - op: replace
+        path: /data/PHOTO_SEARCH_ENABLED
+        value: "1"
+      - op: add
+        path: /data/PHOTO_DRIVE_SERVICE_EMAIL
+        value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
+  - target:
+      kind: ConfigMap
+      name: photo-ai-config
+    patch: |-
+      - op: replace
+        path: /data/PHOTO_SEARCH_ENABLED
+        value: "1"

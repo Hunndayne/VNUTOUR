@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: photo-ai
+spec:
+  type: ClusterIP
+  selector:
+    app: photo-ai
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

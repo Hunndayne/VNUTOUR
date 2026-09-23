@@ -12,11 +12,13 @@ chart_version=91.4.1
 chart=oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
 release=monitoring
 namespace=monitoring
-dashboard_configmap=vps-k3s-monitoring-dashboard
+vps_dashboard_configmap=vps-k3s-monitoring-dashboard
+homelab_dashboard_configmap=homelab-k3s-monitoring-dashboard
 helm_version=4.3.0
 helm_sha256=86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-dashboard_file="$script_dir/../dashboard/vps_k3s_dashboard.json"
+vps_dashboard_file="$script_dir/../dashboard/vps_k3s_dashboard.json"
+homelab_dashboard_file="$script_dir/../dashboard/homelab_k3s_dashboard.json"
 ingress_values_template="$script_dir/ingress-values.yaml"
 certificate_template="$script_dir/certificate.yaml"
 ingress_template="$script_dir/ingress.yaml"
@@ -205,18 +207,24 @@ else
 fi
 
 echo
-echo '========== [MONITORING VPS 5/9] Render and validate chart, dashboard and HTTPS config =========='
-for required_file in "$dashboard_file" "$ingress_values_template" "$certificate_template" "$ingress_template"; do
+echo '========== [MONITORING VPS 5/9] Render and validate chart, dashboards and HTTPS config =========='
+for required_file in "$vps_dashboard_file" "$homelab_dashboard_file" \
+  "$ingress_values_template" "$certificate_template" "$ingress_template"; do
   [[ -f $required_file ]] || {
     echo "[error] Required monitoring file is missing: $required_file" >&2
     exit 1
   }
 done
-jq -S -c . "$dashboard_file" > "$work/dashboard-canonical.json" || {
-  echo '[error] Dashboard is not valid JSON.' >&2
+jq -S -c . "$vps_dashboard_file" > "$work/vps-dashboard-canonical.json" || {
+  echo '[error] VPS dashboard is not valid JSON.' >&2
   exit 1
 }
 echo '[check] VPS K3s dashboard JSON: valid and canonicalized'
+jq -S -c . "$homelab_dashboard_file" > "$work/homelab-dashboard-canonical.json" || {
+  echo '[error] Homelab dashboard is not valid JSON.' >&2
+  exit 1
+}
+echo '[check] Homelab K3s dashboard JSON: valid and canonicalized'
 sed "s/grafana.example.invalid/$grafana_hostname/g" "$ingress_values_template" > "$work/ingress-values.yaml"
 sed "s/grafana.example.invalid/$grafana_hostname/g" "$certificate_template" > "$work/certificate.yaml"
 sed "s/grafana.example.invalid/$grafana_hostname/g" "$ingress_template" > "$work/ingress.yaml"
@@ -231,10 +239,15 @@ helm template "$release" "$package" -n "$namespace" -f "$script_dir/values.yaml"
   > "$work/rendered.yaml"
 echo "[check] kube-prometheus-stack $chart_version rendered successfully"
 jq 'walk(if type == "string" then gsub("\\$\\{DS_PROMETHEUS\\}"; "prometheus") else . end)
-  | del(.__inputs) | .id = null' "$work/dashboard-canonical.json" > "$work/vps_k3s_dashboard.json"
+  | del(.__inputs) | .id = null' "$work/vps-dashboard-canonical.json" > "$work/vps_k3s_dashboard.json"
+jq 'walk(if type == "string" then gsub("\\$\\{DS_PROMETHEUS\\}"; "prometheus-homelab") else . end)
+  | del(.__inputs) | .id = null
+  | .uid = "k3s-homelab"
+  | .title = "K3S cluster monitoring on Homelab"' \
+  "$work/homelab-dashboard-canonical.json" > "$work/homelab_k3s_dashboard.json"
 
 echo
-echo '========== [MONITORING VPS 6/9] Reconcile Grafana credentials and dashboard =========='
+echo '========== [MONITORING VPS 6/9] Reconcile Grafana credentials and dashboards =========='
 # Namespace creation is deliberately delayed until chart, dashboard, release and
 # CRD safety checks have all passed.
 if [[ $namespace_exists == false ]]; then
@@ -269,16 +282,27 @@ else
   echo '[resource] secret/monitoring-grafana-admin: created'
 fi
 
-if k3s kubectl -n "$namespace" get configmap "$dashboard_configmap" >/dev/null 2>&1; then
-  echo "[resource] configmap/$dashboard_configmap: exists; reconciling reviewed dashboard content"
-else
-  echo "[resource] configmap/$dashboard_configmap: missing; creating it"
-fi
-k3s kubectl -n "$namespace" create configmap "$dashboard_configmap" \
-  --from-file=vps_k3s_dashboard.json="$work/vps_k3s_dashboard.json" --dry-run=client -o json \
-  | jq '.metadata.labels.grafana_dashboard = "1"' \
-  | k3s kubectl apply -f -
-echo "[resource] configmap/$dashboard_configmap: reconciled"
+reconcile_dashboard() {
+  local configmap_name=$1
+  local dashboard_name=$2
+  local dashboard_path=$3
+
+  if k3s kubectl -n "$namespace" get configmap "$configmap_name" >/dev/null 2>&1; then
+    echo "[resource] configmap/$configmap_name: exists; reconciling reviewed dashboard content"
+  else
+    echo "[resource] configmap/$configmap_name: missing; creating it"
+  fi
+  k3s kubectl -n "$namespace" create configmap "$configmap_name" \
+    --from-file="$dashboard_name=$dashboard_path" --dry-run=client -o json \
+    | jq '.metadata.labels.grafana_dashboard = "1"' \
+    | k3s kubectl apply -f -
+  echo "[resource] configmap/$configmap_name: reconciled"
+}
+
+reconcile_dashboard "$vps_dashboard_configmap" \
+  vps_k3s_dashboard.json "$work/vps_k3s_dashboard.json"
+reconcile_dashboard "$homelab_dashboard_configmap" \
+  homelab_k3s_dashboard.json "$work/homelab_k3s_dashboard.json"
 
 echo
 echo '========== [MONITORING VPS 7/9] Reconcile kube-prometheus-stack =========='
@@ -320,6 +344,7 @@ cat <<EOF
 
 [success] Monitoring baseline is ready.
 [url] Grafana: https://$grafana_hostname/
+[private] Grafana datasource Prometheus Homelab: http://192.168.1.110:30900 through WireGuard
 [private] Prometheus remains ClusterIP-only. Use port-forward when direct access is needed:
   k3s kubectl -n monitoring port-forward --address 127.0.0.1 svc/monitoring-grafana 3000:80
   k3s kubectl -n monitoring port-forward --address 127.0.0.1 svc/monitoring-prometheus 9090:9090
