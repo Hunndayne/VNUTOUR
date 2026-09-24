@@ -679,17 +679,15 @@ Cache chỉ giảm tác hại của polling; nó không loại bỏ polling. Khi
 
 ## 19. Nguyên tắc cần ghi nhớ
 
-> Cache dữ liệu có thể tái tạo; không cache quyết định cần tính đúng tuyệt đối.
+- Cache dữ liệu có thể tái tạo; không cache quyết định cần tính đúng tuyệt đối.
+- TTL là giới hạn stale, không phải cơ chế đồng bộ đầy đủ.
+- DB commit trước, invalidation sau.
+- Redis lỗi nên làm hệ thống chậm hơn, không làm hệ thống ngừng hoạt động.
+- Hit ratio cao không có ý nghĩa nếu dữ liệu trả về sai.
+- Với VNUTOUR, điểm khởi đầu có ROI cao nhất là đưa rate limit ra khỏi PostgreSQL, sau đó cache site config, scoreboard và dashboard; không bắt đầu từ station state hoặc các transaction check-in.
 
-> TTL là giới hạn stale, không phải cơ chế đồng bộ đầy đủ.
-
-> DB commit trước, invalidation sau.
-
-> Redis lỗi nên làm hệ thống chậm hơn, không làm hệ thống ngừng hoạt động.
-
-> Hit ratio cao không có ý nghĩa nếu dữ liệu trả về sai.
-
-> Với VNUTOUR, điểm khởi đầu có ROI cao nhất là đưa rate limit ra khỏi PostgreSQL, sau đó cache site config, scoreboard và dashboard; không bắt đầu từ station state hoặc các transaction check-in.
+Từ điển thuật ngữ đã được tách thành
+[REDIS-GLOSSARY.md](REDIS-GLOSSARY.md) để tiện tra cứu độc lập.
 
 ## 20. Tài liệu tham khảo
 
