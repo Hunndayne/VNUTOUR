@@ -1,0 +1,43 @@
+config:
+  # Rules enabled / disabled
+
+  # MD013 – Line length
+  # Documentation includes tables, long commands, paths, and URLs where a
+  # hard line1length limit would reduce readability rather than improve it.
+  MD013: false
+
+  # MD024 – Multiple headings with the same content
+  # Reusing a heading under different parent sections is valid in long guides.
+  MD024:
+    siblings_only: true
+
+  # MD033 – Inline HTML
+  # Docs occasionally use <details>/<summary> for collapsible sections and raw HTML tables; allow those tags explicitly.
+  MD033:
+    allowed_elements:
+      - details
+      - summary
+      - br
+      - sup
+      - sub
+
+  # MD041 – First line in a file should be a top-level heading
+  # Some files (e.g. CHANGELOG fragments, partial includes) start with front-matter or a blockquote instead.  Disable to avoid false positives.
+  MD041: false
+
+  # MD046 – Code block style
+  # Enforce fenced code blocks (``` … ```) uniformly across all docs.
+  MD046:
+    style: fenced
+
+  # MD049 – Emphasis style
+  # Enforce asterisks for *italic* text.
+  MD049:
+    style: asterisk
+
+  # MD050 – Strong style
+  # Enforce asterisks for **bold** text.
+  MD050:
+    style: asterisk
+
+noProgress: true

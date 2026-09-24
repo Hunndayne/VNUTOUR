@@ -1,0 +1,228 @@
+name: CI for Documentation
+
+on:
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - "**/*.md"
+      - ".markdownlint-cli2.yaml"
+      - "lychee.toml"
+      - ".github/workflows/ci-docs.yml"
+
+concurrency:
+  group: ci-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  docs-report:
+    name: Documentation checks (non-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The complete history is required to compare the PR base and head.
+          fetch-depth: 0
+
+      - name: Detect changed Markdown files
+        id: files
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-docs
+
+          # Use null-delimited paths so spaces and brackets in filenames remain
+          # intact while loading them into the Bash array.
+          if [[ -z "$PR_BASE_SHA" || "$PR_BASE_SHA" =~ ^0+$ ]]; then
+            mapfile -d '' files < <(
+              git ls-tree -rz --name-only "$PR_HEAD_SHA" -- '*.md'
+            )
+          else
+            mapfile -d '' files < <(
+              git diff --name-only --diff-filter=ACMR -z \
+                "$PR_BASE_SHA" "$PR_HEAD_SHA" -- '*.md'
+            )
+          fi
+
+          : > .ci-docs/markdown-files.txt
+          if (( ${#files[@]} > 0 )); then
+            printf '%s\n' "${files[@]}" > .ci-docs/markdown-files.txt
+          fi
+
+          if (( ${#files[@]} > 0 )); then
+            has_files=true
+          else
+            has_files=false
+          fi
+
+          {
+            echo "has_files=$has_files"
+            echo "file_count=${#files[@]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Markdownlint
+        id: markdownlint
+        if: steps.files.outputs.has_files == 'true'
+        shell: bash
+        # Findings are recorded in the report instead of failing the job.
+        run: |
+          set +e
+          mapfile -t files < .ci-docs/markdown-files.txt
+
+          lint_paths=()
+          for file in "${files[@]}"; do
+            # The colon prefix makes markdownlint-cli2 treat this as a literal
+            # path instead of interpreting brackets as a glob expression.
+            lint_paths+=(":$file")
+          done
+
+          npx --yes markdownlint-cli2@0.23.2 "${lint_paths[@]}" \
+            > .ci-docs/markdownlint.log 2>&1
+          exit_code=$?
+
+          cat .ci-docs/markdownlint.log
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+          # Keep this advisory check green even when lint findings exist.
+          exit 0
+
+      - name: Check links in changed Markdown files
+        id: lychee
+        if: steps.files.outputs.has_files == 'true'
+        continue-on-error: true
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --config lychee.toml
+            --no-progress
+            --files-from .ci-docs/markdown-files.txt
+          fail: false
+          format: markdown
+          jobSummary: false
+          output: .ci-docs/lychee.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build documentation report
+        id: report
+        if: always()
+        shell: bash
+        env:
+          HAS_FILES: ${{ steps.files.outputs.has_files }}
+          FILE_COUNT: ${{ steps.files.outputs.file_count }}
+          MARKDOWNLINT_EXIT: ${{ steps.markdownlint.outputs.exit_code }}
+          LYCHEE_EXIT: ${{ steps.lychee.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-docs
+
+          markdownlint_status="Skipped"
+          lychee_status="Skipped"
+
+          if [[ "$HAS_FILES" == "true" ]]; then
+            if [[ "$MARKDOWNLINT_EXIT" == "0" ]]; then
+              markdownlint_status="Passed"
+            else
+              markdownlint_status="Issues found"
+            fi
+
+            if [[ "$LYCHEE_EXIT" == "0" ]]; then
+              lychee_status="Passed"
+            else
+              lychee_status="Issues found"
+            fi
+          fi
+
+          report=.ci-docs/pr-comment.md
+          {
+            echo '<!-- documentation-ci-report -->'
+            echo '## Documentation CI report'
+            echo
+            echo '> This report is advisory. Documentation findings do not block the PR.'
+            echo
+            echo "Changed Markdown files: **${FILE_COUNT:-0}**"
+            echo
+            echo '| Check | Result | Exit code |'
+            echo '| --- | --- | --- |'
+            echo "| Markdownlint | $markdownlint_status | ${MARKDOWNLINT_EXIT:-N/A} |"
+            echo "| Lychee | $lychee_status | ${LYCHEE_EXIT:-N/A} |"
+            echo
+            echo "[Open the complete workflow run]($RUN_URL)"
+
+            if [[ "$MARKDOWNLINT_EXIT" != "" && "$MARKDOWNLINT_EXIT" != "0" ]]; then
+              echo
+              echo '<details><summary>Markdownlint findings</summary>'
+              echo
+              echo '~~~~text'
+              sed -n '1,200p' .ci-docs/markdownlint.log
+              echo '~~~~'
+              echo
+              echo '</details>'
+            fi
+
+            if [[ "$LYCHEE_EXIT" != "" && "$LYCHEE_EXIT" != "0" ]]; then
+              echo
+              echo '<details><summary>Lychee findings</summary>'
+              echo
+              echo '~~~~text'
+              if [[ -f .ci-docs/lychee.md ]]; then
+                sed -n '1,200p' .ci-docs/lychee.md
+              else
+                echo 'Lychee did not produce a report file. Open the workflow run for its logs.'
+              fi
+              echo '~~~~'
+              echo
+              echo '</details>'
+            fi
+          } > "$report"
+
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create or update PR comment
+        if: always() && steps.report.outcome == 'success'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          REPORT_PATH: .ci-docs/pr-comment.md
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- documentation-ci-report -->';
+            const body = fs.readFileSync(process.env.REPORT_PATH, 'utf8');
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              },
+            );
+
+            const previous = comments.find(
+              (comment) =>
+                comment.user?.type === 'Bot' && comment.body?.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

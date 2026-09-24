@@ -1,0 +1,59 @@
+# lychee link-checker configuration
+# https://lychee.cli.rs/usage/config/
+
+# Behaviour 
+
+# Accept these HTTP status codes as "valid" in addition to 2xx.
+# 429 (rate-limit) and 999 (LinkedIn bot-wall) are transient/structural.
+accept = [429, 999]
+
+# Timeout per request (seconds).
+timeout = 20
+
+# Maximum number of retries per request.
+max_retries = 3
+
+# Number of concurrent requests.
+max_concurrency = 8
+
+# Scope
+
+# Treat these URL schemes as valid without fetching.
+# "mailto:" links are out-of-scope for a link checker.
+scheme = ["https", "http"]
+
+# Exclusions
+
+# Patterns matched against the raw URL string (regex).
+exclude = [
+  # Private / RFC-1918 addresses and loopback used in examples
+  "https?://192\\.168\\.",
+  "https?://10\\.",
+  "https?://172\\.(1[6-9]|2[0-9]|3[01])\\.",
+  "https?://localhost",
+  "https?://127\\.0\\.0\\.1",
+  # Kubernetes internal service DNS
+  "https?://kubernetes\\.default\\.svc",
+  # Placeholder hostnames written in angle-brackets in docs  (<HOSTNAME>, <ARGOCD_HOSTNAME>, …)
+  "https?://<",
+  # Production domain – may be unreachable from CI runners
+  "https?://vnutour\\.suctremmt\\.com",
+  # Internal / staging domain
+  "https?://.*\\.hunn\\.io\\.vn",
+  # Cloudflare API called with shell variables, not a real URL to check
+  "https?://api\\.cloudflare\\.com/client/v4/zones/\\$",
+  # Uber blog posts – historically return 429/bot-wall in CI
+  "https?://www\\.uber\\.com",
+  "https?://uber\\.com",
+  # GitHub blob/tree anchors that lychee sometimes misreads
+  "#L[0-9]",
+]
+
+# Glob patterns for files/paths to exclude from scanning entirely.
+exclude_path = [
+  # Generated / vendored artefacts
+  ".git",
+  "node_modules",
+  # Backend virtual environment
+  "backend/.venv",
+]
