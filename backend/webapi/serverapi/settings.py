@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import sys
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 
@@ -193,14 +194,50 @@ FRAME_DOWNLOAD_RATE_LIMIT = int(os.getenv("FRAME_DOWNLOAD_RATE_LIMIT", "30"))
 FRAME_DOWNLOAD_RATE_WINDOW_SECONDS = int(os.getenv("FRAME_DOWNLOAD_RATE_WINDOW_SECONDS", "600"))
 TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "0") == "1"
 
-# Bộ đếm rate limit sống trong cache — phải dùng chung qua PostgreSQL để hai
-# worker gunicorn thấy cùng một bộ số (LocMemCache từng process khiến limit
-# thực tế nhân đôi và reset mỗi khi worker restart).
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
-        "LOCATION": "vnutour_cache",
+# Login/register rate-limit counters live in the shared cache. Redis is used
+# whenever REDIS_URL or REDIS_HOST is configured; local/test environments keep
+# the existing database cache so they do not require a Redis process.
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+REDIS_HOST = os.getenv("REDIS_HOST", "").strip()
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+
+if not REDIS_URL and REDIS_HOST:
+    redis_auth = f":{quote(REDIS_PASSWORD, safe='')}@" if REDIS_PASSWORD else ""
+    REDIS_URL = f"redis://{redis_auth}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+
+DATABASE_CACHE = {
+    "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+    "LOCATION": "vnutour_cache",
+}
+
+if REDIS_URL:
+    DEFAULT_CACHE = {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "OPTIONS": {
+            # Authentication must fail quickly instead of holding every login
+            # request while Redis is unavailable. The rate limiter falls back
+            # to DatabaseCache below.
+            "socket_connect_timeout": float(
+                os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "0.5")
+            ),
+            "socket_timeout": float(os.getenv("REDIS_TIMEOUT_SECONDS", "0.5")),
+            "health_check_interval": int(
+                os.getenv("REDIS_HEALTH_CHECK_INTERVAL_SECONDS", "30")
+            ),
+        },
     }
+else:
+    DEFAULT_CACHE = DATABASE_CACHE
+
+CACHES = {
+    "default": DEFAULT_CACHE,
+    # PostgreSQL is used only when Redis is configured but temporarily
+    # unavailable. This preserves login protection without making Redis a hard
+    # dependency for authentication availability.
+    "rate_limit_fallback": DATABASE_CACHE,
 }
 
 # Production transport/browser security

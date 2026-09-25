@@ -11,6 +11,7 @@ resources:
   # pulls in the plain single-node Postgres via components/db-simple; prod &
   # prod-standby run an external Patroni + etcd HA cluster kept out of GitOps
   # (see the DB HA runbook, Phase 0.5).
+  - 04.redis.yaml
   - 05.migrate-job.yaml
   - 06.backend.yaml
   - 07.backend-ops.yaml
