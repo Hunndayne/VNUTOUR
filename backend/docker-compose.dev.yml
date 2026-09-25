@@ -21,38 +21,6 @@ services:
     networks:
       - dev
 
-  redis:
-    image: redis:7.4.11-alpine
-    restart: unless-stopped
-    user: "999:1000"
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
-    command:
-      - sh
-      - -c
-      - >-
-        exec redis-server
-        --save ""
-        --appendonly no
-        --maxmemory 128mb
-        --maxmemory-policy noeviction
-        --requirepass "$$REDIS_PASSWORD"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --no-auth-warning ping | grep -q PONG
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    networks:
-      - dev
-
   migrate:
     build:
       context: .
@@ -97,10 +65,6 @@ services:
       DB_USER: ${DB_USER:?set DB_USER}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_DB: "0"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
       CORS_ALLOW_ALL: "1"
       CORS_ALLOW_CREDENTIALS: "1"
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
@@ -117,8 +81,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)\""]
       interval: 10s
