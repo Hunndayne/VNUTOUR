@@ -12,6 +12,9 @@ x-backend-common: &backend-common
     DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?set DJANGO_ALLOWED_HOSTS},localhost,127.0.0.1
     DB_HOST: postgres
     DB_PORT: "5432"
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+    REDIS_DB: "0"
     FFMPEG_EXE: ffmpeg
   init: true
   networks:
@@ -38,6 +41,39 @@ services:
     networks:
       - app
 
+  redis:
+    image: redis:7.4.11-alpine
+    restart: unless-stopped
+    user: "999:1000"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    env_file:
+      - ${BACKEND_ENV_FILE:-.env.docker}
+    command:
+      - sh
+      - -c
+      - >-
+        : "$${REDIS_PASSWORD:?REDIS_PASSWORD is required}";
+        exec redis-server
+        --save ""
+        --appendonly no
+        --maxmemory 128mb
+        --maxmemory-policy noeviction
+        --requirepass "$$REDIS_PASSWORD"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --no-auth-warning ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - app
+
   migrate:
     <<: *backend-common
     command: python webapi/manage.py migrate --noinput
@@ -57,6 +93,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     stop_grace_period: 30s
 
   frontend:

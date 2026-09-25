@@ -7,12 +7,13 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from django.http import JsonResponse, HttpRequest
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.middleware.csrf import CsrfViewMiddleware
 
 from api.services.auth_service import find_by_token
@@ -20,6 +21,7 @@ from api.services.antibot_service import antibot_config, check_form_signals, ver
 from api.models import Account
 
 AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "token")
+logger = logging.getLogger(__name__)
 
 try:
     from zoneinfo import ZoneInfo
@@ -116,20 +118,50 @@ def _consume_rate_limit(
     limit: int,
     window_seconds: int,
 ):
-    """Consume one request from a fixed-window cache rate limit."""
+    """Consume one request from a shared fixed-window cache rate limit.
+
+    Redis is the primary backend in deployed environments. If it is
+    unavailable, the database cache preserves the limiter and keeps login
+    available. If both backends fail, the limiter fails open and logs the
+    outage; credential verification still happens against PostgreSQL.
+    """
     limit = max(1, int(limit))
     window_seconds = max(1, int(window_seconds))
     raw_key = f"{scope}:{_client_ip(request)}:{identifier.strip().lower()}"
     digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
     cache_key = f"vnutour:rate:{digest}"
 
-    if cache.add(cache_key, 1, timeout=window_seconds):
-        return None, cache_key
+    backends = [("default", cache)]
     try:
-        count = cache.incr(cache_key)
-    except ValueError:
-        cache.set(cache_key, 1, timeout=window_seconds)
-        count = 1
+        fallback = caches["rate_limit_fallback"]
+    except Exception:
+        fallback = None
+    if fallback is not None:
+        backends.append(("rate_limit_fallback", fallback))
+
+    for backend_name, backend in backends:
+        try:
+            if backend.add(cache_key, 1, timeout=window_seconds):
+                count = 1
+            else:
+                try:
+                    count = backend.incr(cache_key)
+                except ValueError:
+                    # The key may expire between add() and incr(). Start a new
+                    # fixed window instead of failing the request.
+                    backend.set(cache_key, 1, timeout=window_seconds)
+                    count = 1
+            break
+        except Exception:
+            logger.warning(
+                "Rate-limit cache backend %s is unavailable",
+                backend_name,
+                exc_info=True,
+            )
+    else:
+        logger.error("All rate-limit cache backends are unavailable; failing open")
+        return None, cache_key
+
     if count <= limit:
         return None, cache_key
 
@@ -139,6 +171,19 @@ def _consume_rate_limit(
     )
     response["Retry-After"] = str(window_seconds)
     return response, cache_key
+
+
+def _clear_rate_limit(cache_key: str) -> None:
+    """Best-effort removal of a rate-limit counter after successful login."""
+    for backend_name in ("default", "rate_limit_fallback"):
+        try:
+            caches[backend_name].delete(cache_key)
+        except Exception:
+            logger.warning(
+                "Could not clear rate-limit key from cache backend %s",
+                backend_name,
+                exc_info=True,
+            )
 
 
 def _require_antibot(
