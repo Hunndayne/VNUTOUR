@@ -27,14 +27,6 @@ data:
   DB_HOST: "postgres"
   DB_PORT: "5432"
 
-  # Shared cache for login/register rate-limit counters. REDIS_PASSWORD is
-  # supplied by backend-secret.
-  REDIS_HOST: "redis"
-  REDIS_PORT: "6379"
-  REDIS_DB: "0"
-  REDIS_CONNECT_TIMEOUT_SECONDS: "0.5"
-  REDIS_TIMEOUT_SECONDS: "0.5"
-
   # src/bot/config.py reads FFMPEG_EXE, not FFMPEG_PATH.
   FFMPEG_EXE: "ffmpeg"
 

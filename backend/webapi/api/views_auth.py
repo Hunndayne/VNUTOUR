@@ -9,6 +9,7 @@ from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, transaction
 from django.conf import settings
+from django.core.cache import cache
 from django.utils.html import escape
 
 from api.services.auth_service import (
@@ -28,7 +29,7 @@ from api.models import Account, Participant
 from .views_shared import (
     _json_body, _extract_token, _auth_or_401,
     _set_auth_cookie, _clear_auth_cookie,
-    _consume_rate_limit, _clear_rate_limit, _require_antibot, AUTH_COOKIE_NAME,
+    _consume_rate_limit, _require_antibot, AUTH_COOKIE_NAME,
 )
 
 import secrets
@@ -72,7 +73,7 @@ def login_view(request: HttpRequest):
     if err:
         return JsonResponse({"error": err}, status=401)
 
-    _clear_rate_limit(rate_key)
+    cache.delete(rate_key)
     token = generate_session(acc)
     resp = JsonResponse({
         "token": token,

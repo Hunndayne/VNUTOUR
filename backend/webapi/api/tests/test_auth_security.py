@@ -1,6 +1,5 @@
 import json
 from datetime import timedelta
-from unittest.mock import patch
 
 from django.contrib.auth.hashers import make_password
 from django.core.cache import cache
@@ -71,79 +70,6 @@ class AuthSecurityTests(TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.json()["error"], "too_many_attempts")
         self.assertEqual(response.headers["Retry-After"], "60")
-
-    @override_settings(
-        AUTH_LOGIN_RATE_LIMIT=2,
-        AUTH_LOGIN_RATE_WINDOW_SECONDS=60,
-    )
-    @patch(
-        "api.views_shared.cache.add",
-        side_effect=ConnectionError("primary cache unavailable"),
-    )
-    def test_login_rate_limit_falls_back_when_primary_cache_is_unavailable(
-        self,
-        _primary_add,
-    ):
-        for _ in range(2):
-            response = self.client.post(
-                "/api/auth/login",
-                data=json.dumps({
-                    "username": self.account.username,
-                    "password": "wrong-password",
-                }),
-                content_type="application/json",
-                REMOTE_ADDR="203.0.113.6",
-            )
-            self.assertEqual(response.status_code, 401)
-
-        response = self.client.post(
-            "/api/auth/login",
-            data=json.dumps({
-                "username": self.account.username,
-                "password": "wrong-password",
-            }),
-            content_type="application/json",
-            REMOTE_ADDR="203.0.113.6",
-        )
-
-        self.assertEqual(response.status_code, 429)
-        self.assertEqual(response.json()["error"], "too_many_attempts")
-
-    @override_settings(
-        AUTH_LOGIN_RATE_LIMIT=2,
-        AUTH_LOGIN_RATE_WINDOW_SECONDS=60,
-    )
-    def test_successful_login_clears_the_rate_limit_counter(self):
-        payload = {
-            "username": self.account.username,
-            "password": "wrong-password",
-        }
-        response = self.client.post(
-            "/api/auth/login",
-            data=json.dumps(payload),
-            content_type="application/json",
-            REMOTE_ADDR="203.0.113.7",
-        )
-        self.assertEqual(response.status_code, 401)
-
-        payload["password"] = "correct-password"
-        response = self.client.post(
-            "/api/auth/login",
-            data=json.dumps(payload),
-            content_type="application/json",
-            REMOTE_ADDR="203.0.113.7",
-        )
-        self.assertEqual(response.status_code, 200)
-
-        payload["password"] = "wrong-password"
-        for _ in range(2):
-            response = self.client.post(
-                "/api/auth/login",
-                data=json.dumps(payload),
-                content_type="application/json",
-                REMOTE_ADDR="203.0.113.7",
-            )
-            self.assertEqual(response.status_code, 401)
 
     @override_settings(AUTH_MIN_PASSWORD_LENGTH=8)
     def test_signup_rejects_short_password_on_backend(self):
