@@ -88,3 +88,20 @@ patches:
                     value: "A"
                   - name: DNS_TARGET_CONTENT
                     value: "172.104.186.118"
+  # Linode is a single node whose CPU requests sit near 100% (postgres-ha alone
+  # asks for 2 CPU). The default 25% surge needs room for a 4th backend pod
+  # (250m) that the node cannot schedule, and 25% unavailable rounds down to 0
+  # with 3 replicas, so every image bump deadlocked with mixed versions
+  # running. Replace pods one at a time instead of surging.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+        namespace: vnutour-staging
+      spec:
+        strategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
