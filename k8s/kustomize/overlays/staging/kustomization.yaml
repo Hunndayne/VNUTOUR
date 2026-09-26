@@ -55,6 +55,12 @@ components:
     # Staging is for testing the feature, not for defending it: the search
     # rate limit (10 per 10 minutes per IP in the component) gets in the way.
     # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -101,8 +107,8 @@ patches:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: ac32948
+  newTag: 8c0e339
 - name: ghcr.io/hunndayne/vnutour-frontend
   newTag: 372b9c9
 - name: ghcr.io/hunndayne/vnutour-photo-ai
-  newTag: ac32948
+  newTag: 8c0e339
