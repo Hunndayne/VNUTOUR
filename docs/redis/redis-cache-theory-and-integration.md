@@ -7,7 +7,7 @@
 
 Redis phù hợp với VNUTOUR, nhưng nên được đưa vào theo ba vai trò có thứ tự ưu tiên:
 
-1. **Chuyển rate limit ra khỏi PostgreSQL.** Hiện bộ đếm rate limit được lưu trong bảng `vnutour_cache`, nên mỗi lần chống spam lại tạo thêm truy cập vào chính database cần được bảo vệ.
+1. **Chuyển rate limit ra khỏi PostgreSQL.** Redis đã được tích hợp làm cache chính cho bộ đếm login/register; bảng `vnutour_cache` chỉ còn là fallback khi Redis gián đoạn.
 2. **Cache các kết quả đọc hoặc aggregate đắt và được nhiều người đọc**, như site config, dashboard, cấu trúc chương trình và bảng điểm.
 3. **Micro-cache một số dữ liệu realtime trong 1–3 giây**, nhưng chỉ sau khi đã có cơ chế invalidation và đo đạc.
 
@@ -277,24 +277,41 @@ Tham khảo: [Redis persistence](https://redis.io/docs/latest/operate/oss_and_st
 
 ## 9. Hiện trạng cache trong VNUTOUR
 
-### 9.1. Cache đang được lưu trong PostgreSQL
+### 9.1. Redis là cache chính, PostgreSQL là fallback
 
-Trong `backend/webapi/serverapi/settings.py`, `CACHES["default"]` đang dùng:
+Trong `backend/webapi/serverapi/settings.py`, khi `REDIS_URL` hoặc `REDIS_HOST`
+được cấu hình, `CACHES["default"]` dùng:
 
 ```python
-"BACKEND": "django.core.cache.backends.db.DatabaseCache"
-"LOCATION": "vnutour_cache"
+"BACKEND": "django.core.cache.backends.redis.RedisCache"
+"LOCATION": REDIS_URL
 ```
 
-Bảng cache được tạo bởi migration `backend/webapi/api/migrations/0032_antibot_cache_table.py`.
+Bảng `vnutour_cache`, được tạo bởi migration
+`backend/webapi/api/migrations/0032_antibot_cache_table.py`, vẫn được giữ qua
+alias `rate_limit_fallback`. Nó chỉ nhận counter khi Redis không kết nối được.
 
-Rate limiter tại `backend/webapi/api/views_shared.py` gọi `cache.add()` và `cache.incr()`. Do backend hiện tại là PostgreSQL, một request login hoặc register bị rate-limit vẫn thực hiện thao tác vào DB.
+Rate limiter tại `backend/webapi/api/views_shared.py` gọi `cache.add()` và
+`cache.incr()`. Trong luồng bình thường, các operation này chạy trên Redis và
+không ghi PostgreSQL. Timeout kết nối/read được giới hạn ở 0,5 giây trước khi
+fallback sang database cache.
 
-Django cũng lưu ý `incr()` không được bảo đảm atomic nếu backend không hỗ trợ native increment.
+Khi cả Redis và fallback đều lỗi, limiter fail-open và ghi log để login vẫn có
+thể xác thực với PostgreSQL. Đây là trade-off availability/security cần được
+đặt cảnh báo vận hành.
 
-### 9.2. Ưu tiên số 1: chuyển rate limit sang Redis
+### 9.2. Trạng thái triển khai rate limit Redis
 
-Chuyển cache backend sang Redis có thể offload rate limit mà gần như không phải sửa các callsite hiện tại. Tuy nhiên, để rate limiter chắc chắn dưới concurrency cao, nên tiến tới Lua script atomic:
+Docker Compose và các Kustomize overlay đã có Redis nội bộ, health probe,
+`maxmemory` và policy `noeviction`. Redis không bật persistence vì counter có
+TTL và PostgreSQL vẫn là source of truth của tài khoản, mật khẩu và auth token.
+`REDIS_PASSWORD` là secret bắt buộc trước khi rollout Redis lên cluster.
+Container chạy non-root, bỏ Linux capabilities, không mount service-account
+token và dùng filesystem chỉ đọc. NetworkPolicy chỉ cho pod backend kết nối đến
+Redis; Service là ClusterIP và không được đưa qua Ingress hay NodePort.
+
+Các command `add` và `incr` của Redis là atomic riêng lẻ. Nếu sau này cần gộp
+toàn bộ thao tác counter/expiry thành một operation, có thể tiến tới Lua script:
 
 ```text
 INCR key
@@ -303,6 +320,66 @@ trả về count và TTL
 ```
 
 Không nên để rate-limit key cạnh tranh memory với cache response nếu yêu cầu rate limit có tính bảo mật cao.
+
+### 9.3. Rollout staging và cấp secret an toàn
+
+ArgoCD Application `vnutour-staging` chỉ theo dõi nhánh `staging` và overlay
+`k8s/kustomize/overlays/staging`. Vì vậy thay đổi phải được thử ở nhánh này
+trước khi promote sang `main`; không push trực tiếp thay đổi Redis vào `main`
+nếu mục tiêu hiện tại chỉ là staging.
+
+`REDIS_PASSWORD` được quản lý giống `DB_PASSWORD`: nằm trong file
+`/srv/vnutour/.env.staging` ngoài Git, file thuộc root và chỉ root được đọc.
+Trên control-plane staging, chạy:
+
+```bash
+# Chỉ thực hiện bước append nếu file chưa có REDIS_PASSWORD.
+sudo test -f /srv/vnutour/.env.staging
+sudo grep -q '^REDIS_PASSWORD=' /srv/vnutour/.env.staging || \
+  sudo sh -c 'umask 077; printf "REDIS_PASSWORD=" >> /srv/vnutour/.env.staging; openssl rand -hex 32 >> /srv/vnutour/.env.staging'
+sudo chown root:root /srv/vnutour/.env.staging
+sudo chmod 600 /srv/vnutour/.env.staging
+
+# Reconcile từ file nguồn đầy đủ; YAML chứa secret chỉ đi qua pipe, không được
+# ghi vào repository hoặc in ra log.
+sudo k3s kubectl -n vnutour-staging create secret generic backend-secret \
+  --from-env-file=/srv/vnutour/.env.staging \
+  --dry-run=client -o yaml | \
+  sudo k3s kubectl apply -f -
+```
+
+File `.env.staging` phải chứa đầy đủ các khóa đang được quản lý, bao gồm
+PostgreSQL và Django; không tạo lại `backend-secret` từ file chỉ có mỗi
+`REDIS_PASSWORD`. Nên lưu một bản trong password manager hoặc secret manager
+được kiểm soát quyền và backup, nhưng không commit file này.
+
+Sau khi secret tồn tại, merge code vào nhánh `staging`. CI backend sẽ test,
+build/push image theo short SHA, cập nhật image tag trong overlay staging; sau
+đó ArgoCD tự đồng bộ Redis, ConfigMap và backend vào namespace
+`vnutour-staging`.
+
+Ở lần rollout hiện tại mới chỉ staging có `REDIS_PASSWORD`, vì vậy **không
+promote thay đổi này vào `main`**. Base Redis cũng được hai overlay production
+sử dụng; trước khi promote phải cấp `REDIS_PASSWORD` cho `backend-secret` ở cả
+homelab prod và prod-standby. Mỗi Redis là local theo site nên có thể dùng mật
+khẩu khác nhau.
+
+Kiểm tra sau rollout từ máy có đúng kubeconfig của homelab:
+
+```bash
+sudo k3s kubectl -n vnutour-staging rollout status deployment/redis --timeout=180s
+sudo k3s kubectl -n vnutour-staging rollout status deployment/backend --timeout=300s
+sudo k3s kubectl -n vnutour-staging get pods,svc
+
+# Không in password: dùng biến đã có bên trong container Redis.
+sudo k3s kubectl -n vnutour-staging exec deployment/redis -- \
+  sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning ping'
+```
+
+Kết quả mong đợi là `PONG`. Sau đó thử đăng nhập sai đến khi nhận `429`, chờ
+hết window, đăng nhập đúng và xác nhận counter được xóa. Khi tạm dừng Redis,
+login vẫn phải hoạt động qua PostgreSQL fallback và log phải ghi nhận backend
+cache không khả dụng.
 
 ## 10. Nguồn tải lặp trong codebase
 
@@ -597,12 +674,13 @@ Các ngưỡng trên chỉ là ví dụ khởi điểm; cần điều chỉnh th
 
 ### Giai đoạn 1 - Redis cho rate limit
 
-- Deploy Redis ở staging.
-- Đổi Django cache backend.
-- Chạy lại test anti-bot, login, signup và password reset.
-- Kiểm tra concurrency và expiry.
-- Xác nhận Redis lỗi không làm toàn API lỗi.
-- Sau khi ổn định, cân nhắc Lua rate limiter.
+- [x] Thêm Redis vào Docker Compose và Kustomize cho staging/prod.
+- [x] Đổi Django cache backend khi có cấu hình Redis.
+- [x] Chạy lại test anti-bot, login, signup và password reset.
+- [x] Thêm fallback khi Redis lỗi để login không trả 500.
+- [ ] Deploy lên staging và kiểm tra concurrency, expiry bằng traffic thật.
+- [ ] Trước khi promote `main`, cấp `REDIS_PASSWORD` ở cả hai site production.
+- [ ] Sau khi ổn định, đánh giá Lua rate limiter và metrics Redis.
 
 ### Giai đoạn 2 - Low-risk cache
 
