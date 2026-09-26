@@ -8,9 +8,12 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from django.utils.dateparse import parse_date, parse_datetime
+from django.conf import settings
 from django.db import transaction
+from django.db.models import Prefetch
 
 from api.models import ProgramPhase, SubEvent, PhaseRoster, Team, SystemSetting, Station
+from api.services.read_mostly_cache import PROGRAM_KEY, get_or_load
 
 
 def _checkin_config(kwargs: dict) -> None:
@@ -52,7 +55,19 @@ def ensure_checkin_station(se: SubEvent) -> Optional[Station]:
 
 def get_program() -> dict:
     """Return the full program structure: phases + sub-events."""
-    phases = ProgramPhase.objects.order_by("order")
+    return get_or_load(
+        cache_name="program",
+        key=PROGRAM_KEY,
+        ttl_seconds=settings.PROGRAM_CACHE_TTL_SECONDS,
+        loader=_load_program,
+    )
+
+
+def _load_program() -> dict:
+    """Build the program payload from PostgreSQL."""
+    phases = ProgramPhase.objects.prefetch_related(
+        Prefetch("sub_events", queryset=SubEvent.objects.order_by("order")),
+    ).order_by("order")
     current_event = get_current_sub_event()
     result = {
         "current_phase": None,
@@ -60,7 +75,7 @@ def get_program() -> dict:
         "phases": [],
     }
     for phase in phases:
-        sub_events = SubEvent.objects.filter(phase=phase).order_by("order")
+        sub_events = phase.sub_events.all()
         phase_data = {
             "id": phase.id,
             "key": phase.key,
