@@ -98,7 +98,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
       REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      REDIS_TCP_PORT: "6379"
       REDIS_DB: "0"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
       CORS_ALLOW_ALL: "1"
