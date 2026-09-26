@@ -17,10 +17,12 @@ RUN npm run build
 
 FROM nginx:1.30.4-alpine AS runtime
 
-# The base image ships libuuid 2.42.1-r0. Alpine 2.42.3-r1 fixes the seven
-# HIGH CVEs reported by Trivy (including CVE-2026-78408).
-# It also ships libexpat 2.8.4-r0; 2.8.5-r0 fixes CVE-2026-93990 (HIGH).
-RUN apk add --no-cache --upgrade "libuuid>=2.42.3-r1" "libexpat>=2.8.5-r0"
+# Upgrade the runtime libraries to the first Alpine releases containing the
+# fixes required by the Trivy gate. Keep explicit minimum versions so a stale
+# base-image layer cannot silently reintroduce the known vulnerabilities.
+RUN apk add --no-cache --upgrade \
+    "libexpat>=2.8.5-r0" \
+    "libuuid>=2.42.3-r1"
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

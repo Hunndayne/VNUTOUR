@@ -11,6 +11,7 @@ from api.services.checkin_service import (
     get_checkin_stats, reset_checkin, undo_checkout, list_checkouts,
 )
 from api.services.checkin_qr_service import get_checkin_qr_state, set_checkin_qr
+from api.services.coop_realtime_cache import schedule_checkin_invalidation
 from api.services.attendance_service import (
     attendance_state, checkin_response, personal_qr, team_eligible_for_event, event_checkout_qr,
 )
@@ -394,9 +395,13 @@ def checkin_legacy_reset_view(request: HttpRequest, team_key: str):
     if not team:
         return JsonResponse({"error": "not_found"}, status=404)
 
-    updated = EventCheckIn.objects.filter(
+    active_checkins = EventCheckIn.objects.filter(
         team=team, status=EventCheckIn.STATUS_ACTIVE,
-    ).update(status=EventCheckIn.STATUS_REVERTED)
+    )
+    affected_events = list(active_checkins.values_list("sub_event_id", "phase__key").distinct())
+    updated = active_checkins.update(status=EventCheckIn.STATUS_REVERTED)
+    for event_id, phase_key in affected_events:
+        schedule_checkin_invalidation(event_id, phase_key)
 
     return JsonResponse({
         "status": "reset",

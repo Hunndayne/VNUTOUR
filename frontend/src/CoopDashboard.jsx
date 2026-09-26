@@ -22,6 +22,9 @@ const PRIMARY_BUTTON =
 const SECONDARY_BUTTON =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-stone/80 bg-white px-4 py-3 text-sm font-semibold text-ink/80 transition hover:bg-stone/20 hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 min-h-[46px]'
 
+const LIVE_POLL_INTERVAL_MS = 5000
+const LIVE_POLL_JITTER_MS = 1000
+
 const RESULT_META = {
   checkout: {
     label: 'Checkout sự kiện',
@@ -922,20 +925,58 @@ function CoopDashboard() {
   useEffect(() => {
     if (!selectedEventId) return undefined
     let cancelled = false
+    let timer = null
+    let pollInFlight = false
+    let refreshWhenVisible = false
 
-    const start = async () => {
-      if (cancelled) return
-      await refreshLive()
+    const scheduleNext = () => {
+      if (cancelled || document.hidden) return
+      const jitter = Math.floor(Math.random() * (LIVE_POLL_JITTER_MS + 1))
+      timer = window.setTimeout(() => {
+        void poll()
+      }, LIVE_POLL_INTERVAL_MS + jitter)
     }
 
-    start()
-    const timer = window.setInterval(() => {
-      void refreshLive()
-    }, 3000)
+    const poll = async () => {
+      if (cancelled || document.hidden) return
+      if (pollInFlight) {
+        refreshWhenVisible = true
+        return
+      }
+      refreshWhenVisible = false
+      pollInFlight = true
+      try {
+        await refreshLive()
+      } finally {
+        pollInFlight = false
+        if (refreshWhenVisible && !cancelled && !document.hidden) {
+          refreshWhenVisible = false
+          void poll()
+        } else {
+          scheduleNext()
+        }
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+      if (document.hidden) {
+        refreshWhenVisible = true
+      } else {
+        void poll()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    void poll()
 
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      if (timer !== null) window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [refreshLive, selectedEventId])
 
