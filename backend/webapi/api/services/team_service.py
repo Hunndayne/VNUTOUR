@@ -50,6 +50,24 @@ def set_registration_open(value: bool) -> bool:
     return stored
 
 
+def participant_scores_visible() -> bool:
+    """Site-wide gate on participants seeing any score. Off unless an admin
+    turns it on: a station's own switch only matters while this is on."""
+    value = _get_setting("participant_scores_visible", False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def set_participant_scores_visible(value: bool) -> bool:
+    stored = bool(value)
+    SystemSetting.objects.update_or_create(
+        key="participant_scores_visible",
+        defaults={"value": stored},
+    )
+    return stored
+
+
 def get_max_registrations() -> int:
     """Return the max allowed registrations (0 = unlimited)."""
     val = _get_setting("max_registrations", 0)

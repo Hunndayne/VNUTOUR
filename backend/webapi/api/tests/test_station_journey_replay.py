@@ -347,6 +347,11 @@ class MyTeamStationsJourneyTests(StationJourneyTestBase):
         SystemSetting.objects.update_or_create(
             key="current_sub_event_id", defaults={"value": str(self.event.id)},
         )
+        # These tests read best_score, which participants only see when the
+        # site-wide score switch (off by default) is on.
+        SystemSetting.objects.update_or_create(
+            key="participant_scores_visible", defaults={"value": True},
+        )
         self.token = generate_session(self.account)
 
         self.station_score_only = Station.objects.create(

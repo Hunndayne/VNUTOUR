@@ -784,12 +784,99 @@ function RegistrationSchemaSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Điểm cho thí sinh: công tắc chung, mặc định tắt. Tắt thì thí sinh không thấy
+// bất kỳ điểm nào; bật thì từng trạm vẫn có công tắc riêng.
+// ─────────────────────────────────────────────────────────────────────
+function ParticipantScoresSection() {
+  const [visible, setVisible] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [apiError, setApiError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    apiRequest('/admin/site-config')
+      .then(payload => { if (!cancelled) setVisible(payload?.participant_scores_visible === true) })
+      .catch(error => {
+        if (cancelled) return
+        if (error?.status === 401) { logoutAndRedirect('/login'); return }
+        setApiError('Không tải được cấu hình hiển thị điểm.')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const toggle = async () => {
+    const next = !visible
+    if (next && !window.confirm('Cho thí sinh xem điểm? Điểm từng trạm sẽ hiện với các trạm đang bật "Cho thí sinh xem điểm trạm này".')) return
+    setSaving(true)
+    setApiError('')
+    setSuccessMsg('')
+    try {
+      const payload = await apiRequest('/admin/site-config', {
+        method: 'PUT',
+        body: { participant_scores_visible: next },
+      })
+      setVisible(payload?.participant_scores_visible === true)
+      setSuccessMsg(next ? 'Đã cho thí sinh xem điểm.' : 'Đã ẩn toàn bộ điểm với thí sinh.')
+      setTimeout(() => setSuccessMsg(''), 3000)
+    } catch (error) {
+      if (error?.status === 401) { logoutAndRedirect('/login'); return }
+      setApiError('Không thể lưu cấu hình hiển thị điểm. Vui lòng thử lại.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className={`${CARD} p-5`}>
+      <h3 className="mb-4 font-mono text-[11px] uppercase tracking-[0.18em] text-ink/40">
+        Điểm với thí sinh
+      </h3>
+      <div className="space-y-4">
+        <ErrorNote>{apiError}</ErrorNote>
+        <SuccessNote>{successMsg}</SuccessNote>
+        <div className="flex items-start justify-between gap-4 rounded-lg border border-stone bg-paper px-4 py-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink">Cho thí sinh xem điểm</p>
+            <p className="mt-1 text-xs leading-5 text-ink/45">
+              {visible
+                ? 'Đang bật: thí sinh thấy điểm ở những trạm bật "Cho thí sinh xem điểm trạm này".'
+                : 'Đang tắt: thí sinh không thấy điểm trạm, kết quả trắc nghiệm, điểm thử thách hay tổng điểm ở bất kỳ đâu. Coop và admin vẫn thấy đủ.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={visible}
+            aria-label="Cho thí sinh xem điểm"
+            disabled={loading || saving}
+            onClick={toggle}
+            className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-50 ${
+              visible ? 'bg-trail' : 'bg-stone'
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                visible ? 'translate-x-5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────────────
 function SiteSettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <RegistrationToggleSection />
+      <ParticipantScoresSection />
       <AntibotToggleSection />
       <PaymentConfigSection />
       <TimoPotConfigSection />

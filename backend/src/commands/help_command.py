@@ -20,7 +20,7 @@ def setup_help_command(bot):
         )
         embed.add_field(
             name="Sự kiện",
-            value="`!stations` · trạm đang mở\n`!leaderboard` · bảng xếp hạng PostgreSQL",
+            value="`!stations` · trạm đang mở",
             inline=False,
         )
         embed.add_field(
@@ -30,7 +30,8 @@ def setup_help_command(bot):
                 "`!editassign @user <mssv>` · sửa liên kết\n"
                 "`!addallrole` · đưa các đội đã duyệt vào queue\n"
                 "`!teamqr` · gửi QR đang được bật trên web\n"
-                "`!checkteamconfig` · trạng thái tích hợp"
+                "`!checkteamconfig` · trạng thái tích hợp\n"
+                "`!leaderboard` · bảng xếp hạng (gửi qua tin nhắn riêng)"
             ),
             inline=False,
         )

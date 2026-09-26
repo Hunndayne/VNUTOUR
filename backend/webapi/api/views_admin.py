@@ -16,6 +16,7 @@ from api.services.team_service import (
     get_team_members, add_member, remove_member, link_account_profile,
     fix_participant_identity, admin_add_member, set_team_captain,
     registration_is_open, set_registration_open,
+    participant_scores_visible, set_participant_scores_visible,
     get_max_registrations, set_max_registrations, get_current_registrations,
     team_name_is_duplicate,
     COUNTED_TEAM_STATUSES, lock_registration_capacity, registration_capacity_error,
@@ -731,6 +732,7 @@ def admin_site_config_view(request: HttpRequest):
             "max_registrations": get_max_registrations(),
             "current_registrations": get_current_registrations(),
             "antibot": antibot_config(),
+            "participant_scores_visible": participant_scores_visible(),
         })
 
     if request.method == "PUT":
@@ -762,8 +764,25 @@ def admin_site_config_view(request: HttpRequest):
             else:
                 value = bool(raw)
             response["antibot"] = set_antibot_enabled(value)
+        if "participant_scores_visible" in data:
+            raw = data.get("participant_scores_visible")
+            if isinstance(raw, str):
+                value = raw.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                value = bool(raw)
+            response["participant_scores_visible"] = set_participant_scores_visible(value)
+            record_audit(
+                actor=acc,
+                action="site.participant_scores_visible",
+                summary=f"{'Bật' if value else 'Tắt'} cho thí sinh xem điểm",
+                target_type="SystemSetting",
+                target_id="participant_scores_visible",
+                after_data={"value": value},
+                reversible=False,
+            )
         if not response:
             return JsonResponse({"error": "missing_fields"}, status=400)
+        response.setdefault("participant_scores_visible", participant_scores_visible())
         response.setdefault("registration_open", registration_is_open())
         response.setdefault("max_registrations", get_max_registrations())
         response.setdefault("current_registrations", get_current_registrations())
