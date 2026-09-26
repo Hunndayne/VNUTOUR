@@ -4,6 +4,7 @@ Station views — config CRUD + session enter/exit (§9.5, §9.7).
 
 from django.db import transaction
 from django.db.models import F
+from django.conf import settings
 from django.http import JsonResponse, HttpRequest
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -24,6 +25,7 @@ from api.services.assignment_service import is_collab_assigned
 from api.services.checkin_service import scan_event_checkin, checkout_event
 from api.services.attendance_service import checkin_response, checked_in_members
 from api.services.program_service import get_current_sub_event
+from api.services.read_mostly_cache import get_or_load, station_config_key
 from api.services.result_lock_service import results_are_locked
 from .views_shared import _json_body, _require_role, _require_master_admin, is_admin
 
@@ -340,37 +342,53 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
         return err
 
     include_inactive = request.GET.get("include_inactive") in ("1", "true", "yes")
-    stations = get_stations_for_event(event_id, include_inactive=include_inactive)
-
     # Collabs run the stations but never need the answer key: grading reads the
     # server-computed `quiz_result` on each submission. Admins edit the forms
     # here, so they keep the config exactly as stored.
     hide_answers = acc.role == Account.ROLE_COLLAB
+    scope = "public" if hide_answers else "full"
 
-    from api.services.question_bank_service import effective_quiz_items
-    
-    def station_config(station):
-        if hide_answers:
-            return public_config(station.submission_config, effective_quiz_items=effective_quiz_items(station))
-        return station.submission_config
+    def load_payload():
+        stations = get_stations_for_event(event_id, include_inactive=include_inactive)
+        from api.services.question_bank_service import effective_quiz_items
 
-    return JsonResponse({
-        "stations": [
-            {
-                "id": s.id, "code": s.code, "name": s.name,
-                "location": s.location, "order": s.order,
-                "active": s.active,
-                "kind": s.kind,
-                "checkin_policy": s.checkin_policy,
-                "capacity_mode": s.capacity_mode,
-                "max_concurrent_teams": s.max_concurrent_teams,
-                "max_attempts": s.max_attempts,
-                "submission_config": station_config(s),
-                **_station_scoring_dict(s),
-            }
-            for s in stations
-        ],
-    })
+        def station_config(station):
+            if hide_answers:
+                return public_config(
+                    station.submission_config,
+                    effective_quiz_items=effective_quiz_items(station),
+                )
+            return station.submission_config
+
+        return {
+            "stations": [
+                {
+                    "id": s.id, "code": s.code, "name": s.name,
+                    "location": s.location, "order": s.order,
+                    "active": s.active,
+                    "kind": s.kind,
+                    "checkin_policy": s.checkin_policy,
+                    "capacity_mode": s.capacity_mode,
+                    "max_concurrent_teams": s.max_concurrent_teams,
+                    "max_attempts": s.max_attempts,
+                    "submission_config": station_config(s),
+                    **_station_scoring_dict(s),
+                }
+                for s in stations
+            ],
+        }
+
+    payload = get_or_load(
+        cache_name="station_config",
+        key=station_config_key(
+            event_id,
+            include_inactive=include_inactive,
+            scope=scope,
+        ),
+        ttl_seconds=settings.STATION_CONFIG_CACHE_TTL_SECONDS,
+        loader=load_payload,
+    )
+    return JsonResponse(payload)
 
 
 @csrf_exempt
