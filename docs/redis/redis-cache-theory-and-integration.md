@@ -686,13 +686,20 @@ Các ngưỡng trên chỉ là ví dụ khởi điểm; cần điều chỉnh th
 
 Cache:
 
-- Public site config.
-- Program structure.
-- System settings.
+- [x] Public site config.
+- [x] Program structure.
+- [x] Station configuration theo event, trạng thái active và phạm vi đáp án.
+- System settings ngoài các payload trên.
 - Scoreboard.
 - Dashboard overview.
 
 Dùng cache-aside, TTL, jitter và `transaction.on_commit`.
+
+Ba cache đã triển khai dùng namespace `vnutour:read-mostly:v1`, fail-open về
+PostgreSQL khi Redis lỗi và có thể tắt bằng `READ_MOSTLY_CACHE_ENABLED=0`.
+Station cache tách `full`/`public` để response của cộng tác viên không bao giờ
+dùng chung entry chứa đáp án với admin. Site-config chỉ cache response hiển thị;
+capacity enforcement vẫn dùng transaction và lock trên PostgreSQL.
 
 ### Giai đoạn 3 - Realtime micro-cache
 

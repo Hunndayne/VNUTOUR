@@ -18,13 +18,20 @@ data:
   DB_HOST: "postgres"
   DB_PORT: "5432"
 
-  # Shared cache for login/register rate-limit counters. REDIS_PASSWORD is
-  # required and loaded separately from backend-secret.
+  # Shared cache for rate-limit counters and disposable response caches.
+  # REDIS_PASSWORD is required and loaded separately from backend-secret.
   REDIS_HOST: "redis"
   REDIS_TCP_PORT: "6379"
   REDIS_DB: "0"
   REDIS_CONNECT_TIMEOUT_SECONDS: "0.5"
   REDIS_TIMEOUT_SECONDS: "0.5"
+  READ_MOSTLY_CACHE_ENABLED: "1"
+  SITE_CONFIG_CACHE_TTL_SECONDS: "30"
+  PROGRAM_CACHE_TTL_SECONDS: "300"
+  STATION_CONFIG_CACHE_TTL_SECONDS: "300"
+  READ_MOSTLY_CACHE_TTL_JITTER_PERCENT: "10"
+  READ_MOSTLY_CACHE_LOCK_SECONDS: "5"
+  READ_MOSTLY_CACHE_LOCK_WAIT_SECONDS: "0.1"
 
   FFMPEG_EXE: "ffmpeg"
 

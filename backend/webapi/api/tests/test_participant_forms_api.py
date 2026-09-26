@@ -690,6 +690,41 @@ class AnswerLeakTests(FormsApiTestBase):
         self.assertEqual([item["question"] for item in quiz], ["2+2?", "Thu do?"])
         self.assertEqual(self._keys_anywhere(payload) & self.ANSWER_KEYS, set())
 
+    def test_admin_and_collab_station_caches_never_share_answer_scope(self):
+        """Warm both variants in one test to guard against cross-role leakage."""
+        admin_token = self._staff_token("cache-admin", Account.ROLE_ADMIN)
+        collab_token = self._staff_token("cache-collab", Account.ROLE_COLLAB)
+
+        admin_payload = self._stations_listing_as(admin_token).json()
+        collab_payload = self._stations_listing_as(collab_token).json()
+
+        self.assertTrue(self._keys_anywhere(admin_payload) & self.ANSWER_KEYS)
+        self.assertEqual(self._keys_anywhere(collab_payload) & self.ANSWER_KEYS, set())
+
+    def test_repeated_station_listing_reuses_the_role_scoped_cache(self):
+        from django.core.cache import cache
+        from unittest.mock import patch
+
+        from api import views_station
+        from api.services.read_mostly_cache import station_config_key
+
+        admin_token = self._staff_token("warm-cache-admin", Account.ROLE_ADMIN)
+        key = station_config_key(
+            self.event.id, include_inactive=False, scope="full",
+        )
+        cache.delete(key)
+
+        with patch.object(
+            views_station,
+            "get_stations_for_event",
+            wraps=views_station.get_stations_for_event,
+        ) as loader:
+            first = self._stations_listing_as(admin_token)
+            second = self._stations_listing_as(admin_token)
+
+        self.assertEqual(first.json(), second.json())
+        loader.assert_called_once_with(self.event.id, include_inactive=False)
+
     def test_submit_response_does_not_echo_the_answers(self):
         response = self._submit({
             "response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}]},

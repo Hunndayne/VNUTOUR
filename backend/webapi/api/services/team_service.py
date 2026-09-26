@@ -87,6 +87,46 @@ def get_current_registrations() -> int:
     ).count()
 
 
+def get_public_registration_status() -> dict:
+    """Load the public registration switches with one settings query.
+
+    The count is computed once per site-config rebuild.  Capacity enforcement
+    deliberately continues to use the uncached helpers and row locks below.
+    """
+    values = dict(
+        SystemSetting.objects.filter(
+            key__in=("registration_open", "max_registrations"),
+        ).values_list("key", "value")
+    )
+
+    registration_open = values.get("registration_open", False)
+    if isinstance(registration_open, str):
+        registration_open = registration_open.strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+    else:
+        registration_open = bool(registration_open)
+
+    try:
+        maximum = max(0, int(values.get("max_registrations", 0)))
+    except (TypeError, ValueError):
+        maximum = 0
+
+    if maximum <= 0:
+        return {
+            "allow_signup": registration_open,
+            "registration_full": False,
+            "registration_slots_remaining": None,
+        }
+
+    current = get_current_registrations()
+    return {
+        "allow_signup": registration_open,
+        "registration_full": current >= maximum,
+        "registration_slots_remaining": max(0, maximum - current),
+    }
+
+
 def lock_registration_capacity() -> None:
     """Serialize capacity-consuming writes until the caller's transaction ends.
 

@@ -64,7 +64,10 @@ class PublicSiteConfigViewTests(TestCase):
         self.assertEqual(response.json()["registration_slots_remaining"], 1)
 
         p2 = Participant.objects.create(mssv="SV902", full_name="Two")
-        TeamMembership.objects.create(team=team, participant=p2)
+        # Production runs this callback immediately after the autocommit write.
+        # TestCase wraps the test in an outer transaction, so execute it here.
+        with self.captureOnCommitCallbacks(execute=True):
+            TeamMembership.objects.create(team=team, participant=p2)
         response2 = self.client.get("/api/public/site-config")
         self.assertEqual(response2.status_code, 200)
         self.assertTrue(response2.json()["registration_full"])
