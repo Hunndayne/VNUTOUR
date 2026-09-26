@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CheckoutReview from './CheckoutReview.jsx'
+import ChallengeScores from './ChallengeScores.jsx'
+import {
+  challengeInitialValues, challengePayload, challengeSum, challengeValuesValid,
+} from './challengeScores.js'
 import logoImage from './assets/vnutour-logo.png'
 import { FIXED_PHASES } from './adminProgram.js'
 import {
@@ -275,7 +279,81 @@ function buildStationView(station) {
     scoringMode: station.scoring_mode || 'score_only',
     passThreshold: station.pass_threshold ?? null,
     passPoints: station.pass_points ?? null,
+    // Real challenge titles (staff only); empty for stations without challenges.
+    challenges: station.scoring_mode === 'pass_fail' || !Array.isArray(station.challenges) ? [] : station.challenges,
+    // Whether the station has a web form part next to its challenges.
+    hasForm: (station.submission_config?.items || []).some(item => item.type !== 'challenge'),
   }
+}
+
+// Nhật ký trạm ở trạm có thử thách: điểm bài làm (nếu có form) + từng thử thách.
+// Bản nháp nằm chung `scoreDrafts` (khoá `challenges:<id>` và `<id>`) nên reload không mất.
+function SessionChallengeGrading({ session, station, drafts, setDrafts, saving, onSave }) {
+  const challenges = station.challenges
+  const [open, setOpen] = useState(false)
+  const challengeKey = `challenges:${session.id}`
+  const values = drafts[challengeKey] ?? challengeInitialValues(challenges, session.challenge_scores)
+  const formValue = drafts[session.id] ?? (session.form_score ?? '')
+  const formValid = !station.hasForm || formValue === '' || (Number.isInteger(Number(formValue)) && Number(formValue) >= 0)
+  const valid = formValid && challengeValuesValid(challenges, values)
+  const total = (station.hasForm ? Number(formValue) || 0 : 0) + challengeSum(challenges, values)
+  const graded = challenges.filter(item => session.challenge_scores?.[item.id] != null).length
+  return (
+    <div className="w-full space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-ink/80">Điểm:</span>
+          <span className="rounded bg-stone/20 px-2 py-0.5 font-mono text-sm font-extrabold text-ink">{session.score ?? 0}</span>
+          <span className="text-[11px] text-ink/65">
+            {graded}/{challenges.length} thử thách đã chấm
+            {station.scoringMode === 'threshold' && station.passThreshold != null && ` · đạt ≥ ${station.passThreshold}`}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen(current => !current)}
+          className="rounded-lg bg-ink px-3 py-1 text-xs font-bold text-white hover:brightness-110 active:scale-95"
+        >
+          {open ? 'Thu gọn' : 'Chấm thử thách'}
+        </button>
+      </div>
+      {open && (
+        <div className="space-y-2 rounded-lg bg-paper p-2.5">
+          <ChallengeScores
+            challenges={challenges}
+            values={values}
+            disabled={saving}
+            onChange={next => setDrafts(current => ({ ...current, [challengeKey]: next }))}
+          />
+          <div className="flex flex-wrap items-end gap-2">
+            {station.hasForm && (
+              <label className="text-xs font-medium text-ink">Điểm phần bài làm
+                <input
+                  type="number" min="0" step="1"
+                  value={formValue}
+                  onChange={event => setDrafts(current => ({ ...current, [session.id]: event.target.value }))}
+                  className="mt-1 block w-24 rounded-lg border border-stone bg-white px-2 py-1.5 text-sm font-bold text-ink outline-none focus:border-trail"
+                />
+              </label>
+            )}
+            <p className="py-1.5 text-xs text-ink/70">Tổng: <strong className="font-mono text-sm text-ink">{total}</strong></p>
+            <button
+              type="button"
+              disabled={saving || !valid}
+              onClick={() => onSave(
+                session.id,
+                station.hasForm && formValue !== '' ? formValue : null,
+                challengePayload(challenges, values),
+              )}
+              className="ml-auto rounded-lg bg-trail px-3 py-1.5 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
+            >
+              {saving ? '...' : 'Lưu điểm'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function CheckedInMembers({ members }) {
@@ -657,27 +735,33 @@ function CoopDashboard() {
     setFlash({ tone, message })
   }
 
-  const saveSessionScore = useCallback(async (sessionId, rawValue) => {
+  // `challenges` (at a challenge station) makes `rawValue` the form part only;
+  // pass `rawValue = null` when the station has no form to score.
+  const saveSessionScore = useCallback(async (sessionId, rawValue, challenges = null) => {
     if (!sessionId) return
-    const points = Number(rawValue)
-    if (!Number.isFinite(points)) {
+    const points = rawValue == null ? null : Number(rawValue)
+    if (points != null && !Number.isFinite(points)) {
       setFlashMessage('error', 'Điểm không hợp lệ.')
       playScanFeedback('error')
       return
     }
     setSavingScoreId(sessionId)
     try {
-      await apiRequest(`/station-sessions/${sessionId}/score`, {
+      const body = {}
+      if (points != null) body.score = points
+      if (challenges) body.challenges = challenges
+      const response = await apiRequest(`/station-sessions/${sessionId}/score`, {
         method: 'PATCH',
-        body: { score: points },
+        body,
       })
       setScoreDrafts((current) => {
         const next = { ...current }
         delete next[sessionId]
+        delete next[`challenges:${sessionId}`]
         return next
       })
       scoreDraft.clear()
-      setFlashMessage('success', `Đã lưu ${points} điểm cho đội.`)
+      setFlashMessage('success', `Đã lưu ${response?.score ?? points} điểm cho đội.`)
       playScanFeedback('success')
       await refreshLive()
     } catch (error) {
@@ -690,7 +774,9 @@ function CoopDashboard() {
         ? 'Bạn không phụ trách trạm này nên không thể chấm điểm.'
         : error?.data?.error === 'results_locked'
           ? 'Kết quả đã khóa ở phase Kết thúc nên không thể lưu điểm.'
-          : 'Không lưu được điểm.')
+          : error?.data?.error === 'invalid_challenge_score'
+            ? 'Điểm thử thách phải là số nguyên từ 0 đến điểm tối đa.'
+            : 'Không lưu được điểm.')
     } finally {
       setSavingScoreId(null)
     }
@@ -796,6 +882,8 @@ function CoopDashboard() {
         passPoints: response.pass_points ?? null,
         submission: response.submission,
         score: response.score,
+        formScore: response.form_score ?? null,
+        challenges: Array.isArray(response.challenges) ? response.challenges : [],
         participantName,
         participantMssv,
         checkedInCount: Number.isFinite(checkedInCount) ? checkedInCount : null,
@@ -1008,6 +1096,8 @@ function CoopDashboard() {
         passPoints: selectedStation?.passPoints ?? null,
         submission: response.submission,
         score: response.score,
+        formScore: response.form_score ?? null,
+        challenges: Array.isArray(response.challenges) ? response.challenges : [],
       })
       setFlashMessage('success', `Đã cho đội ${teamName} rời trạm.`)
       playScanFeedback('success')
@@ -1489,6 +1579,11 @@ function CoopDashboard() {
                     setLastResult(current => ({
                       ...current,
                       score: updated.score,
+                      formScore: updated.form_score ?? current.formScore ?? null,
+                      challenges: (current.challenges || []).map(item => ({
+                        ...item,
+                        points: updated.challenge_scores?.[item.id] ?? null,
+                      })),
                       submission: current.submission && 'item_marks' in updated
                         ? { ...current.submission, item_marks: updated.item_marks }
                         : current.submission,
@@ -1739,6 +1834,15 @@ function CoopDashboard() {
                                     </button>
                                   </div>
                                 </>
+                              ) : selectedStation?.challenges?.length > 0 && !String(session.id).startsWith('sub-') ? (
+                                <SessionChallengeGrading
+                                  session={session}
+                                  station={selectedStation}
+                                  drafts={scoreDrafts}
+                                  setDrafts={setScoreDrafts}
+                                  saving={savingScoreId === session.id}
+                                  onSave={saveSessionScore}
+                                />
                               ) : (
                                 <>
                                   <div className="flex items-center gap-2">

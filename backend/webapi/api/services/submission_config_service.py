@@ -14,7 +14,9 @@ questions, quiz questions and the file-upload block in any order:
         {"id": "file-c3", "type": "attachment", "maxFiles": 1, "maxSizeMb": 20,
          "allowedTypes": "JPG, PNG, PDF", "note": ""},
         {"id": "rating-d4", "type": "rating", "question": "...", "scale": 5,
-         "lowLabel": "Rất tệ", "highLabel": "Rất tốt", "required": true}
+         "lowLabel": "Rất tệ", "highLabel": "Rất tốt", "required": true},
+        {"id": "challenge-e5", "type": "challenge", "title": "...",
+         "description": "...", "maxPoints": 10}
       ],
       "quiz": {"autoScore": false, "randomCount": 0},
       "limits": {"maxSubmissions": 0, "closeOnCorrect": false, "manualClosed": false},
@@ -35,6 +37,12 @@ and are stored in one `attachment_payload`. Extra attachment items are dropped.
 never reshuffles it. Callers pass that stored id list as `item_ids` to
 `public_config` and `grade_quiz`, which then ignore questions outside the draw.
 
+A `challenge` item is an offline activity the team does at the station; there
+is nothing to answer on the web and a coop scores it at checkout (0..maxPoints,
+stored on the StationSession). Participants never see its title or
+description — `public_config` swaps them for "Thử thách N", numbered by the
+challenge's position among the station's challenges.
+
 `flow.checkoutAfterSubmit` decides how a visit ends at a station that has a form:
 on (the default) the team is still scanned out afterwards, off means submitting
 counts as leaving. It sits here rather than on the Station because it only has
@@ -49,8 +57,14 @@ TYPE_TEXT = "text"
 TYPE_QUIZ = "quiz"
 TYPE_ATTACHMENT = "attachment"
 TYPE_RATING = "rating"
+TYPE_CHALLENGE = "challenge"
 
-ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT, TYPE_RATING)
+ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT, TYPE_RATING, TYPE_CHALLENGE)
+
+# Item types a participant fills in on the web; challenges are scored offline.
+FORM_ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT, TYPE_RATING)
+
+CHALLENGE_DEFAULT_MAX_POINTS = 10
 
 # A rating item is a star scale 1..scale — survey feedback, never graded.
 RATING_MIN_SCALE = 2
@@ -153,11 +167,22 @@ def _rating_item(raw: dict, index: int) -> dict:
     }
 
 
+def _challenge_item(raw: dict, index: int) -> dict:
+    return {
+        "id": _clean_str(raw.get("id")) or f"challenge-{index}",
+        "type": TYPE_CHALLENGE,
+        "title": _clean_str(raw.get("title") or raw.get("question")),
+        "description": _clean_str(raw.get("description")),
+        "maxPoints": _positive_int(raw.get("maxPoints"), CHALLENGE_DEFAULT_MAX_POINTS),
+    }
+
+
 _BUILDERS = {
     TYPE_TEXT: _text_item,
     TYPE_QUIZ: _quiz_item,
     TYPE_ATTACHMENT: _attachment_item,
     TYPE_RATING: _rating_item,
+    TYPE_CHALLENGE: _challenge_item,
 }
 
 
@@ -318,14 +343,32 @@ def submission_items(
     return [item for item in items if item["type"] == item_type]
 
 
+def challenge_label(index: int) -> str:
+    """The only name a participant ever sees for a challenge (1-based)."""
+    return f"Thử thách {index}"
+
+
+def challenge_items(config: dict | None) -> list[dict]:
+    """The station's challenges in form order, each with its 1-based `index`."""
+    return [
+        {**item, "index": index}
+        for index, item in enumerate(submission_items(config, TYPE_CHALLENGE), start=1)
+    ]
+
+
+def has_challenges(config: dict | None) -> bool:
+    return bool(submission_items(config, TYPE_CHALLENGE))
+
+
 def has_items(config: dict | None) -> bool:
     """Whether the station has a form worth showing to participants.
 
-    Counts inline items only. Stations that draw their quiz from the shared
+    Counts inline items a participant can fill in; challenges alone are not a
+    form, since they are done offline and scored by a coop. Stations that draw their quiz from the shared
     question bank (no inline items) look empty here — use `has_form(config,
     event_bank_count)` for the participant-facing "is there a form" check.
     """
-    return bool(normalize_config(config)["items"])
+    return any(item["type"] in FORM_ITEM_TYPES for item in normalize_config(config)["items"])
 
 
 def references_bank(config: dict | None) -> bool:
@@ -521,11 +564,22 @@ def public_config(
     public = deepcopy(normalize_config(config))
     all_items = submission_items(config, effective_quiz_items=effective_quiz_items)
     public["items"] = _served_items(all_items, item_ids)
-    
-    for item in public["items"]:
+
+    challenge_index = 0
+    for position, item in enumerate(public["items"]):
         if item["type"] in (TYPE_QUIZ, TYPE_TEXT):
             for key in _ANSWER_KEYS:
                 item.pop(key, None)
+        elif item["type"] == TYPE_CHALLENGE:
+            # Only the anonymous label leaves the server — never the real
+            # title or the grading notes.
+            challenge_index += 1
+            public["items"][position] = {
+                "id": item["id"],
+                "type": TYPE_CHALLENGE,
+                "label": challenge_label(challenge_index),
+                "maxPoints": item["maxPoints"],
+            }
     return public
 
 

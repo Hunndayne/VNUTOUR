@@ -45,6 +45,9 @@ from api.services.submission_config_service import (
     attachment_item as submission_attachment_item,
     grade_quiz as grade_submission_quiz,
     checkout_after_submit,
+    challenge_items,
+    challenge_label,
+    TYPE_CHALLENGE,
 )
 from api.services.team_form_variant_service import variant_item_ids
 from api.services import team_merge_service
@@ -407,6 +410,22 @@ def _station_has_form(station: Station, bank_counts: dict | None = None) -> bool
     return submission_has_form(config, bank_counts[sub_event_id])
 
 
+def _participant_score_visible(station: Station) -> bool:
+    """Whether this station's points may appear anywhere a participant can read.
+
+    Every participant payload that carries a score, a quiz result or a
+    challenge's points goes through here; staff views never do.
+    """
+    return bool(station.show_score_to_participants)
+
+
+def _hide_challenge_points(config: dict) -> dict:
+    for item in config.get("items") or []:
+        if item.get("type") == TYPE_CHALLENGE:
+            item.pop("maxPoints", None)
+    return config
+
+
 def _station_form_payload(station: Station, team: Team | None = None, replay: dict | None = None, participant_id=None) -> dict:
     from api.services.question_bank_service import effective_quiz_items
     phase = station.sub_event.phase
@@ -444,7 +463,10 @@ def _station_form_payload(station: Station, team: Team | None = None, replay: di
         "submission_config": public_submission_config(station.submission_config, drawn_items, effective_quiz_items=effective_items),
         "closure": closure,
         "is_survey": _is_survey_station(station),
+        "show_score": _participant_score_visible(station),
     }
+    if not payload["show_score"]:
+        _hide_challenge_points(payload["submission_config"])
     if _is_survey_station(station):
         mine = StationSubmission.objects.filter(
             station=station, participant_id=participant_id,
@@ -1598,7 +1620,9 @@ def my_team_stations_view(request: HttpRequest):
     journey_sessions: dict[int, list[dict]] = {}
     for row in StationSession.objects.filter(
         team=team, station_id__in=station_ids,
-    ).exclude(status=StationSession.STATUS_CANCELLED).values("station_id", "status", "score", "outcome"):
+    ).exclude(status=StationSession.STATUS_CANCELLED).order_by("-entered_at").values(
+        "station_id", "status", "score", "outcome", "challenge_scores",
+    ):
         journey_sessions.setdefault(row["station_id"], []).append(row)
 
     replay_state = get_event_replay_state(team, current_event, stations)
@@ -1646,6 +1670,29 @@ def my_team_stations_view(request: HttpRequest):
                 scores = [r["score"] for r in rows]
                 best_score = max(scores) if scores else 0
 
+        show_score = _participant_score_visible(station)
+        challenges = []
+        if station.scoring_mode != Station.SCORING_PASS_FAIL:
+            station_challenges = challenge_items(station.submission_config)
+            if station_challenges:
+                # The play that produced `best_score` (latest wins a tie); with
+                # nothing counted yet, the latest play.
+                ranked = (
+                    [r for r in rows if r["outcome"] == StationSession.OUTCOME_PASSED]
+                    if station.scoring_mode == Station.SCORING_THRESHOLD else rows
+                )
+                source = max(ranked, key=lambda r: r["score"], default=None) or (rows[0] if rows else None)
+                stored = (source or {}).get("challenge_scores") or {}
+                challenges = [
+                    {
+                        "label": challenge_label(item["index"]),
+                        "max_points": item["maxPoints"] if show_score else None,
+                        "points": stored.get(item["id"]) if show_score else None,
+                        "graded": item["id"] in stored,
+                    }
+                    for item in station_challenges
+                ]
+
         if has_active:
             journey_status = "active"
         elif has_passed:
@@ -1685,7 +1732,9 @@ def my_team_stations_view(request: HttpRequest):
                 "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
             } if submission else None,
             "visit_count": visit_count,
-            "best_score": best_score,
+            "best_score": best_score if show_score else None,
+            "show_score": show_score,
+            "challenges": challenges,
             "status": journey_status,
             "scoring_mode": station.scoring_mode,
             "attempts_used": replay["attempts_used"],
@@ -2370,6 +2419,7 @@ def my_team_station_state_view(request: HttpRequest):
         submissions = submissions.filter(station_session_id=session["id"])
     submission = submissions.order_by("-created_at").values(
         "station_id", "status", "submitted_at", "score", "response_payload", "item_marks",
+        "station__show_score_to_participants",
     ).first()
 
     # A form that stopped accepting answers (timer ran out, closed by BTC...)
@@ -2442,8 +2492,12 @@ def my_team_station_state_view(request: HttpRequest):
             "station_id": submission["station_id"],
             "status": submission["status"],
             "submitted_at": stamp(submission["submitted_at"]),
-            "score": submission["score"],
-            "quiz_result": marked_quiz_result(submission["response_payload"], submission["item_marks"]),
+            "score": submission["score"] if submission["station__show_score_to_participants"] else None,
+            "quiz_result": (
+                marked_quiz_result(submission["response_payload"], submission["item_marks"])
+                if submission["station__show_score_to_participants"] else None
+            ),
+            "show_score": submission["station__show_score_to_participants"],
         } if submission else None,
         "qr": qr,
         "attendance": attendance,
@@ -2476,7 +2530,12 @@ def my_team_question_history_view(request: HttpRequest):
         "id": sub.id, "station_id": sub.station_id, "station_name": sub.station.name,
         "event_name": sub.station.sub_event.name,
         "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
-        "score": sub.score, "quiz_result": marked_quiz_result(sub.response_payload, sub.item_marks),
+        "score": sub.score if _participant_score_visible(sub.station) else None,
+        "quiz_result": (
+            marked_quiz_result(sub.response_payload, sub.item_marks)
+            if _participant_score_visible(sub.station) else None
+        ),
+        "show_score": _participant_score_visible(sub.station),
         "review": participant_review(sub),
     } for sub in submissions]})
 

@@ -515,6 +515,9 @@ class Station(models.Model):
     # Total plays allowed for one team at this station.  None preserves the
     # historical unlimited-attempt behaviour; 1 means the initial play only.
     max_attempts = models.PositiveIntegerField(null=True, blank=True)
+    # Off keeps this station's points out of every participant-facing payload;
+    # they still count towards the team total and the leaderboard.
+    show_score_to_participants = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -689,7 +692,15 @@ class StationSession(models.Model):
         Account, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="exited_sessions",
     )
+    # The visit's total. At a station with challenges it is always
+    # `form_score + sum(challenge_scores)`, kept stored so every aggregate
+    # (score entries, leaderboard, replay) keeps reading one number.
     score = models.IntegerField(default=0)
+    # Points for the web form (quiz/essay) part, set only once a station with
+    # challenges has been graded; null elsewhere, where `score` is the form.
+    form_score = models.IntegerField(null=True, blank=True)
+    # {challenge item id: points} for the station's offline challenges.
+    challenge_scores = models.JSONField(default=dict, blank=True)
     outcome = models.CharField(
         max_length=10, choices=OUTCOME_CHOICES, default=OUTCOME_PENDING,
     )
