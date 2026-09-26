@@ -22,6 +22,14 @@ from api.services.submission_config_service import (
 )
 from api.services.result_lock_service import results_are_locked
 from api.services import scan_token_service
+from api.services.coop_realtime_cache import (
+    DEFAULT_SESSION_LIMIT,
+    get_or_load,
+    occupancy_key,
+    recent_sessions_key,
+    schedule_station_invalidation,
+    station_sessions_key,
+)
 
 
 # =====================================================================
@@ -71,6 +79,11 @@ def get_stations_for_event(sub_event_id: int, include_inactive: bool = False) ->
 
 
 def get_occupancy(station_id: int) -> dict:
+    """Return short-lived shared occupancy data for one station."""
+    return get_or_load(occupancy_key(station_id), lambda: _load_occupancy(station_id))
+
+
+def _load_occupancy(station_id: int) -> dict:
     """Return current occupancy info for a station."""
     station = Station.objects.get(id=station_id)
     active_count = StationSession.objects.filter(
@@ -92,6 +105,16 @@ def get_occupancy(station_id: int) -> dict:
 
 
 def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
+    """Return short-lived shared session history for one station."""
+    if limit != DEFAULT_SESSION_LIMIT:
+        return _load_station_sessions(station_id, limit)
+    return get_or_load(
+        station_sessions_key(station_id),
+        lambda: _load_station_sessions(station_id, limit),
+    )
+
+
+def _load_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
     """Return recent session history for a station."""
     sessions = StationSession.objects.filter(
         station_id=station_id,
@@ -606,6 +629,7 @@ def enter_station(
             # Retire the scanned QR inside the same transaction as the session,
             # so a re-read of the same image cannot enter the team twice.
             scan_token_service.consume(team_ref, team)
+            schedule_station_invalidation(sub_event.id, station.id)
             return session, None
     except IntegrityError:
         return None, "session_already_active"
@@ -676,6 +700,7 @@ def start_free_play_station(
             TeamFormSession.objects.create(
                 team=team, station=station, started_by=operator,
             )
+            schedule_station_invalidation(station.sub_event_id, station.id)
             return session, None
     except IntegrityError:
         existing = StationSession.objects.filter(
@@ -741,6 +766,7 @@ def exit_station(
         # Inside the transaction, as in enter_station: the exit and the QR going
         # stale have to land together or neither.
         scan_token_service.consume(team_ref, team)
+        schedule_station_invalidation(session.sub_event_id, session.station_id)
 
     return session, None
 
@@ -805,6 +831,7 @@ def set_session_score(
                 is_correct=session.outcome == StationSession.OUTCOME_PASSED,
             )
         _sync_station_score_entry(session.team, station, operator)
+        schedule_station_invalidation(session.sub_event_id, session.station_id)
 
     return session, None
 
@@ -861,6 +888,7 @@ def set_submission_score(
                 note=note or default_note,
                 created_by=operator,
             )
+        schedule_station_invalidation(submission.station.sub_event_id, submission.station_id)
         return None
 
     session.score = points
@@ -875,10 +903,21 @@ def set_submission_score(
     session.save(update_fields=update_fields)
 
     _sync_station_score_entry(submission.team, submission.station, operator)
+    schedule_station_invalidation(submission.station.sub_event_id, submission.station_id)
     return None
 
 
 def list_recent_sessions(event_id: int | None = None, limit: int = 50) -> list[dict]:
+    """Return short-lived shared recent sessions for one event."""
+    if event_id is None or limit != DEFAULT_SESSION_LIMIT:
+        return _load_recent_sessions(event_id, limit)
+    return get_or_load(
+        recent_sessions_key(event_id),
+        lambda: _load_recent_sessions(event_id, limit),
+    )
+
+
+def _load_recent_sessions(event_id: int | None = None, limit: int = 50) -> list[dict]:
     """Return recent station sessions."""
     qs = StationSession.objects.select_related(
         "team", "station", "sub_event",

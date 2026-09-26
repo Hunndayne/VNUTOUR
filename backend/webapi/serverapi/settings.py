@@ -243,6 +243,18 @@ CACHES = {
     "rate_limit_fallback": DATABASE_CACHE,
 }
 
+# Coop operators poll a small set of shared event/station views.  A very short
+# jittered TTL absorbs duplicate reads from many operators without turning the
+# cache into a source of truth.  Successful writes invalidate these entries in
+# transaction.on_commit callbacks (see services/coop_realtime_cache.py).
+COOP_REALTIME_CACHE_ENABLED = os.getenv("COOP_REALTIME_CACHE_ENABLED", "1") == "1"
+COOP_REALTIME_CACHE_TTL_MIN_SECONDS = int(
+    os.getenv("COOP_REALTIME_CACHE_TTL_MIN_SECONDS", "2")
+)
+COOP_REALTIME_CACHE_TTL_MAX_SECONDS = int(
+    os.getenv("COOP_REALTIME_CACHE_TTL_MAX_SECONDS", "5")
+)
+
 # Production transport/browser security
 SECURE_SSL_REDIRECT = os.getenv(
     "DJANGO_SECURE_SSL_REDIRECT",
