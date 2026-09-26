@@ -350,6 +350,7 @@ def skip_challenge(
             "updated_at",
         ])
         _sync_station_score_entry(session.team, station, operator)
+        schedule_station_invalidation(session.sub_event_id, session.station_id)
     return session, None
 
 
