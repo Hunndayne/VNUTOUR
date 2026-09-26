@@ -161,10 +161,21 @@ jobs:
           exit-code: "1"
 
       - name: Upload Trivy results to GitHub Security tab
-        if: always() #upload the report even if the scan above failed the job
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() # upload the report even if the scan above failed the job
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results-vnutour-frontend-${{ steps.meta.outputs.sha }}.sarif
+
+      # Keep the raw report downloadable from the workflow run, independently
+      # of GitHub Code Scanning permissions and branch filters.
+      - name: Upload raw Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-frontend-sarif-${{ steps.meta.outputs.sha }}
+          path: trivy-results-vnutour-frontend-${{ steps.meta.outputs.sha }}.sarif
+          if-no-files-found: error
+          retention-days: 3
 
       # Only runs if the scan step above passed - a failed scan stops the job here and this step (and everything after it) is skipped.
       - name: Push image
