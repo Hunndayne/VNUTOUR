@@ -1,0 +1,122 @@
+# Ephemeral shared cache for authentication rate-limit counters. This legacy
+# flat manifest mirrors k8s/kustomize/base/04.redis.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: vnutour
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: vnutour
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # redis:7.4.11-alpine defines redis as UID 999 / GID 1000.
+        runAsUser: 999
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7.4.11-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: REDIS_PASSWORD
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              : "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+              case "$REDIS_PASSWORD" in
+                *[!0-9a-fA-F]*|'')
+                  echo "REDIS_PASSWORD must be a hexadecimal secret" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ "${#REDIS_PASSWORD}" -ne 64 ]; then
+                echo "REDIS_PASSWORD must contain exactly 64 hex characters" >&2
+                exit 1
+              fi
+              exec redis-server --save "" --appendonly no \
+                --maxmemory 128mb --maxmemory-policy noeviction \
+                --requirepass "$REDIS_PASSWORD"
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning ping | grep -q PONG
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning ping | grep -q PONG
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+---
+# Only the application backend may reach Redis. The Service remains ClusterIP,
+# and no Redis port is exposed through Ingress or a node port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: vnutour
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - protocol: TCP
+          port: 6379

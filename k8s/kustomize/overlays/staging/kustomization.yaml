@@ -40,6 +40,39 @@ components:
     # Staging is for testing the feature, not for defending it: the search
     # rate limit (10 per 10 minutes per IP in the component) gets in the way.
     # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
+    # Staging is for testing the feature, not for defending it: the search
+    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
+    # Prod keeps the real limits.
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -86,8 +119,8 @@ patches:
 # image push to GHCR. Do NOT edit newTag manually.
 images:
 - name: ghcr.io/hunndayne/vnutour-backend
-  newTag: d1802ee
+  newTag: 5a4c443
 - name: ghcr.io/hunndayne/vnutour-frontend
-  newTag: d1802ee
+  newTag: 5a4c443
 - name: ghcr.io/hunndayne/vnutour-photo-ai
-  newTag: d1802ee
+  newTag: 5a4c443

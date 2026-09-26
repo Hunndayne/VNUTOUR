@@ -1066,6 +1066,24 @@ function FormSubmissionPanel({
                 </div>
 
                 {submissionItems.map((item, index) => {
+          // Offline challenge: nothing to answer here, a coop scores it at the station.
+          if (item.type === 'challenge') {
+            return (
+              <div key={item.id} className={`${CARD} flex items-start gap-3 border-dashed px-5 py-4 sm:px-6`}>
+                <Icon name="flag" className="mt-0.5 h-5 w-5 shrink-0 text-[#8A5A9E]" />
+                <div>
+                  <p className="text-base font-semibold text-ink">
+                    {item.label}
+                    {form?.show_score !== false && item.maxPoints != null && (
+                      <span className="ml-2 text-sm font-normal text-ink/55">· tối đa {item.maxPoints} điểm</span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-sm text-ink/60">Thực hiện trực tiếp tại trạm — coop sẽ chấm điểm, không cần trả lời ở đây.</p>
+                </div>
+              </div>
+            )
+          }
+
           if (item.type === 'quiz') {
             return (
               <QuizItemDisplay

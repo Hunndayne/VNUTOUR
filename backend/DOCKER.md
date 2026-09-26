@@ -1,8 +1,8 @@
 Docker Deployment
 =================
 
-The production stack contains PostgreSQL, a one-shot Django migration job,
-Gunicorn, the React/Nginx frontend, the Discord bot, and the email worker.
+The production stack contains PostgreSQL, Redis, a one-shot Django migration
+job, Gunicorn, the React/Nginx frontend, the Discord bot, and the email worker.
 
 Configure
 ---------
@@ -16,6 +16,10 @@ cp .env.docker.example .env.docker
 Replace every placeholder secret and set the real hostname. Keep this file
 outside the repository checkout on a deployed host — `/srv/vnutour/.env.docker`
 with mode `600` — so a redeploy never overwrites it.
+
+`REDIS_PASSWORD` is required. Redis is not exposed on a host port, but the
+password still protects it from other workloads that can reach the internal
+Docker network.
 
 `docker-compose.prod.yml` overlays the base file with bounded log rotation and
 a Cloudflare Tunnel. Select both files once per shell:
@@ -34,8 +38,9 @@ docker compose --env-file .env.docker up -d
 docker compose --env-file .env.docker ps
 ```
 
-The `migrate` service must finish successfully before `backend` starts. Nginx
-waits for the backend healthcheck before accepting traffic.
+The `migrate` service must finish and Redis must become healthy before
+`backend` starts. Nginx waits for the backend healthcheck before accepting
+traffic.
 
 Python dependencies are installed and checked during the image build. The final
 image removes `pip`, `wheel`, and `ensurepip` to avoid shipping their bundled
@@ -48,12 +53,15 @@ Useful commands
 
 ```bash
 docker compose --env-file .env.docker logs -f backend frontend
+docker compose --env-file .env.docker logs -f redis
 docker compose --env-file .env.docker logs -f bot email-worker
 docker compose --env-file .env.docker run --rm migrate
 ```
 
 Persistent Docker volumes store PostgreSQL data, protected local uploads, and
-backups. Do not remove these volumes during routine updates.
+backups. Redis is intentionally ephemeral because it only stores rate-limit
+counters; PostgreSQL remains the source of truth. Do not remove the persistent
+volumes during routine updates.
 
 TLS
 ---

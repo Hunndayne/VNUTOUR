@@ -94,6 +94,14 @@ const MODE_META = {
     cls: 'bg-clay/12 text-clay',
     selectedCls: 'border-clay/30 bg-clay/10 text-clay',
   },
+  challenge: {
+    label: 'Thử thách',
+    hint: 'Hoạt động làm tại trạm, không trả lời trên web; coop chấm điểm từng thử thách.',
+    addLabel: 'Thử thách',
+    icon: 'flag',
+    cls: 'bg-[#8A5A9E]/12 text-[#8A5A9E]',
+    selectedCls: 'border-[#8A5A9E]/30 bg-[#8A5A9E]/10 text-[#8A5A9E]',
+  },
 }
 
 const CHECKIN_POLICY_META = {
@@ -207,11 +215,28 @@ function createRatingItem(item = {}) {
   }
 }
 
+const CHALLENGE_DEFAULT_MAX_POINTS = 10
+
+// Thí sinh chỉ thấy "Thử thách N"; tên và hướng dẫn chấm chỉ BTC/coop xem.
+function createChallengeItem(item = {}) {
+  const maxPoints = Math.trunc(Number(item.maxPoints))
+  return {
+    id: item.id ?? makeLocalId('challenge'),
+    type: 'challenge',
+    title: item.title ?? '',
+    description: item.description ?? '',
+    maxPoints: Number.isFinite(maxPoints) && maxPoints >= 1 ? maxPoints : CHALLENGE_DEFAULT_MAX_POINTS,
+    // Thời gian quy định; bỏ thử thách bị phạt thời gian này + 15 phút.
+    durationMinutes: Math.max(0, Math.trunc(Number(item.durationMinutes)) || 0),
+  }
+}
+
 const ITEM_FACTORIES = {
   text: createTextItem,
   quiz: createQuizItem,
   attachment: createAttachmentItem,
   rating: createRatingItem,
+  challenge: createChallengeItem,
 }
 
 function createSubmissionItem(type, raw = {}) {
@@ -609,6 +634,8 @@ function createBlankStation() {
     passThreshold: 0,
     passPoints: 0,
     maxAttempts: null,
+    showScoreToParticipants: true,
+    maxStayMinutes: null,
     teamsHere: [],
     teamsDone: [],
     submission: createSubmissionConfig(),
@@ -638,6 +665,8 @@ function createStation(station = {}) {
   const rawPoints = Number(station.passPoints)
   next.passPoints = Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 0
   next.maxAttempts = station.maxAttempts == null ? null : Number(station.maxAttempts)
+  next.showScoreToParticipants = station.showScoreToParticipants !== false
+  next.maxStayMinutes = station.maxStayMinutes == null || station.maxStayMinutes === '' ? null : Number(station.maxStayMinutes)
   next.submission = createSubmissionConfig(station.submission)
 
   return next
@@ -1028,6 +1057,10 @@ function explainApiError(error) {
     not_assigned_to_station: 'Bạn chưa được phân công phụ trách trạm này.',
     submission_not_found: 'Không tìm thấy bài nộp cần thao tác.',
     invalid_score: 'Điểm không hợp lệ.',
+    invalid_challenge_score: 'Điểm thử thách phải là số nguyên từ 0 đến điểm tối đa.',
+    challenges_not_allowed_pass_fail: 'Trạm Đạt/Không đạt không dùng được thử thách. Chọn cách tính điểm khác hoặc gỡ thử thách.',
+    challenges_not_allowed_survey: 'Trạm khảo sát không dùng được thử thách.',
+    invalid_max_stay_minutes: 'Thời gian tối đa tại trạm phải từ 1 đến 1440 phút.',
     results_locked: 'Kết quả đã khóa (chương trình kết thúc), không thể sửa điểm.',
     master_admin_required: 'Chỉ master admin mới được tạo/sửa/xoá trạm và đổi phase hiện tại.',
   }
@@ -1170,6 +1203,8 @@ function stationFromApi(station, sessions = []) {
     passThreshold: station.pass_threshold,
     passPoints: station.pass_points,
     maxAttempts: station.max_attempts,
+    showScoreToParticipants: station.show_score_to_participants !== false,
+    maxStayMinutes: station.max_stay_minutes ?? null,
     teamsHere,
     teamsDone,
     submission: createSubmissionConfig(station.submission_config),
@@ -1190,6 +1225,8 @@ function buildStationPayload(form, order, active) {
       : null,
     scoring_mode: form.scoringMode,
     max_attempts: form.maxAttempts == null ? null : Number(form.maxAttempts),
+    show_score_to_participants: form.showScoreToParticipants !== false,
+    max_stay_minutes: form.maxStayMinutes == null || form.maxStayMinutes === '' ? null : Number(form.maxStayMinutes),
     // Chỉ giữ giá trị của ô đang áp dụng — tránh gửi lên số liệu cũ của chế độ
     // đã bỏ chọn, giống cách max_concurrent_teams về null khi hết giới hạn.
     pass_threshold: form.scoringMode === 'threshold'
@@ -1228,7 +1265,7 @@ function makeStationId(phase, stations) {
 
 function getSubmissionModes(submission) {
   const items = createSubmissionConfig(submission ?? {}).items
-  const order = ['text', 'quiz', 'rating', 'attachment']
+  const order = ['text', 'quiz', 'rating', 'attachment', 'challenge']
   return order
     .filter(type => items.some(item => item.type === type))
     .map(type => ({ key: type, ...MODE_META[type] }))
@@ -1478,6 +1515,13 @@ function sanitizeSubmission(submission) {
         note: item.note.trim(),
       }
     }
+    if (item.type === 'challenge') {
+      return {
+        ...item,
+        title: item.title.trim(),
+        description: item.description.trim(),
+      }
+    }
     return {
       ...item,
       label: item.label.trim(),
@@ -1692,7 +1736,7 @@ const MICRO_LABEL_CLS = 'mb-1.5 block font-mono text-[10px] uppercase tracking-w
 
 /** One row of the station form builder: drag to reorder, edit in place. */
 function SubmissionItemCard({
-  item, index, total, isDragging, isDropTarget,
+  item, index, total, challengeNumber, isDragging, isDropTarget,
   onDragStart, onDragEnter, onDragEnd, onRemove, onChange, onChangeOption,
 }) {
   const meta = MODE_META[item.type] ?? MODE_META.text
@@ -1866,6 +1910,60 @@ function SubmissionItemCard({
         Đáp án chấp nhận (mỗi dòng một đáp án, để trống để chấm thủ công)
         <textarea rows={2} value={(item.correctText || []).join('\n')} onChange={event => onChange('correctText', event.target.value.split('\n'))} className={`${INPUT_CLS} mt-1`} />
       </label>}
+      {item.type === 'challenge' && (
+        <div className="grid gap-3">
+          <p className="rounded-lg bg-[#8A5A9E]/8 px-3 py-2 text-xs leading-5 text-[#6E4480]">
+            Thí sinh chỉ thấy <strong>Thử thách {challengeNumber}</strong>. Tên và hướng dẫn chấm dưới đây chỉ BTC và coop xem được.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-[1fr_8rem_8rem]">
+            <div>
+              <label className={MICRO_LABEL_CLS}>Tên thử thách</label>
+              <input
+                value={item.title}
+                onChange={event => onChange('title', event.target.value)}
+                placeholder="vd: Nhảy bao bố quanh hồ"
+                className={INPUT_CLS}
+              />
+            </div>
+            <div>
+              <label className={MICRO_LABEL_CLS}>Điểm tối đa</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                required
+                value={item.maxPoints}
+                onChange={event => onChange('maxPoints', Math.max(1, Math.trunc(Number(event.target.value)) || 1))}
+                className={INPUT_CLS}
+              />
+            </div>
+            <div>
+              <label className={MICRO_LABEL_CLS}>Thời gian (phút)</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={item.durationMinutes}
+                onChange={event => onChange('durationMinutes', Math.max(0, Math.trunc(Number(event.target.value)) || 0))}
+                className={INPUT_CLS}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-ink/50">
+            Bỏ thử thách: 0 điểm và phạt {(Number(item.durationMinutes) || 0) + 15} phút (thời gian quy định + 15 phút) trước khi được checkout.
+          </p>
+          <div>
+            <label className={MICRO_LABEL_CLS}>Hướng dẫn chấm (tuỳ chọn)</label>
+            <textarea
+              rows={2}
+              value={item.description}
+              onChange={event => onChange('description', event.target.value)}
+              placeholder="Cách tính điểm, luật, điều kiện hoàn thành... coop đọc khi chấm"
+              className={`${INPUT_CLS} resize-y leading-6 placeholder:text-ink/30`}
+            />
+          </div>
+        </div>
+      )}
       {item.type === 'attachment' && (
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -2236,8 +2334,11 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   const quizItemCount = inlineQuizItemCount + bankItemCount
   const hasQuizItem = quizItemCount > 0
   const hasAttachmentItem = form.submission.items.some(item => item.type === 'attachment')
-  // Chỉ có form thì mới có chuyện "nộp xong rồi sao nữa".
-  const hasSubmissionItem = form.submission.items.length > 0 || bankItemCount > 0
+  const challengeItems = form.submission.items.filter(item => item.type === 'challenge')
+  const hasChallengeItem = challengeItems.length > 0
+  const challengeMaxTotal = challengeItems.reduce((total, item) => total + (Number(item.maxPoints) || 0), 0)
+  // Chỉ có form thì mới có chuyện "nộp xong rồi sao nữa" — thử thách làm ngoài web, không tính.
+  const hasSubmissionItem = form.submission.items.some(item => item.type !== 'challenge') || bankItemCount > 0
   const quizRandomCount = form.submission.quiz.randomCount ?? 0
 
 
@@ -2254,6 +2355,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   const handleSave = async () => {
     if (!form.name.trim()) return
     if (form.maxAttempts != null && (!Number.isInteger(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1 || Number(form.maxAttempts) > 2147483647)) return
+    if (form.maxStayMinutes != null && (!Number.isInteger(Number(form.maxStayMinutes)) || Number(form.maxStayMinutes) < 1 || Number(form.maxStayMinutes) > 1440)) return
     // onSave (addStation/saveStation) trả về true khi lưu thành công — chỉ xoá
     // nháp lúc đó, thất bại thì giữ nguyên để không mất nội dung đang soạn.
     const result = await onSave({
@@ -2400,15 +2502,20 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           <div className="grid grid-cols-3 gap-2">
             {Object.entries(SCORING_MODE_META).map(([key, meta]) => {
               const active = form.scoringMode === key
+              const blocked = key === 'pass_fail' && hasChallengeItem && !active
               return (
                 <button
                   key={key}
                   type="button"
+                  disabled={blocked}
+                  title={blocked ? 'Trạm có thử thách phải tính bằng điểm số — gỡ thử thách để dùng Đạt/Không đạt' : undefined}
                   onClick={() => set('scoringMode', key)}
                   className={`rounded-lg border px-2.5 py-2 text-xs font-semibold transition ${
                     active
                       ? meta.selectedCls
-                      : 'border-stone bg-white text-ink/55 hover:bg-paper hover:text-ink'
+                      : blocked
+                        ? 'cursor-not-allowed border-stone bg-paper text-ink/25'
+                        : 'border-stone bg-white text-ink/55 hover:bg-paper hover:text-ink'
                   }`}
                 >
                   {meta.label}
@@ -2419,6 +2526,47 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           <p className="mt-1.5 text-xs leading-5 text-ink/45">
             {(SCORING_MODE_META[form.scoringMode] ?? SCORING_MODE_META.score_only).hint}
           </p>
+          {hasChallengeItem && form.scoringMode !== 'pass_fail' && (
+            <p className="mt-1 text-xs leading-5 text-ink/55">
+              Điểm trạm = điểm bài làm + tổng điểm các thử thách (tối đa {challengeMaxTotal} điểm từ thử thách).
+            </p>
+          )}
+        </div>
+
+        <div className="sm:col-span-2">
+          <label className="flex items-start gap-3 rounded-lg border border-stone bg-paper px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={form.showScoreToParticipants !== false}
+              onChange={event => set('showScoreToParticipants', event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-stone text-trail focus:ring-trail/20"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-ink">Cho thí sinh xem điểm trạm này</span>
+              <span className="block text-xs leading-5 text-ink/55">
+                Chỉ có tác dụng khi bật "Cho thí sinh xem điểm" trong Cài đặt hệ thống (mặc định tắt). Tắt thì thí sinh không thấy điểm, kết quả trắc nghiệm hay điểm thử thách của trạm này. Điểm vẫn được cộng vào tổng và bảng xếp hạng.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="sm:col-span-2 space-y-2">
+          <label htmlFor="station-max-stay" className="block text-sm font-semibold text-ink">Thời gian tối đa tại trạm</label>
+          <label className="flex items-center gap-2 text-sm text-ink/65">
+            <input type="checkbox" checked={form.maxStayMinutes == null}
+              onChange={event => set('maxStayMinutes', event.target.checked ? null : 90)} />
+            Không giới hạn
+          </label>
+          {form.maxStayMinutes != null && (
+            <div className="flex items-center gap-2">
+              <input id="station-max-stay" type="number" min={1} max={1440} step={1} required
+                value={form.maxStayMinutes} onChange={event => set('maxStayMinutes', event.target.value)}
+                className="w-28 rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink" />
+              <span className="text-sm text-ink/60">phút</span>
+            </div>
+          )}
+          <p className="text-xs text-ink/55">Coop thấy đồng hồ đổi màu khi đội gần hết giờ (còn 15 phút) và khi quá giờ. Hệ thống không tự checkout.</p>
+          {form.maxStayMinutes != null && (!Number.isInteger(Number(form.maxStayMinutes)) || Number(form.maxStayMinutes) < 1 || Number(form.maxStayMinutes) > 1440) && <p className="text-xs text-clay" role="alert">Nhập số phút từ 1 đến 1440.</p>}
         </div>
 
         <div className="sm:col-span-2 space-y-2">
@@ -2486,16 +2634,21 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           title="Nội dung bài nộp"
           action={(
             <div className="flex flex-wrap gap-1.5">
-              {['text', 'quiz', 'rating', 'attachment'].map(type => {
+              {['text', 'quiz', 'rating', 'attachment', 'challenge'].map(type => {
                 const meta = MODE_META[type]
-                const blocked = type === 'attachment' && hasAttachmentItem
+                const blockedReason = type === 'attachment' && hasAttachmentItem
+                  ? 'Mỗi trạm chỉ dùng được một ô nộp tệp'
+                  : type === 'challenge' && form.scoringMode === 'pass_fail'
+                    ? 'Trạm Đạt/Không đạt không dùng được thử thách — chọn cách tính điểm khác'
+                    : null
+                const blocked = Boolean(blockedReason)
                 return (
                   <button
                     key={type}
                     type="button"
                     disabled={blocked}
                     onClick={() => addItem(type)}
-                    title={blocked ? 'Mỗi trạm chỉ dùng được một ô nộp tệp' : undefined}
+                    title={blockedReason || undefined}
                     className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
                       blocked
                         ? 'cursor-not-allowed border-stone bg-paper text-ink/25'
@@ -2519,10 +2672,10 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
           >
             {importing ? 'Đóng' : 'Nhập file Excel/JSON'}
           </button>
-          {form.submission.items.some(i => i.type !== 'attachment') && (
+          {form.submission.items.some(i => i.type !== 'attachment' && i.type !== 'challenge') && (
             <>
               <button type="button" disabled={importBusy} onClick={() => {
-                if (window.confirm('Gỡ các câu hỏi hiện tại của trạm? Mục tải tệp và câu hỏi dùng chung được giữ lại. Bấm Lưu trạm để áp dụng.')) updateSubmission(submission => ({ ...submission, items: submission.items.filter(item => item.type === 'attachment') }))
+                if (window.confirm('Gỡ các câu hỏi hiện tại của trạm? Mục tải tệp, thử thách và câu hỏi dùng chung được giữ lại. Bấm Lưu trạm để áp dụng.')) updateSubmission(submission => ({ ...submission, items: submission.items.filter(item => item.type === 'attachment' || item.type === 'challenge') }))
               }} className="rounded-lg border border-clay/30 px-3 py-2 text-xs font-medium text-clay">Gỡ bộ câu hỏi</button>
               <button
                 type="button"
@@ -2608,6 +2761,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
                 item={item}
                 index={index}
                 total={form.submission.items.length}
+                challengeNumber={form.submission.items.slice(0, index + 1).filter(entry => entry.type === 'challenge').length}
                 isDragging={dragIndex === index}
                 isDropTarget={dropIndex === index && dragIndex !== index}
                 onDragStart={() => setDragIndex(index)}
@@ -2875,6 +3029,8 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
   const quizAnswers = submission.response_payload?.quiz || []
   const autoQuizResult = submission.response_payload?.quiz_result || null
   const ratingAnswers = submission.response_payload?.rating || []
+  const challenges = submission.challenges || []
+  const challengeTotal = challenges.reduce((total, item) => total + (Number(item.points) || 0), 0)
   // Per-question review (question, the team's answer as text, the key) and the
   // grader's verdicts on it; older attempts are rebuilt server-side.
   const reviewItems = useMemo(() => submission.answer_review || [], [submission.answer_review])
@@ -2963,6 +3119,25 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
                 <RatingStars value={item.value} scale={item.scale} className="mt-1" />
               </div>
             ))}
+          </div>
+        )}
+
+        {challenges.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Thử thách (coop chấm)</p>
+            {challenges.map(item => (
+              <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl border border-stone bg-paper px-4 py-3">
+                <p className="text-sm font-medium text-ink/70">
+                  <span className="text-ink/45">Thử thách {item.index} · </span>{item.title || 'Chưa đặt tên'}
+                </p>
+                <span className="font-mono text-sm font-semibold text-ink">
+                  {item.points == null ? <span className="text-ink/40">Chưa chấm</span> : item.points}/{item.maxPoints}
+                </span>
+              </div>
+            ))}
+            <p className="text-xs text-ink/50">
+              Ô điểm bên dưới là điểm phần bài làm; điểm trạm = bài làm + {challengeTotal} điểm thử thách.
+            </p>
           </div>
         )}
 

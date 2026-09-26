@@ -29,6 +29,8 @@ class StationAnswerReviewTests(FormsApiTestBase):
         self.coop = Account.objects.create(username="reviewer", email="review@example.com", role="collab")
         StationAssignment.objects.create(collab=self.coop, station=self.station, active=True)
         self.admin = Account.objects.create(username="bankadmin", email="bank@example.com", role="admin")
+        # Scores reach the team only with the site-wide switch on (off by default).
+        SystemSetting.objects.update_or_create(key="participant_scores_visible", defaults={"value": True})
 
     def request_as(self, method, url, body=None, actor=None):
         return getattr(self.client, method)(url, data=json.dumps(body) if body is not None else None,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import discord
+from discord.ext import commands
 
 from ..bot.database import database_call
 
@@ -49,7 +50,10 @@ def setup_tour_commands(bot):
             f"trong event **{session['event_name']}**."
         )
 
+    # Thí sinh tuyệt đối không được xem bảng điểm: chỉ admin server gọi được, và
+    # kết quả gửi qua tin nhắn riêng để không lộ ra kênh chung.
     @bot.command(name="leaderboard")
+    @commands.has_permissions(administrator=True)
     async def leaderboard(ctx):
         from api.services.discord_service import get_discord_tour_snapshot
 
@@ -69,4 +73,10 @@ def setup_tour_commands(bot):
             )
         if not snapshot["leaderboard"]:
             embed.description = "Chưa có dữ liệu xếp hạng."
-        await ctx.send(embed=embed)
+        try:
+            await ctx.author.send(embed=embed)
+        except discord.Forbidden:
+            await ctx.send("Không gửi được tin nhắn riêng. Hãy mở DM từ thành viên server rồi thử lại.")
+            return
+        if ctx.guild is not None:
+            await ctx.send("Đã gửi bảng xếp hạng qua tin nhắn riêng.")

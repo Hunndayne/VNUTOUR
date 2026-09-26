@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CheckoutReview from './CheckoutReview.jsx'
+import ChallengeScores from './ChallengeScores.jsx'
+import {
+  challengeInitialValues, challengePayload, challengeSum, challengeValuesValid,
+} from './challengeScores.js'
 import logoImage from './assets/vnutour-logo.png'
 import { FIXED_PHASES } from './adminProgram.js'
 import {
@@ -154,8 +158,82 @@ function QrIcon({ className = 'h-5 w-5' }) {
   )
 }
 
+const STAY_WARNING_MINUTES = 15
+
+function formatClock(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatCountdown(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  const mins = Math.floor(total / 60)
+  const secs = total % 60
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`
+}
+
+// Đồng hồ lưu trú: vàng khi còn ≤ 15 phút, đỏ khi quá thời gian tối đa của trạm.
+function StayTimer({ enteredAt, maxStayMinutes, nowMs }) {
+  const elapsedMin = enteredAt ? (nowMs - new Date(enteredAt).getTime()) / 60000 : 0
+  const limit = Number(maxStayMinutes) || 0
+  const over = limit > 0 && elapsedMin > limit
+  const warn = limit > 0 && !over && elapsedMin >= limit - STAY_WARNING_MINUTES
+  const tone = over
+    ? 'bg-clay/15 text-clay border-clay/40'
+    : warn ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-trail/10 text-trail border-transparent'
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+      <span className={over ? 'text-clay' : warn ? 'text-amber-900' : 'text-trail'}>⏱️ Đã ở trạm:</span>
+      <span className={`font-mono rounded border px-1.5 py-0.5 ${tone}`}>
+        {formatDuration(enteredAt, nowMs)}{limit > 0 && ` / ${limit} phút`}
+      </span>
+      {over && <span className="text-clay">Quá {Math.floor(elapsedMin - limit)} phút — đội phải rời trạm</span>}
+      {warn && <span className="text-amber-900">Còn {Math.max(0, Math.ceil(limit - elapsedMin))} phút</span>}
+    </div>
+  )
+}
+
+// Bỏ thử thách trong lúc đội đang ở trạm: thử thách đó 0 điểm, đội bị giữ lại
+// (thời gian quy định + 15 phút) — server chặn checkout tới hết phạt.
+function ChallengeSkipControls({ session, challenges, nowMs, busy, onSkip }) {
+  const skips = session.challenge_skips || {}
+  const penaltyMs = session.penalty_until ? new Date(session.penalty_until).getTime() - nowMs : 0
+  return (
+    <div className="mt-2 space-y-1.5">
+      {penaltyMs > 0 && (
+        <p className="rounded-lg border border-clay/30 bg-clay/10 px-2.5 py-1.5 text-xs font-semibold text-clay" role="status">
+          Đang phạt bỏ thử thách — chỉ được checkout sau {formatClock(session.penalty_until)} (còn {formatCountdown(penaltyMs)})
+        </p>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {challenges.map(item => {
+          const skipped = item.id in skips
+          return skipped ? (
+            <button key={item.id} type="button" disabled={busy}
+              onClick={() => onSkip(session, item, true)}
+              className="rounded-lg border border-clay/30 bg-white px-2.5 py-1 text-[11px] font-semibold text-clay disabled:opacity-50"
+              title="Hoàn tác nếu bấm nhầm">
+              TT{item.index} đã bỏ · Hoàn tác
+            </button>
+          ) : (
+            <button key={item.id} type="button" disabled={busy}
+              onClick={() => onSkip(session, item, false)}
+              className="rounded-lg border border-stone bg-white px-2.5 py-1 text-[11px] font-semibold text-ink/70 hover:border-clay/40 hover:text-clay disabled:opacity-50">
+              Bỏ TT{item.index}: {item.title || 'Chưa đặt tên'}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function explainScanError(error) {
   const code = error?.data?.error || error?.message
+  if (code === 'penalty_active') {
+    const until = formatClock(error?.data?.penalty_until)
+    return `Đội ${error?.data?.team_name || ''} đang chịu phạt bỏ thử thách, chỉ được checkout sau ${until}.`
+  }
   const map = {
     no_current_event: 'BTC chưa mở event nào nên chưa thể check-in sự kiện.',
     team_not_found: 'Không tìm thấy đội với mã QR hoặc mã đội này.',
@@ -275,7 +353,83 @@ function buildStationView(station) {
     scoringMode: station.scoring_mode || 'score_only',
     passThreshold: station.pass_threshold ?? null,
     passPoints: station.pass_points ?? null,
+    // Real challenge titles (staff only); empty for stations without challenges.
+    challenges: station.scoring_mode === 'pass_fail' || !Array.isArray(station.challenges) ? [] : station.challenges,
+    // Advisory stay limit in minutes (null = none).
+    maxStayMinutes: station.max_stay_minutes ?? null,
+    // Whether the station has a web form part next to its challenges.
+    hasForm: (station.submission_config?.items || []).some(item => item.type !== 'challenge'),
   }
+}
+
+// Nhật ký trạm ở trạm có thử thách: điểm bài làm (nếu có form) + từng thử thách.
+// Bản nháp nằm chung `scoreDrafts` (khoá `challenges:<id>` và `<id>`) nên reload không mất.
+function SessionChallengeGrading({ session, station, drafts, setDrafts, saving, onSave }) {
+  const challenges = station.challenges
+  const [open, setOpen] = useState(false)
+  const challengeKey = `challenges:${session.id}`
+  const values = drafts[challengeKey] ?? challengeInitialValues(challenges, session.challenge_scores)
+  const formValue = drafts[session.id] ?? (session.form_score ?? '')
+  const formValid = !station.hasForm || formValue === '' || (Number.isInteger(Number(formValue)) && Number(formValue) >= 0)
+  const valid = formValid && challengeValuesValid(challenges, values)
+  const total = (station.hasForm ? Number(formValue) || 0 : 0) + challengeSum(challenges, values)
+  const graded = challenges.filter(item => session.challenge_scores?.[item.id] != null).length
+  return (
+    <div className="w-full space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-ink/80">Điểm:</span>
+          <span className="rounded bg-stone/20 px-2 py-0.5 font-mono text-sm font-extrabold text-ink">{session.score ?? 0}</span>
+          <span className="text-[11px] text-ink/65">
+            {graded}/{challenges.length} thử thách đã chấm
+            {station.scoringMode === 'threshold' && station.passThreshold != null && ` · đạt ≥ ${station.passThreshold}`}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen(current => !current)}
+          className="rounded-lg bg-ink px-3 py-1 text-xs font-bold text-white hover:brightness-110 active:scale-95"
+        >
+          {open ? 'Thu gọn' : 'Chấm thử thách'}
+        </button>
+      </div>
+      {open && (
+        <div className="space-y-2 rounded-lg bg-paper p-2.5">
+          <ChallengeScores
+            challenges={challenges}
+            values={values}
+            disabled={saving}
+            onChange={next => setDrafts(current => ({ ...current, [challengeKey]: next }))}
+          />
+          <div className="flex flex-wrap items-end gap-2">
+            {station.hasForm && (
+              <label className="text-xs font-medium text-ink">Điểm phần bài làm
+                <input
+                  type="number" min="0" step="1"
+                  value={formValue}
+                  onChange={event => setDrafts(current => ({ ...current, [session.id]: event.target.value }))}
+                  className="mt-1 block w-24 rounded-lg border border-stone bg-white px-2 py-1.5 text-sm font-bold text-ink outline-none focus:border-trail"
+                />
+              </label>
+            )}
+            <p className="py-1.5 text-xs text-ink/70">Tổng: <strong className="font-mono text-sm text-ink">{total}</strong></p>
+            <button
+              type="button"
+              disabled={saving || !valid}
+              onClick={() => onSave(
+                session.id,
+                station.hasForm && formValue !== '' ? formValue : null,
+                challengePayload(challenges, values),
+              )}
+              className="ml-auto rounded-lg bg-trail px-3 py-1.5 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
+            >
+              {saving ? '...' : 'Lưu điểm'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function CheckedInMembers({ members }) {
@@ -338,6 +492,7 @@ function CoopDashboard() {
   const [processingScan, setProcessingScan] = useState(false)
   const [scoreDrafts, setScoreDrafts, scoreDraft] = useDraftState('coop:scoreDrafts', {})
   const [savingScoreId, setSavingScoreId] = useState(null)
+  const [skippingSessionId, setSkippingSessionId] = useState(null)
   const [rosterSearch, setRosterSearch] = useState('')
   const [logSearch, setLogSearch] = useState('')
   const [logFilter, setLogFilter] = useState('all') // 'all' | 'active' | 'exited' | 'unscored'
@@ -657,27 +812,33 @@ function CoopDashboard() {
     setFlash({ tone, message })
   }
 
-  const saveSessionScore = useCallback(async (sessionId, rawValue) => {
+  // `challenges` (at a challenge station) makes `rawValue` the form part only;
+  // pass `rawValue = null` when the station has no form to score.
+  const saveSessionScore = useCallback(async (sessionId, rawValue, challenges = null) => {
     if (!sessionId) return
-    const points = Number(rawValue)
-    if (!Number.isFinite(points)) {
+    const points = rawValue == null ? null : Number(rawValue)
+    if (points != null && !Number.isFinite(points)) {
       setFlashMessage('error', 'Điểm không hợp lệ.')
       playScanFeedback('error')
       return
     }
     setSavingScoreId(sessionId)
     try {
-      await apiRequest(`/station-sessions/${sessionId}/score`, {
+      const body = {}
+      if (points != null) body.score = points
+      if (challenges) body.challenges = challenges
+      const response = await apiRequest(`/station-sessions/${sessionId}/score`, {
         method: 'PATCH',
-        body: { score: points },
+        body,
       })
       setScoreDrafts((current) => {
         const next = { ...current }
         delete next[sessionId]
+        delete next[`challenges:${sessionId}`]
         return next
       })
       scoreDraft.clear()
-      setFlashMessage('success', `Đã lưu ${points} điểm cho đội.`)
+      setFlashMessage('success', `Đã lưu ${response?.score ?? points} điểm cho đội.`)
       playScanFeedback('success')
       await refreshLive()
     } catch (error) {
@@ -690,11 +851,45 @@ function CoopDashboard() {
         ? 'Bạn không phụ trách trạm này nên không thể chấm điểm.'
         : error?.data?.error === 'results_locked'
           ? 'Kết quả đã khóa ở phase Kết thúc nên không thể lưu điểm.'
-          : 'Không lưu được điểm.')
+          : error?.data?.error === 'invalid_challenge_score'
+            ? 'Điểm thử thách phải là số nguyên từ 0 đến điểm tối đa.'
+            : 'Không lưu được điểm.')
     } finally {
       setSavingScoreId(null)
     }
   }, [refreshLive, scoreDraft, setScoreDrafts])
+
+  const skipChallenge = useCallback(async (session, challenge, undo) => {
+    const penalty = challenge.skipPenaltyMinutes ?? ((Number(challenge.durationMinutes) || 0) + 15)
+    const question = undo
+      ? `Hoàn tác bỏ thử thách ${challenge.index} (${challenge.title}) của đội ${session.team_name}?`
+      : `Đội ${session.team_name} bỏ thử thách ${challenge.index} (${challenge.title})?\n\nThử thách này 0 điểm và đội bị giữ lại thêm ${penalty} phút mới được checkout.`
+    if (!window.confirm(question)) return
+    setSkippingSessionId(session.id)
+    try {
+      await apiRequest(`/station-sessions/${session.id}/challenge-skip`, {
+        method: 'POST',
+        body: { challenge_id: challenge.id, undo },
+      })
+      setFlashMessage('success', undo
+        ? `Đã hoàn tác bỏ thử thách ${challenge.index}.`
+        : `Đã ghi nhận đội bỏ thử thách ${challenge.index}, phạt ${penalty} phút.`)
+      await refreshLive()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      const code = error?.data?.error
+      setFlashMessage('error', code === 'session_not_active'
+        ? 'Đội đã rời trạm, không thể bỏ thử thách nữa.'
+        : code === 'not_assigned_to_station'
+          ? 'Bạn không phụ trách trạm này.'
+          : 'Không ghi nhận được. Thử lại.')
+    } finally {
+      setSkippingSessionId(null)
+    }
+  }, [refreshLive])
 
   const saveSessionOutcome = useCallback(async (sessionId, outcome) => {
     if (!sessionId) return
@@ -796,6 +991,8 @@ function CoopDashboard() {
         passPoints: response.pass_points ?? null,
         submission: response.submission,
         score: response.score,
+        formScore: response.form_score ?? null,
+        challenges: Array.isArray(response.challenges) ? response.challenges : [],
         participantName,
         participantMssv,
         checkedInCount: Number.isFinite(checkedInCount) ? checkedInCount : null,
@@ -1008,6 +1205,8 @@ function CoopDashboard() {
         passPoints: selectedStation?.passPoints ?? null,
         submission: response.submission,
         score: response.score,
+        formScore: response.form_score ?? null,
+        challenges: Array.isArray(response.challenges) ? response.challenges : [],
       })
       setFlashMessage('success', `Đã cho đội ${teamName} rời trạm.`)
       playScanFeedback('success')
@@ -1489,6 +1688,11 @@ function CoopDashboard() {
                     setLastResult(current => ({
                       ...current,
                       score: updated.score,
+                      formScore: updated.form_score ?? current.formScore ?? null,
+                      challenges: (current.challenges || []).map(item => ({
+                        ...item,
+                        points: updated.challenge_scores?.[item.id] ?? null,
+                      })),
                       submission: current.submission && 'item_marks' in updated
                         ? { ...current.submission, item_marks: updated.item_marks }
                         : current.submission,
@@ -1536,19 +1740,29 @@ function CoopDashboard() {
                               <h4 className="mt-1 font-display text-base font-bold text-ink truncate">
                                 {session.team_name}
                               </h4>
-                              <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-trail">
-                                <span>⏱️ Đã ở trạm:</span>
-                                <span className="font-mono bg-trail/10 px-1.5 py-0.5 rounded">
-                                  {formatDuration(session.entered_at, nowTick)}
-                                </span>
-                              </div>
+                              <StayTimer
+                                enteredAt={session.entered_at}
+                                maxStayMinutes={selectedStation?.maxStayMinutes}
+                                nowMs={nowTick}
+                              />
+                              {selectedStation?.challenges?.length > 0 && (
+                                <ChallengeSkipControls
+                                  session={session}
+                                  challenges={selectedStation.challenges}
+                                  nowMs={nowTick}
+                                  busy={skippingSessionId === session.id}
+                                  onSkip={skipChallenge}
+                                />
+                              )}
                             </div>
 
                             <div className="shrink-0 flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleManualCheckout(session)}
-                                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-3.5 py-2 text-xs font-bold text-sky-900 hover:bg-sky-100 active:scale-95 transition shadow-2xs min-h-[40px]"
+                                disabled={Boolean(session.penalty_until) && new Date(session.penalty_until).getTime() > nowTick}
+                                title={session.penalty_until && new Date(session.penalty_until).getTime() > nowTick ? `Đang phạt tới ${formatClock(session.penalty_until)}` : undefined}
+                                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-3.5 py-2 text-xs font-bold text-sky-900 hover:bg-sky-100 active:scale-95 transition shadow-2xs min-h-[40px] disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 <span>🚪 Cho ra trạm</span>
                               </button>
@@ -1739,6 +1953,15 @@ function CoopDashboard() {
                                     </button>
                                   </div>
                                 </>
+                              ) : selectedStation?.challenges?.length > 0 && !String(session.id).startsWith('sub-') ? (
+                                <SessionChallengeGrading
+                                  session={session}
+                                  station={selectedStation}
+                                  drafts={scoreDrafts}
+                                  setDrafts={setScoreDrafts}
+                                  saving={savingScoreId === session.id}
+                                  onSave={saveSessionScore}
+                                />
                               ) : (
                                 <>
                                   <div className="flex items-center gap-2">

@@ -117,6 +117,58 @@ function isStationFull(station) {
   return (station?.capacity?.current_teams ?? 0) >= max
 }
 
+// Thời gian đội đã ở trạm (so với giới hạn của trạm) và thời gian phạt bỏ thử
+// thách còn lại. Chỉ là thời gian, không bao giờ kèm điểm.
+function StayStatus({ session, now }) {
+  const entered = session?.entered_at ? new Date(session.entered_at).getTime() : null
+  const limit = Number(session?.max_stay_minutes) || 0
+  const penaltyMs = session?.penalty_until ? new Date(session.penalty_until).getTime() - now : 0
+  if (!entered || (!limit && penaltyMs <= 0)) return null
+  const elapsedMin = Math.max(0, Math.floor((now - entered) / 60000))
+  const over = limit > 0 && elapsedMin >= limit
+  const penaltySecs = Math.ceil(penaltyMs / 1000)
+  return (
+    <div className="space-y-2">
+      {limit > 0 && (
+        <p className={`rounded-xl px-4 py-2.5 text-sm ${over ? 'bg-[#D6492B]/12 font-semibold text-[#D6492B]' : 'bg-[#20312B]/[0.05] text-ink/70'}`}>
+          Đã ở trạm {elapsedMin}/{limit} phút{over ? ' — đã hết thời gian tối đa, đội cần rời trạm.' : '.'}
+        </p>
+      )}
+      {penaltyMs > 0 && (
+        <p className="rounded-xl bg-[#D6492B]/12 px-4 py-2.5 text-sm font-semibold text-[#D6492B]" role="status">
+          Đội đang chịu phạt vì bỏ thử thách. Được checkout sau {Math.floor(penaltySecs / 60)}:{String(penaltySecs % 60).padStart(2, '0')}.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// Kết quả thử thách của đội tại trạm: chỉ nhãn ẩn danh "Thử thách N", điểm khi
+// trạm cho phép xem. Trạm tắt hiện điểm thì chỉ báo đã chấm hay chưa.
+function StationChallengeResults({ station }) {
+  const challenges = Array.isArray(station?.challenges) ? station.challenges : []
+  const hidden = station?.show_score === false
+  if (challenges.length === 0) {
+    return hidden ? <p className="my-4 rounded-xl bg-[#20312B]/[0.05] px-4 py-3 text-sm text-ink/60">Điểm trạm này được BTC giữ kín.</p> : null
+  }
+  return (
+    <div className="my-4 space-y-1.5 rounded-xl bg-[#8A5A9E]/8 px-4 py-3" aria-label="Kết quả thử thách">
+      <p className="text-sm font-semibold text-ink">Thử thách tại trạm</p>
+      {challenges.map((item) => (
+        <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
+          <span className="text-ink/70">{item.label}</span>
+          <span className="font-mono text-ink">
+            {hidden
+              ? (item.graded ? 'Đã chấm' : 'Chưa chấm')
+              : item.points == null ? <span className="text-ink/45">Chưa chấm</span> : `${item.points}/${item.max_points}`}
+          </span>
+        </div>
+      ))}
+      {hidden && <p className="pt-1 text-xs text-ink/55">Điểm trạm này được BTC giữ kín.</p>}
+    </div>
+  )
+}
+
 function listStatusBadge(station) {
   // `status` là trạng thái hành trình suy trên server (not_visited/active/passed/failed).
   // Payload cũ (backend chưa deploy luật chơi lại) sẽ thiếu field này — rơi xuống suy
@@ -442,7 +494,9 @@ function StationListScreen({ payload, loading, error, activeStationId, onOpen, o
   // Chỉ cộng điểm khi payload thật sự mang best_score — payload cũ (backend chưa
   // deploy) sẽ không có field này ở bất kỳ trạm nào, lúc đó coi như "chưa tính được".
   const stationsWithScore = stations.filter((item) => item?.best_score !== undefined && item?.best_score !== null)
-  const totalScore = stationsWithScore.length > 0
+  // Một trạm giữ kín điểm thì tổng cộng từ các trạm còn lại sẽ sai — không hiện tổng.
+  const anyScoreHidden = stations.some((item) => item?.show_score === false)
+  const totalScore = !anyScoreHidden && stationsWithScore.length > 0
     ? stationsWithScore.reduce((sum, item) => sum + (Number(item.best_score) || 0), 0)
     : null
 
@@ -609,6 +663,8 @@ function StationStageScreen({
           {station.station_location}
         </p>
       )}
+
+      {state?.session?.status === 'active' && <StayStatus session={state.session} now={now} />}
 
       {station?.submission_brief && (
         <div className={`${STATION_CARD} mt-4 overflow-hidden px-5 py-6 sm:px-7 sm:py-7`}>
@@ -827,6 +883,7 @@ function StationStageScreen({
           body="Trạm này không cần quét ra. Đội có thể đi tiếp sang trạm khác."
         >
           <QuizSummary result={state?.submission?.quiz_result} score={state?.submission?.score} />
+          <StationChallengeResults station={station} />
           <button type="button" onClick={onBack} className={`w-full ${PRIMARY_BUTTON}`}>
             Chọn trạm tiếp theo
           </button>
@@ -856,6 +913,7 @@ function StationStageScreen({
             : station?.replay_reason ? explainReplayLock(station.replay_reason) : 'Lượt chơi tại trạm đã được đóng.'}
         >
           <QuizSummary result={state?.submission?.quiz_result} score={state?.submission?.score} />
+          <StationChallengeResults station={station} />
           {canReplay(station) && typeof onReplay === 'function' && (
             <button type="button" onClick={onReplay} className={`mb-3 w-full ${TRAIL_BUTTON}`}>
               <Icon name="doc" className="h-5 w-5" />

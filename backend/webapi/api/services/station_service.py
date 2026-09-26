@@ -4,7 +4,7 @@ Station service — configuration CRUD, occupancy, session enter/exit.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from django.db import IntegrityError, transaction
@@ -16,6 +16,9 @@ from api.models import (
     TeamFormDraft, TeamFormSession, TeamFormVariant,
 )
 from api.services.submission_config_service import (
+    CHALLENGE_SKIP_EXTRA_MINUTES,
+    challenge_items,
+    has_challenges,
     has_items as has_submission_items,
     has_form as submission_has_form,
     references_bank as submission_references_bank,
@@ -44,7 +47,7 @@ def update_station(station_id: int, **kwargs) -> Station:
     station = Station.objects.get(id=station_id)
     for field, value in kwargs.items():
         # Only the optional limits may be cleared; null elsewhere is ignored.
-        if value is None and field not in ("max_attempts", "max_concurrent_teams"):
+        if value is None and field not in ("max_attempts", "max_concurrent_teams", "max_stay_minutes"):
             continue
         if hasattr(station, field):
             setattr(station, field, value)
@@ -111,6 +114,9 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
             "entered_at": s.entered_at.isoformat(),
             "exited_at": s.exited_at.isoformat() if s.exited_at else None,
             "score": s.score, "note": s.note,
+            "form_score": s.form_score, "challenge_scores": s.challenge_scores or {},
+            "challenge_skips": s.challenge_skips or {},
+            "penalty_until": s.penalty_until.isoformat() if s.penalty_until else None,
         })
     for sub in submissions:
         out.append({
@@ -143,6 +149,185 @@ def _derive_numeric_outcome(station: Station, points: int) -> Optional[str]:
     if station.scoring_mode == Station.SCORING_SCORE_ONLY:
         return StationSession.OUTCOME_PASSED
     return None
+
+
+_UNSET = object()
+
+
+def clean_challenge_scores(station: Station, raw) -> Tuple[Optional[dict], Optional[str]]:
+    """Validate `{challenge id: points}` against the station's current challenges.
+
+    Every id must name one of the station's challenges and every value must be
+    a whole number in 0..maxPoints; `None` clears that challenge's score.
+    """
+    if not isinstance(raw, dict):
+        return None, "invalid_challenge_score"
+    limits = {item["id"]: item["maxPoints"] for item in challenge_items(station.submission_config)}
+    cleaned: dict = {}
+    for key, value in raw.items():
+        key = str(key)
+        if key not in limits:
+            return None, "invalid_challenge_score"
+        if value is None:
+            cleaned[key] = None
+            continue
+        if isinstance(value, bool) or isinstance(value, float) and not value.is_integer():
+            return None, "invalid_challenge_score"
+        try:
+            points = int(value)
+        except (TypeError, ValueError):
+            return None, "invalid_challenge_score"
+        if not 0 <= points <= limits[key]:
+            return None, "invalid_challenge_score"
+        cleaned[key] = points
+    return cleaned, None
+
+
+def session_challenge_total(session: StationSession, station: Station) -> int:
+    """Sum of the session's challenge points, counting only current challenges."""
+    stored = session.challenge_scores if isinstance(session.challenge_scores, dict) else {}
+    return sum(
+        stored[item["id"]]
+        for item in challenge_items(station.submission_config)
+        if isinstance(stored.get(item["id"]), int)
+    )
+
+
+def uses_challenge_scoring(station: Station) -> bool:
+    """Challenges only apply to numeric stations; pass_fail never has them."""
+    return (
+        station.scoring_mode != Station.SCORING_PASS_FAIL
+        and has_challenges(station.submission_config)
+    )
+
+
+def _apply_session_scores(
+    session: StationSession, station: Station, form_score=_UNSET, challenges=None,
+) -> Optional[str]:
+    """Set the form part and/or challenge points of a visit, then re-total it.
+
+    Partial: challenges left out of `challenges` keep their stored points.
+    The caller saves `score`, `form_score` and `challenge_scores`.
+    """
+    # A visit scored before the station had challenges carries its form points
+    # in `score` alone; adopt them so the first challenge grade adds to them.
+    if session.form_score is None and not session.challenge_scores and session.score:
+        session.form_score = session.score
+    if challenges is not None:
+        cleaned, err = clean_challenge_scores(station, challenges)
+        if err:
+            return err
+        merged = dict(session.challenge_scores or {})
+        for key, value in cleaned.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        session.challenge_scores = merged
+    if form_score is not _UNSET:
+        session.form_score = form_score
+    session.score = (session.form_score or 0) + session_challenge_total(session, station)
+    return None
+
+
+def challenge_breakdown(session: Optional[StationSession], station: Station) -> list[dict]:
+    """Staff view of a station's challenges with this visit's points (real titles)."""
+    stored = session.challenge_scores if session and isinstance(session.challenge_scores, dict) else {}
+    skips = session.challenge_skips if session and isinstance(session.challenge_skips, dict) else {}
+    return [
+        {
+            "id": item["id"],
+            "index": item["index"],
+            "title": item["title"],
+            "description": item["description"],
+            "maxPoints": item["maxPoints"],
+            "durationMinutes": item["durationMinutes"],
+            "skipPenaltyMinutes": item["durationMinutes"] + CHALLENGE_SKIP_EXTRA_MINUTES,
+            "points": stored.get(item["id"]),
+            "skipped": item["id"] in skips,
+        }
+        for item in challenge_items(station.submission_config)
+    ]
+
+
+def _penalty_until(skips: dict) -> Optional[datetime]:
+    """When the last skip penalty ends. Penalties queue up: a skip made while
+    another penalty is running starts counting when that one ends."""
+    until: Optional[datetime] = None
+    entries = []
+    for entry in (skips or {}).values():
+        try:
+            entries.append((datetime.fromisoformat(entry["at"]), int(entry["minutes"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    for at, minutes in sorted(entries):
+        start = max(until, at) if until else at
+        until = start + timedelta(minutes=max(0, minutes))
+    return until
+
+
+def skip_challenge(
+    session_id: int,
+    challenge_id: str,
+    operator: Account,
+    undo: bool = False,
+) -> Tuple[Optional[StationSession], Optional[str]]:
+    """Mark a challenge as skipped during an active visit (or undo that).
+
+    Thể lệ: a skipped challenge scores 0 and the team may not be checked out
+    until its allotted time + CHALLENGE_SKIP_EXTRA_MINUTES have passed; the
+    penalty counts towards the time spent at the station. Undo is for a coop
+    who tapped the wrong challenge: it removes the skip and its 0 score.
+    """
+    with transaction.atomic():
+        ref = StationSession.objects.filter(id=session_id).values("team_id", "station_id").first()
+        if not ref:
+            return None, "session_not_found"
+        _lock_attempt_scope(ref["team_id"], ref["station_id"])
+        session = StationSession.objects.select_for_update(of=("self",)).select_related(
+            "station", "team", "phase", "sub_event",
+        ).filter(id=session_id).first()
+        if session is None:
+            return None, "session_not_found"
+        if results_are_locked():
+            return None, "results_locked"
+        if session.status != StationSession.STATUS_ACTIVE:
+            return None, "session_not_active"
+        station = session.station
+        if not uses_challenge_scoring(station):
+            return None, "challenge_not_found"
+        challenge = next(
+            (item for item in challenge_items(station.submission_config) if item["id"] == str(challenge_id)),
+            None,
+        )
+        if challenge is None:
+            return None, "challenge_not_found"
+
+        skips = dict(session.challenge_skips or {})
+        if undo:
+            if challenge["id"] not in skips:
+                return session, None
+            skips.pop(challenge["id"])
+            err = _apply_session_scores(session, station, challenges={challenge["id"]: None})
+        else:
+            if challenge["id"] in skips:
+                return session, None
+            skips[challenge["id"]] = {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "minutes": challenge["durationMinutes"] + CHALLENGE_SKIP_EXTRA_MINUTES,
+            }
+            err = _apply_session_scores(session, station, challenges={challenge["id"]: 0})
+        if err:
+            return None, err
+        session.challenge_skips = skips
+        session.penalty_until = _penalty_until(skips)
+        # The visit is still running: the outcome is settled at checkout.
+        session.save(update_fields=[
+            "challenge_skips", "penalty_until", "challenge_scores", "form_score", "score",
+            "updated_at",
+        ])
+        _sync_station_score_entry(session.team, station, operator)
+    return session, None
 
 
 def _sync_station_score_entry(team: Team, station: Station, operator: Optional[Account] = None) -> None:
@@ -714,14 +899,23 @@ def exit_station(
             return None, "results_locked"
 
         now = datetime.now(timezone.utc)
+        # Thể lệ: a team serving a skip penalty stays until it ends. Checked
+        # before the QR is consumed, so the same code works once time is up.
+        if session.penalty_until and now < session.penalty_until:
+            return session, "penalty_active"
         session.status = StationSession.STATUS_CLOSED
         session.exited_at = now
         session.exited_by = operator
         if score is not None:
             try:
-                session.score = int(score)
+                points = int(score)
             except (TypeError, ValueError):
                 return None, "invalid_score"
+            if uses_challenge_scoring(session.station):
+                # At a challenge station the checkout score is the form part.
+                _apply_session_scores(session, session.station, form_score=points)
+            else:
+                session.score = points
             # threshold/score_only can read a verdict straight off the number;
             # pass_fail has none, so it stays `pending` until a coop taps the
             # dedicated Đạt/Không đạt action (`set_session_score`).
@@ -733,7 +927,8 @@ def exit_station(
         if session.station.scoring_mode == Station.SCORING_SCORE_ONLY:
             session.outcome = StationSession.OUTCOME_PASSED
         session.save(update_fields=[
-            "status", "exited_at", "exited_by", "score", "outcome", "note", "updated_at",
+            "status", "exited_at", "exited_by", "score", "form_score", "challenge_scores",
+            "outcome", "note", "updated_at",
         ])
 
         _sync_station_score_entry(team, session.station, operator)
@@ -751,6 +946,7 @@ def set_session_score(
     score=None,
     note: str | None = None,
     outcome: str | None = None,
+    challenges: dict | None = None,
 ) -> Tuple[Optional[StationSession], Optional[str]]:
     """Chấm điểm/kết quả một phiên trạm, đồng bộ ScoreEntry, theo `station.scoring_mode`.
 
@@ -760,6 +956,9 @@ def set_session_score(
     - `threshold`/`score_only`: cần `score`; outcome tự suy theo ngưỡng (hoặc
       luôn `passed` với score_only). Bất kỳ `outcome` truyền vào bị bỏ qua —
       hai mode này không cho chấm tay kết quả, tránh lệch với điểm.
+    - Trạm có thử thách: `score` là điểm phần bài làm (form), `challenges` là
+      `{id: điểm}` của từng thử thách (gửi một phần cũng được); điểm phiên là
+      tổng hai phần. Cần ít nhất một trong hai.
     """
     with transaction.atomic():
         ref = StationSession.objects.filter(id=session_id).values("team_id", "station_id").first()
@@ -776,11 +975,26 @@ def set_session_score(
             return None, "results_locked"
 
         station = session.station
+        challenge_station = uses_challenge_scoring(station)
+        form_graded = score is not None
         if station.scoring_mode == Station.SCORING_PASS_FAIL:
             if outcome not in (StationSession.OUTCOME_PASSED, StationSession.OUTCOME_FAILED):
                 return None, "missing_outcome"
             session.outcome = outcome
             session.score = station.pass_points if outcome == StationSession.OUTCOME_PASSED else 0
+        elif challenge_station:
+            if score is None and challenges is None:
+                return None, "missing_score"
+            form_score = _UNSET
+            if score is not None:
+                try:
+                    form_score = int(score)
+                except (TypeError, ValueError):
+                    return None, "invalid_score"
+            err = _apply_session_scores(session, station, form_score=form_score, challenges=challenges)
+            if err:
+                return None, err
+            session.outcome = _derive_numeric_outcome(station, session.score)
         else:
             if score is None:
                 return None, "missing_score"
@@ -793,13 +1007,20 @@ def set_session_score(
 
         if note is not None:
             session.note = note
-        session.save(update_fields=["score", "outcome", "note", "updated_at"])
+        session.save(update_fields=[
+            "score", "form_score", "challenge_scores", "outcome", "note", "updated_at",
+        ])
 
-        StationSubmission.objects.filter(
-            station_session=session,
-            status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
-        ).update(score=session.score, status=StationSubmission.STATUS_GRADED,
-                 graded_by=operator, graded_at=datetime.now(timezone.utc))
+        # The submission carries the form's points; at a challenge station
+        # that is only the form part, and grading only challenges leaves the
+        # submission as it was.
+        if not challenge_station or form_graded:
+            StationSubmission.objects.filter(
+                station_session=session,
+                status__in=[StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED],
+            ).update(score=session.form_score if challenge_station else session.score,
+                     status=StationSubmission.STATUS_GRADED,
+                     graded_by=operator, graded_at=datetime.now(timezone.utc))
         if station.scoring_mode == Station.SCORING_PASS_FAIL:
             StationSubmission.objects.filter(station_session=session).update(
                 is_correct=session.outcome == StationSession.OUTCOME_PASSED,
@@ -863,9 +1084,13 @@ def set_submission_score(
             )
         return None
 
-    session.score = points
-    update_fields = ["score", "updated_at"]
-    derived = _derive_numeric_outcome(session.station, points) if final else StationSession.OUTCOME_PENDING
+    if uses_challenge_scoring(session.station):
+        # Grading the form must not wipe the challenge points a coop entered.
+        _apply_session_scores(session, session.station, form_score=points)
+    else:
+        session.score = points
+    update_fields = ["score", "form_score", "challenge_scores", "updated_at"]
+    derived = _derive_numeric_outcome(session.station, session.score) if final else StationSession.OUTCOME_PENDING
     if derived is not None:
         session.outcome = derived
         update_fields.append("outcome")
@@ -894,6 +1119,9 @@ def list_recent_sessions(event_id: int | None = None, limit: int = 50) -> list[d
             "entered_at": s.entered_at.isoformat(),
             "exited_at": s.exited_at.isoformat() if s.exited_at else None,
             "score": s.score, "note": s.note,
+            "form_score": s.form_score, "challenge_scores": s.challenge_scores or {},
+            "challenge_skips": s.challenge_skips or {},
+            "penalty_until": s.penalty_until.isoformat() if s.penalty_until else None,
         }
         for s in qs[:limit]
     ]

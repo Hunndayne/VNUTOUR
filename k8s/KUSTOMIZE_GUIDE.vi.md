@@ -406,15 +406,17 @@ kubectl kustomize k8s/kustomize/overlays/prod-standby
 
 - Trước bootstrap, chuẩn bị namespace, storage class `local-path`, node label, ingress controller class `nginx`, kết nối mesh và etcd cho prod, đăng ký cluster đích cho Argo CD. Mỗi namespace/cluster cần các secret phù hợp:
 
-| Secret           | Dùng ở đâu                                | Nội dung/điểm kiểm tra                                                                     |
-| ---------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `backend-secret` | Staging và hai site prod                  | `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DJANGO_SECRET_KEY`, các credential ứng dụng cần dùng |
-| `vnutour-tls`    | Namespace ứng dụng từng cluster           | Certificate/key, SAN phù hợp hostname                                                      |
-| `ghcr`           | Theo cách cấp pull credential của cluster | README mô tả gắn vào ServiceAccount`default`; xác minh trên cluster                        |
-| `patroni-secret` | Hai site prod                             | `superuser-password`, `replication-password` thống nhất theo thiết kế DB                   |
-| `cf-dns-secret`  | Hai site prod                             | `CF_API_TOKEN`, `CF_ZONE_ID` cho DNS record activator quản lý                              |
+| Secret           | Dùng ở đâu                                | Nội dung/điểm kiểm tra                                                                          |
+| ---------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `backend-secret` | Staging và hai site prod                  | `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `REDIS_PASSWORD`, `DJANGO_SECRET_KEY`, credential ứng dụng |
+| `vnutour-tls`    | Namespace ứng dụng từng cluster           | Certificate/key, SAN phù hợp hostname                                                           |
+| `ghcr`           | Theo cách cấp pull credential của cluster | README mô tả gắn vào ServiceAccount`default`; xác minh trên cluster                             |
+| `patroni-secret` | Hai site prod                             | `superuser-password`, `replication-password` thống nhất theo thiết kế DB                        |
+| `cf-dns-secret`  | Hai site prod                             | `CF_API_TOKEN`, `CF_ZONE_ID` cho DNS record activator quản lý                                   |
 
 - Không apply mẫu `02.secret.yaml` lên secret thật. Secret nên chỉ chứa các khóa cần bảo mật để tránh vô tình ghi đè ConfigMap. Đổi password trong Secret không đồng nghĩa đổi password user trong database đã khởi tạo; phải có bước rotation tương ứng ở DB.
+- Với Redis, tạo `REDIS_PASSWORD` riêng cho từng môi trường bằng `openssl rand -hex 32`, lưu cùng file env ngoài Git đang tạo `backend-secret`, rồi reconcile bằng `kubectl create secret --from-env-file ... --dry-run=client -o yaml | kubectl apply -f -`. Quy trình staging và lệnh kiểm tra nằm trong [tài liệu Redis](../docs/redis/redis-cache-theory-and-integration.md#93-rollout-staging-và-cấp-secret-an-toàn).
+- Nếu mới cấp `REDIS_PASSWORD` cho staging thì chỉ merge vào nhánh `staging`. Không promote sang `main` cho đến khi secret này tồn tại trong namespace `vnutour` của cả homelab prod và prod-standby; nếu thiếu, Redis pod ở site đó sẽ không khởi động.
 
 ### 8.3 Thay ConfigMap cần lưu ý rollout
 

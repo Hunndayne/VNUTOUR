@@ -192,7 +192,7 @@ export default function QuestionHistory() {
       <summary className="cursor-pointer text-ink focus-visible:outline-trail">
         <span className="font-semibold">{attempt.station_name}</span>
         <span className="mt-1 block text-xs text-ink/60">{attempt.event_name} · {formatDateTime(attempt.submitted_at)}</span>
-        <span className="mt-2 block text-sm text-trail">{attempt.quiz_result?.total > 0 ? `${attempt.quiz_result.correct_count}/${attempt.quiz_result.total} câu đúng` : 'Chấm thủ công'} · {attempt.review.available ? 'Xem đáp án và giải thích' : 'Chưa mở đáp án'}</span>
+        <span className="mt-2 block text-sm text-trail">{attempt.show_score === false ? 'Điểm được BTC giữ kín' : attempt.quiz_result?.total > 0 ? `${attempt.quiz_result.correct_count}/${attempt.quiz_result.total} câu đúng` : 'Chấm thủ công'} · {attempt.review.available ? 'Xem đáp án và giải thích' : 'Chưa mở đáp án'}</span>
       </summary>
       <QuizSummary result={attempt.quiz_result} score={attempt.score} />
       {attempt.review.available ? <AnswerReview items={attempt.review.items} /> : <p className="text-sm leading-6 text-ink/60">{attempt.review.available_at ? `Đáp án và giải thích mở lúc ${formatDateTime(attempt.review.available_at)} (giờ kết thúc sự kiện).` : 'Sự kiện chưa có giờ kết thúc. Đáp án và giải thích chưa mở.'}</p>}

@@ -14,9 +14,10 @@ from api.services.station_service import (
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
     enter_station, exit_station, list_recent_sessions, set_session_score,
     set_submission_score, _lock_attempt_scope,
+    challenge_breakdown, uses_challenge_scoring, skip_challenge,
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
-from api.services.submission_config_service import normalize_config, public_config
+from api.services.submission_config_service import has_challenges, normalize_config, public_config
 from api.services.submission_review_service import clean_item_marks, submission_answer_review
 from api.services.audit_service import record_audit
 from api.services import scan_token_service
@@ -39,6 +40,27 @@ def _stored_submission_config(config):
 
 
 _SCORING_MODES = {Station.SCORING_PASS_FAIL, Station.SCORING_THRESHOLD, Station.SCORING_SCORE_ONLY}
+
+
+def _challenge_conflict(config, scoring_mode: str, sub_event: SubEvent) -> str | None:
+    """Challenges are scored in points by a coop, so they need a numeric
+    station: never pass_fail, and never a survey, which is not graded at all."""
+    if not has_challenges(config):
+        return None
+    if scoring_mode == Station.SCORING_PASS_FAIL:
+        return "challenges_not_allowed_pass_fail"
+    if sub_event.type == SubEvent.TYPE_SURVEY:
+        return "challenges_not_allowed_survey"
+    return None
+
+
+def _clean_score_visibility(data: dict) -> tuple[dict, str | None]:
+    if "show_score_to_participants" not in data:
+        return {}, None
+    value = data.get("show_score_to_participants")
+    if not isinstance(value, bool):
+        return {}, "invalid_show_score_to_participants"
+    return {"show_score_to_participants": value}, None
 
 
 def _clean_scoring_kwargs(data: dict, require_defaults: bool) -> tuple[dict, str | None]:
@@ -79,7 +101,27 @@ def _station_scoring_dict(s: Station) -> dict:
         "pass_threshold": s.pass_threshold,
         "pass_points": s.pass_points,
         "max_attempts": s.max_attempts,
+        "show_score_to_participants": s.show_score_to_participants,
+        "max_stay_minutes": s.max_stay_minutes,
     }
+
+
+def _clean_max_stay(data: dict) -> tuple[dict, str | None]:
+    """Optional stay limit in minutes; empty/null clears it."""
+    if "max_stay_minutes" not in data:
+        return {}, None
+    value = data.get("max_stay_minutes")
+    if value in (None, ""):
+        return {"max_stay_minutes": None}, None
+    if isinstance(value, bool):
+        return {}, "invalid_max_stay_minutes"
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return {}, "invalid_max_stay_minutes"
+    if parsed < 1 or parsed > 24 * 60:
+        return {}, "invalid_max_stay_minutes"
+    return {"max_stay_minutes": parsed}, None
 
 
 def _clean_max_attempts(data: dict, required: bool = False):
@@ -140,7 +182,9 @@ def station_session_score_view(request: HttpRequest, session_id: int):
         if err:
             return JsonResponse({"error": err}, status=400)
 
-    if session.station.scoring_mode != Station.SCORING_PASS_FAIL and "score" not in data:
+    challenge_station = uses_challenge_scoring(session.station)
+    challenges = data.get("challenges") if challenge_station else None
+    if session.station.scoring_mode != Station.SCORING_PASS_FAIL and "score" not in data and challenges is None:
         return JsonResponse({"error": "missing_score"}, status=400)
 
     with transaction.atomic():
@@ -149,7 +193,9 @@ def station_session_score_view(request: HttpRequest, session_id: int):
                 session_id, acc, score=None, note=data.get("note"), outcome=data.get("outcome"),
             )
         else:
-            updated, err = set_session_score(session_id, acc, score=data.get("score"), note=data.get("note"))
+            updated, err = set_session_score(
+                session_id, acc, score=data.get("score"), note=data.get("note"), challenges=challenges,
+            )
         if not err and marks_submission:
             marks_submission.item_marks = stored_marks
             marks_submission.save(update_fields=["item_marks", "updated_at"])
@@ -157,7 +203,7 @@ def station_session_score_view(request: HttpRequest, session_id: int):
     if err:
         status = (
             409 if err == "results_locked"
-            else (400 if err in ("invalid_score", "missing_score", "missing_outcome") else 404)
+            else (400 if err in ("invalid_score", "missing_score", "missing_outcome", "invalid_challenge_score") else 404)
         )
         return JsonResponse({"error": err}, status=status)
 
@@ -166,7 +212,65 @@ def station_session_score_view(request: HttpRequest, session_id: int):
         "team_code": updated.team.code,
         "score": updated.score,
         "outcome": updated.outcome,
+        "form_score": updated.form_score,
+        "challenge_scores": updated.challenge_scores or {},
         "item_marks": stored_marks if marks_submission else None,
+    })
+
+
+@csrf_exempt
+def station_session_challenge_skip_view(request: HttpRequest, session_id: int):
+    """POST {"challenge_id", "undo"?}: mark a challenge skipped during a visit.
+
+    Scores it 0 and holds the team's checkout until the skip penalty ends
+    (allotted time + 15 minutes); `undo` reverses a mis-tap.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    challenge_id = str(data.get("challenge_id") or "").strip()
+    if not challenge_id:
+        return JsonResponse({"error": "missing_challenge_id"}, status=400)
+
+    session = StationSession.objects.select_related("station").filter(id=session_id).first()
+    if not session:
+        return JsonResponse({"error": "session_not_found"}, status=404)
+    if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
+        collab=acc, station=session.station, active=True,
+    ).exists():
+        return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    undo = data.get("undo") is True
+    updated, err = skip_challenge(session_id, challenge_id, acc, undo=undo)
+    if err:
+        status = {
+            "session_not_found": 404, "challenge_not_found": 404,
+            "session_not_active": 409, "results_locked": 409,
+        }.get(err, 400)
+        return JsonResponse({"error": err}, status=status)
+
+    record_audit(
+        actor=acc,
+        action="station.challenge_unskip" if undo else "station.challenge_skip",
+        summary=(
+            f"{'Hoàn tác bỏ' if undo else 'Đội bỏ'} thử thách {challenge_id} "
+            f"của đội {updated.team.code} tại trạm {updated.station.code}"
+        ),
+        target_type="StationSession",
+        target_id=updated.id,
+        after_data={"penalty_until": updated.penalty_until.isoformat() if updated.penalty_until else None},
+        reversible=False,
+    )
+    return JsonResponse({
+        "id": updated.id,
+        "score": updated.score,
+        "challenge_scores": updated.challenge_scores or {},
+        **_session_timing(updated),
     })
 
 
@@ -204,6 +308,12 @@ def _serialize_submission(sub: StationSubmission, presign: bool = True) -> dict:
         "answer_review": submission_answer_review(sub),
         "item_marks": sub.item_marks,
         "files": files,
+        # Staff-only: the offline challenges of the visit this form belongs to.
+        "challenges": (
+            challenge_breakdown(sub.station_session, sub.station)
+            if getattr(sub, "station_session_id", None) and has_challenges(sub.station.submission_config)
+            else []
+        ),
     }
 
 
@@ -225,7 +335,7 @@ def station_submissions_view(request: HttpRequest, station_id: int):
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
-    submissions = StationSubmission.objects.select_related("team", "graded_by", "station__sub_event", "participant").filter(
+    submissions = StationSubmission.objects.select_related("team", "graded_by", "station__sub_event", "participant", "station_session").filter(
         station=station,
     ).order_by(F("submitted_at").desc(nulls_last=True))
 
@@ -234,6 +344,25 @@ def station_submissions_view(request: HttpRequest, station_id: int):
         "station_name": station.name,
         "submissions": [_serialize_submission(sub) for sub in submissions],
     })
+
+
+def _penalty_response(session: StationSession) -> JsonResponse:
+    """Checkout refused: the team is still serving a skipped-challenge penalty."""
+    return JsonResponse({
+        "error": "penalty_active",
+        "team_code": session.team.code,
+        "team_name": session.team.name,
+        "penalty_until": session.penalty_until.isoformat() if session.penalty_until else None,
+    }, status=409)
+
+
+def _session_timing(session: StationSession) -> dict:
+    """Stay limit + skip penalty state of a visit, for coop and team screens."""
+    return {
+        "max_stay_minutes": session.station.max_stay_minutes,
+        "penalty_until": session.penalty_until.isoformat() if session.penalty_until else None,
+        "challenge_skips": session.challenge_skips or {},
+    }
 
 
 def _checkout_submission(session):
@@ -366,6 +495,9 @@ def stations_for_event_view(request: HttpRequest, phase_key: str, event_id: int)
                 "max_concurrent_teams": s.max_concurrent_teams,
                 "max_attempts": s.max_attempts,
                 "submission_config": station_config(s),
+                # Real challenge titles for the coop's grading screens; the
+                # participant-safe config above only carries "Thử thách N".
+                "challenges": challenge_breakdown(None, s),
                 **_station_scoring_dict(s),
             }
             for s in stations
@@ -402,7 +534,21 @@ def station_create_view(request: HttpRequest, event_id: int):
     if kind not in dict(Station.KIND_CHOICES):
         return JsonResponse({"error": "invalid_kind"}, status=400)
 
+    visibility_kwargs, err = _clean_score_visibility(data)
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    stay_kwargs, err = _clean_max_stay(data)
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    visibility_kwargs.update(stay_kwargs)
+
     cfg = _stored_submission_config(data.get("submission_config"))
+    sub_event = SubEvent.objects.filter(id=event_id).first()
+    if sub_event is None:
+        return JsonResponse({"error": "event_not_found"}, status=404)
+    err = _challenge_conflict(cfg, scoring_kwargs["scoring_mode"], sub_event)
+    if err:
+        return JsonResponse({"error": err}, status=400)
     if cfg and "bank" in cfg and cfg["bank"].get("itemIds"):
         from api.models import QuestionBankItem
         valid_ids = list(QuestionBankItem.objects.filter(
@@ -424,6 +570,7 @@ def station_create_view(request: HttpRequest, event_id: int):
             submission_config=cfg,
             **scoring_kwargs,
             **attempt_kwargs,
+            **visibility_kwargs,
         )
     except ValueError as exc:
         if str(exc) == "duplicate_station_code":
@@ -480,6 +627,24 @@ def station_detail_view(request: HttpRequest, station_id: int):
         if err:
             return JsonResponse({"error": err}, status=400)
         kwargs.update(attempt_kwargs)
+        visibility_kwargs, err = _clean_score_visibility(data)
+        if err:
+            return JsonResponse({"error": err}, status=400)
+        kwargs.update(visibility_kwargs)
+        stay_kwargs, err = _clean_max_stay(data)
+        if err:
+            return JsonResponse({"error": err}, status=400)
+        kwargs.update(stay_kwargs)
+        current = Station.objects.select_related("sub_event").filter(id=station_id).first()
+        if current is None:
+            return JsonResponse({"error": "station_not_found"}, status=404)
+        err = _challenge_conflict(
+            kwargs["submission_config"] if "submission_config" in kwargs else current.submission_config,
+            kwargs.get("scoring_mode", current.scoring_mode),
+            current.sub_event,
+        )
+        if err:
+            return JsonResponse({"error": err}, status=400)
         station = update_station(station_id, **kwargs)
         return JsonResponse({
             "id": station.id, "code": station.code, "name": station.name,
@@ -612,6 +777,8 @@ def station_exit_view(request: HttpRequest):
         score=data.get("score"),
         note=data.get("note"),
     )
+    if err == "penalty_active":
+        return _penalty_response(session)
     if err:
         status_map = {
             "team_not_found": 404, "qr_already_used": 409,
@@ -636,6 +803,8 @@ def station_exit_view(request: HttpRequest):
         "status": session.status,
         "exited_at": session.exited_at.isoformat() if session.exited_at else None,
         "score": session.score,
+        "form_score": session.form_score,
+        "challenges": challenge_breakdown(session, session.station),
         "submission": _checkout_submission(session),
     })
 
@@ -807,6 +976,8 @@ def station_scan_view(request: HttpRequest):
             event_id=station.sub_event_id,
             operator=acc,
         )
+    if err == "penalty_active":
+        return _penalty_response(session)
     if err:
         status_map = {
             "team_not_found": 404, "qr_already_used": 409, "station_not_found": 404,
@@ -845,6 +1016,8 @@ def station_scan_view(request: HttpRequest):
         "score": session.score,
         **_station_scoring_dict(session.station),
         "submission": _checkout_submission(session) if is_exit else None,
+        "form_score": session.form_score,
+        "challenges": challenge_breakdown(session, session.station) if is_exit else [],
         # Lets the coop see who is actually here before waving the team in.
         "checked_in_members": checked_in_members(session.team, station.sub_event),
     }, status=200 if is_exit else 201)
