@@ -190,9 +190,20 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results-k8s-config-${{ steps.meta.outputs.sha }}.sarif
+
+      # Keep the raw report downloadable from the workflow run, independently
+      # of GitHub Code Scanning permissions and branch filters.
+      - name: Upload raw Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-k8s-config-sarif-${{ steps.meta.outputs.sha }}
+          path: trivy-results-k8s-config-${{ steps.meta.outputs.sha }}.sarif
+          if-no-files-found: error
+          retention-days: 3
 
   # Notify: Discord notification + PR comment (always runs, even on failure)
   notify:
