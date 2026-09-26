@@ -4,7 +4,7 @@ Station service — configuration CRUD, occupancy, session enter/exit.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from django.db import IntegrityError, transaction
@@ -16,6 +16,7 @@ from api.models import (
     TeamFormDraft, TeamFormSession, TeamFormVariant,
 )
 from api.services.submission_config_service import (
+    CHALLENGE_SKIP_EXTRA_MINUTES,
     challenge_items,
     has_challenges,
     has_items as has_submission_items,
@@ -46,7 +47,7 @@ def update_station(station_id: int, **kwargs) -> Station:
     station = Station.objects.get(id=station_id)
     for field, value in kwargs.items():
         # Only the optional limits may be cleared; null elsewhere is ignored.
-        if value is None and field not in ("max_attempts", "max_concurrent_teams"):
+        if value is None and field not in ("max_attempts", "max_concurrent_teams", "max_stay_minutes"):
             continue
         if hasattr(station, field):
             setattr(station, field, value)
@@ -114,6 +115,8 @@ def get_station_sessions(station_id: int, limit: int = 50) -> list[dict]:
             "exited_at": s.exited_at.isoformat() if s.exited_at else None,
             "score": s.score, "note": s.note,
             "form_score": s.form_score, "challenge_scores": s.challenge_scores or {},
+            "challenge_skips": s.challenge_skips or {},
+            "penalty_until": s.penalty_until.isoformat() if s.penalty_until else None,
         })
     for sub in submissions:
         out.append({
@@ -230,6 +233,7 @@ def _apply_session_scores(
 def challenge_breakdown(session: Optional[StationSession], station: Station) -> list[dict]:
     """Staff view of a station's challenges with this visit's points (real titles)."""
     stored = session.challenge_scores if session and isinstance(session.challenge_scores, dict) else {}
+    skips = session.challenge_skips if session and isinstance(session.challenge_skips, dict) else {}
     return [
         {
             "id": item["id"],
@@ -237,10 +241,93 @@ def challenge_breakdown(session: Optional[StationSession], station: Station) -> 
             "title": item["title"],
             "description": item["description"],
             "maxPoints": item["maxPoints"],
+            "durationMinutes": item["durationMinutes"],
+            "skipPenaltyMinutes": item["durationMinutes"] + CHALLENGE_SKIP_EXTRA_MINUTES,
             "points": stored.get(item["id"]),
+            "skipped": item["id"] in skips,
         }
         for item in challenge_items(station.submission_config)
     ]
+
+
+def _penalty_until(skips: dict) -> Optional[datetime]:
+    """When the last skip penalty ends. Penalties queue up: a skip made while
+    another penalty is running starts counting when that one ends."""
+    until: Optional[datetime] = None
+    entries = []
+    for entry in (skips or {}).values():
+        try:
+            entries.append((datetime.fromisoformat(entry["at"]), int(entry["minutes"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    for at, minutes in sorted(entries):
+        start = max(until, at) if until else at
+        until = start + timedelta(minutes=max(0, minutes))
+    return until
+
+
+def skip_challenge(
+    session_id: int,
+    challenge_id: str,
+    operator: Account,
+    undo: bool = False,
+) -> Tuple[Optional[StationSession], Optional[str]]:
+    """Mark a challenge as skipped during an active visit (or undo that).
+
+    Thể lệ: a skipped challenge scores 0 and the team may not be checked out
+    until its allotted time + CHALLENGE_SKIP_EXTRA_MINUTES have passed; the
+    penalty counts towards the time spent at the station. Undo is for a coop
+    who tapped the wrong challenge: it removes the skip and its 0 score.
+    """
+    with transaction.atomic():
+        ref = StationSession.objects.filter(id=session_id).values("team_id", "station_id").first()
+        if not ref:
+            return None, "session_not_found"
+        _lock_attempt_scope(ref["team_id"], ref["station_id"])
+        session = StationSession.objects.select_for_update(of=("self",)).select_related(
+            "station", "team", "phase", "sub_event",
+        ).filter(id=session_id).first()
+        if session is None:
+            return None, "session_not_found"
+        if results_are_locked():
+            return None, "results_locked"
+        if session.status != StationSession.STATUS_ACTIVE:
+            return None, "session_not_active"
+        station = session.station
+        if not uses_challenge_scoring(station):
+            return None, "challenge_not_found"
+        challenge = next(
+            (item for item in challenge_items(station.submission_config) if item["id"] == str(challenge_id)),
+            None,
+        )
+        if challenge is None:
+            return None, "challenge_not_found"
+
+        skips = dict(session.challenge_skips or {})
+        if undo:
+            if challenge["id"] not in skips:
+                return session, None
+            skips.pop(challenge["id"])
+            err = _apply_session_scores(session, station, challenges={challenge["id"]: None})
+        else:
+            if challenge["id"] in skips:
+                return session, None
+            skips[challenge["id"]] = {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "minutes": challenge["durationMinutes"] + CHALLENGE_SKIP_EXTRA_MINUTES,
+            }
+            err = _apply_session_scores(session, station, challenges={challenge["id"]: 0})
+        if err:
+            return None, err
+        session.challenge_skips = skips
+        session.penalty_until = _penalty_until(skips)
+        # The visit is still running: the outcome is settled at checkout.
+        session.save(update_fields=[
+            "challenge_skips", "penalty_until", "challenge_scores", "form_score", "score",
+            "updated_at",
+        ])
+        _sync_station_score_entry(session.team, station, operator)
+    return session, None
 
 
 def _sync_station_score_entry(team: Team, station: Station, operator: Optional[Account] = None) -> None:
@@ -812,6 +899,10 @@ def exit_station(
             return None, "results_locked"
 
         now = datetime.now(timezone.utc)
+        # Thể lệ: a team serving a skip penalty stays until it ends. Checked
+        # before the QR is consumed, so the same code works once time is up.
+        if session.penalty_until and now < session.penalty_until:
+            return session, "penalty_active"
         session.status = StationSession.STATUS_CLOSED
         session.exited_at = now
         session.exited_by = operator
@@ -1029,6 +1120,8 @@ def list_recent_sessions(event_id: int | None = None, limit: int = 50) -> list[d
             "exited_at": s.exited_at.isoformat() if s.exited_at else None,
             "score": s.score, "note": s.note,
             "form_score": s.form_score, "challenge_scores": s.challenge_scores or {},
+            "challenge_skips": s.challenge_skips or {},
+            "penalty_until": s.penalty_until.isoformat() if s.penalty_until else None,
         }
         for s in qs[:limit]
     ]

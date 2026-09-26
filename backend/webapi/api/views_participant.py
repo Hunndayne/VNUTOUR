@@ -56,6 +56,7 @@ from api.services.team_invite_service import (
     issue_team_invite, revoke_team_invite,
 )
 from api.services.team_service import (
+    participant_scores_visible,
     create_team, add_member, update_member, remove_member, submit_team,
     lock_registration_capacity, team_registration_capacity_error,
     get_team_members, get_team_for_participant, team_is_editable, rotate_qr_token,
@@ -410,13 +411,17 @@ def _station_has_form(station: Station, bank_counts: dict | None = None) -> bool
     return submission_has_form(config, bank_counts[sub_event_id])
 
 
-def _participant_score_visible(station: Station) -> bool:
+def _participant_score_visible(station: Station, site_visible: bool | None = None) -> bool:
     """Whether this station's points may appear anywhere a participant can read.
 
     Every participant payload that carries a score, a quiz result or a
-    challenge's points goes through here; staff views never do.
+    challenge's points goes through here; staff views never do. Both the
+    site-wide switch (off by default) and the station's own switch must be on.
+    Pass `site_visible` when checking many stations in one request.
     """
-    return bool(station.show_score_to_participants)
+    if site_visible is None:
+        site_visible = participant_scores_visible()
+    return bool(site_visible and station.show_score_to_participants)
 
 
 def _hide_challenge_points(config: dict) -> dict:
@@ -1633,6 +1638,7 @@ def my_team_stations_view(request: HttpRequest):
     all_visited = replay_state["all_visited"]
 
     station_payloads = []
+    site_scores_visible = participant_scores_visible()
     bank_counts: dict = {}
     for station in stations:
         session = my_sessions.get(station.id)
@@ -1670,7 +1676,7 @@ def my_team_stations_view(request: HttpRequest):
                 scores = [r["score"] for r in rows]
                 best_score = max(scores) if scores else 0
 
-        show_score = _participant_score_visible(station)
+        show_score = _participant_score_visible(station, site_scores_visible)
         challenges = []
         if station.scoring_mode != Station.SCORING_PASS_FAIL:
             station_challenges = challenge_items(station.submission_config)
@@ -2414,6 +2420,7 @@ def my_team_station_state_view(request: HttpRequest):
 
     session = sessions.order_by("-entered_at").values(
         "station_id", "status", "entered_at", "exited_at", "id",
+        "penalty_until", "station__max_stay_minutes",
     ).first()
     if session and not (station_id is not None and station_for_replay and _is_survey_station(station_for_replay)):
         submissions = submissions.filter(station_session_id=session["id"])
@@ -2421,6 +2428,9 @@ def my_team_station_state_view(request: HttpRequest):
         "station_id", "status", "submitted_at", "score", "response_payload", "item_marks",
         "station__show_score_to_participants",
     ).first()
+    submission_score_visible = bool(
+        submission and submission["station__show_score_to_participants"] and participant_scores_visible()
+    )
 
     # A form that stopped accepting answers (timer ran out, closed by BTC...)
     # before the team submitted must not trap them inside the station: the
@@ -2487,17 +2497,20 @@ def my_team_station_state_view(request: HttpRequest):
             "status": session["status"],
             "entered_at": stamp(session["entered_at"]),
             "exited_at": stamp(session["exited_at"]),
+            # Stay limit + skip penalty: timing only, never points.
+            "max_stay_minutes": session["station__max_stay_minutes"],
+            "penalty_until": stamp(session["penalty_until"]),
         } if session else None,
         "submission": {
             "station_id": submission["station_id"],
             "status": submission["status"],
             "submitted_at": stamp(submission["submitted_at"]),
-            "score": submission["score"] if submission["station__show_score_to_participants"] else None,
+            "score": submission["score"] if submission_score_visible else None,
             "quiz_result": (
                 marked_quiz_result(submission["response_payload"], submission["item_marks"])
-                if submission["station__show_score_to_participants"] else None
+                if submission_score_visible else None
             ),
-            "show_score": submission["station__show_score_to_participants"],
+            "show_score": submission_score_visible,
         } if submission else None,
         "qr": qr,
         "attendance": attendance,
@@ -2526,17 +2539,20 @@ def my_team_question_history_view(request: HttpRequest):
     ).exclude(station__sub_event__type=SubEvent.TYPE_SURVEY).select_related(
         "station__sub_event", "station_session", "team",
     ).order_by("-submitted_at", "-id")
-    return JsonResponse({"attempts": [{
-        "id": sub.id, "station_id": sub.station_id, "station_name": sub.station.name,
-        "event_name": sub.station.sub_event.name,
-        "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
-        "score": sub.score if _participant_score_visible(sub.station) else None,
-        "quiz_result": (
-            marked_quiz_result(sub.response_payload, sub.item_marks)
-            if _participant_score_visible(sub.station) else None
-        ),
-        "show_score": _participant_score_visible(sub.station),
-        "review": participant_review(sub),
-    } for sub in submissions]})
+    site_scores_visible = participant_scores_visible()
+
+    def attempt(sub):
+        visible = _participant_score_visible(sub.station, site_scores_visible)
+        return {
+            "id": sub.id, "station_id": sub.station_id, "station_name": sub.station.name,
+            "event_name": sub.station.sub_event.name,
+            "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+            "score": sub.score if visible else None,
+            "quiz_result": marked_quiz_result(sub.response_payload, sub.item_marks) if visible else None,
+            "show_score": visible,
+            "review": participant_review(sub),
+        }
+
+    return JsonResponse({"attempts": [attempt(sub) for sub in submissions]})
 
 

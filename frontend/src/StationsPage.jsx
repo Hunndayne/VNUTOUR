@@ -226,6 +226,8 @@ function createChallengeItem(item = {}) {
     title: item.title ?? '',
     description: item.description ?? '',
     maxPoints: Number.isFinite(maxPoints) && maxPoints >= 1 ? maxPoints : CHALLENGE_DEFAULT_MAX_POINTS,
+    // Thời gian quy định; bỏ thử thách bị phạt thời gian này + 15 phút.
+    durationMinutes: Math.max(0, Math.trunc(Number(item.durationMinutes)) || 0),
   }
 }
 
@@ -633,6 +635,7 @@ function createBlankStation() {
     passPoints: 0,
     maxAttempts: null,
     showScoreToParticipants: true,
+    maxStayMinutes: null,
     teamsHere: [],
     teamsDone: [],
     submission: createSubmissionConfig(),
@@ -663,6 +666,7 @@ function createStation(station = {}) {
   next.passPoints = Number.isFinite(rawPoints) && rawPoints >= 0 ? Math.round(rawPoints) : 0
   next.maxAttempts = station.maxAttempts == null ? null : Number(station.maxAttempts)
   next.showScoreToParticipants = station.showScoreToParticipants !== false
+  next.maxStayMinutes = station.maxStayMinutes == null || station.maxStayMinutes === '' ? null : Number(station.maxStayMinutes)
   next.submission = createSubmissionConfig(station.submission)
 
   return next
@@ -1056,6 +1060,7 @@ function explainApiError(error) {
     invalid_challenge_score: 'Điểm thử thách phải là số nguyên từ 0 đến điểm tối đa.',
     challenges_not_allowed_pass_fail: 'Trạm Đạt/Không đạt không dùng được thử thách. Chọn cách tính điểm khác hoặc gỡ thử thách.',
     challenges_not_allowed_survey: 'Trạm khảo sát không dùng được thử thách.',
+    invalid_max_stay_minutes: 'Thời gian tối đa tại trạm phải từ 1 đến 1440 phút.',
     results_locked: 'Kết quả đã khóa (chương trình kết thúc), không thể sửa điểm.',
     master_admin_required: 'Chỉ master admin mới được tạo/sửa/xoá trạm và đổi phase hiện tại.',
   }
@@ -1199,6 +1204,7 @@ function stationFromApi(station, sessions = []) {
     passPoints: station.pass_points,
     maxAttempts: station.max_attempts,
     showScoreToParticipants: station.show_score_to_participants !== false,
+    maxStayMinutes: station.max_stay_minutes ?? null,
     teamsHere,
     teamsDone,
     submission: createSubmissionConfig(station.submission_config),
@@ -1220,6 +1226,7 @@ function buildStationPayload(form, order, active) {
     scoring_mode: form.scoringMode,
     max_attempts: form.maxAttempts == null ? null : Number(form.maxAttempts),
     show_score_to_participants: form.showScoreToParticipants !== false,
+    max_stay_minutes: form.maxStayMinutes == null || form.maxStayMinutes === '' ? null : Number(form.maxStayMinutes),
     // Chỉ giữ giá trị của ô đang áp dụng — tránh gửi lên số liệu cũ của chế độ
     // đã bỏ chọn, giống cách max_concurrent_teams về null khi hết giới hạn.
     pass_threshold: form.scoringMode === 'threshold'
@@ -1908,7 +1915,7 @@ function SubmissionItemCard({
           <p className="rounded-lg bg-[#8A5A9E]/8 px-3 py-2 text-xs leading-5 text-[#6E4480]">
             Thí sinh chỉ thấy <strong>Thử thách {challengeNumber}</strong>. Tên và hướng dẫn chấm dưới đây chỉ BTC và coop xem được.
           </p>
-          <div className="grid gap-3 sm:grid-cols-[1fr_9rem]">
+          <div className="grid gap-3 sm:grid-cols-[1fr_8rem_8rem]">
             <div>
               <label className={MICRO_LABEL_CLS}>Tên thử thách</label>
               <input
@@ -1930,7 +1937,21 @@ function SubmissionItemCard({
                 className={INPUT_CLS}
               />
             </div>
+            <div>
+              <label className={MICRO_LABEL_CLS}>Thời gian (phút)</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={item.durationMinutes}
+                onChange={event => onChange('durationMinutes', Math.max(0, Math.trunc(Number(event.target.value)) || 0))}
+                className={INPUT_CLS}
+              />
+            </div>
           </div>
+          <p className="text-xs text-ink/50">
+            Bỏ thử thách: 0 điểm và phạt {(Number(item.durationMinutes) || 0) + 15} phút (thời gian quy định + 15 phút) trước khi được checkout.
+          </p>
           <div>
             <label className={MICRO_LABEL_CLS}>Hướng dẫn chấm (tuỳ chọn)</label>
             <textarea
@@ -2334,6 +2355,7 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
   const handleSave = async () => {
     if (!form.name.trim()) return
     if (form.maxAttempts != null && (!Number.isInteger(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1 || Number(form.maxAttempts) > 2147483647)) return
+    if (form.maxStayMinutes != null && (!Number.isInteger(Number(form.maxStayMinutes)) || Number(form.maxStayMinutes) < 1 || Number(form.maxStayMinutes) > 1440)) return
     // onSave (addStation/saveStation) trả về true khi lưu thành công — chỉ xoá
     // nháp lúc đó, thất bại thì giữ nguyên để không mất nội dung đang soạn.
     const result = await onSave({
@@ -2522,10 +2544,29 @@ function StationForm({ initial, onSave, onCancel, allowInitialAssignment = false
             <span>
               <span className="block text-sm font-semibold text-ink">Cho thí sinh xem điểm trạm này</span>
               <span className="block text-xs leading-5 text-ink/55">
-                Tắt thì thí sinh không thấy điểm, kết quả trắc nghiệm hay điểm thử thách của trạm này. Điểm vẫn được cộng vào tổng và bảng xếp hạng.
+                Chỉ có tác dụng khi bật "Cho thí sinh xem điểm" trong Cài đặt hệ thống (mặc định tắt). Tắt thì thí sinh không thấy điểm, kết quả trắc nghiệm hay điểm thử thách của trạm này. Điểm vẫn được cộng vào tổng và bảng xếp hạng.
               </span>
             </span>
           </label>
+        </div>
+
+        <div className="sm:col-span-2 space-y-2">
+          <label htmlFor="station-max-stay" className="block text-sm font-semibold text-ink">Thời gian tối đa tại trạm</label>
+          <label className="flex items-center gap-2 text-sm text-ink/65">
+            <input type="checkbox" checked={form.maxStayMinutes == null}
+              onChange={event => set('maxStayMinutes', event.target.checked ? null : 90)} />
+            Không giới hạn
+          </label>
+          {form.maxStayMinutes != null && (
+            <div className="flex items-center gap-2">
+              <input id="station-max-stay" type="number" min={1} max={1440} step={1} required
+                value={form.maxStayMinutes} onChange={event => set('maxStayMinutes', event.target.value)}
+                className="w-28 rounded-lg border border-stone bg-paper px-3 py-2.5 text-sm text-ink" />
+              <span className="text-sm text-ink/60">phút</span>
+            </div>
+          )}
+          <p className="text-xs text-ink/55">Coop thấy đồng hồ đổi màu khi đội gần hết giờ (còn 15 phút) và khi quá giờ. Hệ thống không tự checkout.</p>
+          {form.maxStayMinutes != null && (!Number.isInteger(Number(form.maxStayMinutes)) || Number(form.maxStayMinutes) < 1 || Number(form.maxStayMinutes) > 1440) && <p className="text-xs text-clay" role="alert">Nhập số phút từ 1 đến 1440.</p>}
         </div>
 
         <div className="sm:col-span-2 space-y-2">

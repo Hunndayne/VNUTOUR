@@ -17,6 +17,7 @@ export default function ChallengeScores({ challenges, values, onChange, disabled
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink">
                   <span className="text-ink/45">Thử thách {item.index} · </span>{item.title || 'Chưa đặt tên'}
+                  {item.skipped && <span className="ml-2 rounded bg-clay/10 px-1.5 py-0.5 text-[11px] font-semibold text-clay">Đội đã bỏ · phạt {item.skipPenaltyMinutes} phút</span>}
                 </p>
                 {item.description && <p className="mt-0.5 whitespace-pre-line text-xs leading-5 text-ink/60">{item.description}</p>}
               </div>

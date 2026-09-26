@@ -117,6 +117,32 @@ function isStationFull(station) {
   return (station?.capacity?.current_teams ?? 0) >= max
 }
 
+// Thời gian đội đã ở trạm (so với giới hạn của trạm) và thời gian phạt bỏ thử
+// thách còn lại. Chỉ là thời gian, không bao giờ kèm điểm.
+function StayStatus({ session, now }) {
+  const entered = session?.entered_at ? new Date(session.entered_at).getTime() : null
+  const limit = Number(session?.max_stay_minutes) || 0
+  const penaltyMs = session?.penalty_until ? new Date(session.penalty_until).getTime() - now : 0
+  if (!entered || (!limit && penaltyMs <= 0)) return null
+  const elapsedMin = Math.max(0, Math.floor((now - entered) / 60000))
+  const over = limit > 0 && elapsedMin >= limit
+  const penaltySecs = Math.ceil(penaltyMs / 1000)
+  return (
+    <div className="space-y-2">
+      {limit > 0 && (
+        <p className={`rounded-xl px-4 py-2.5 text-sm ${over ? 'bg-[#D6492B]/12 font-semibold text-[#D6492B]' : 'bg-[#20312B]/[0.05] text-ink/70'}`}>
+          Đã ở trạm {elapsedMin}/{limit} phút{over ? ' — đã hết thời gian tối đa, đội cần rời trạm.' : '.'}
+        </p>
+      )}
+      {penaltyMs > 0 && (
+        <p className="rounded-xl bg-[#D6492B]/12 px-4 py-2.5 text-sm font-semibold text-[#D6492B]" role="status">
+          Đội đang chịu phạt vì bỏ thử thách. Được checkout sau {Math.floor(penaltySecs / 60)}:{String(penaltySecs % 60).padStart(2, '0')}.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // Kết quả thử thách của đội tại trạm: chỉ nhãn ẩn danh "Thử thách N", điểm khi
 // trạm cho phép xem. Trạm tắt hiện điểm thì chỉ báo đã chấm hay chưa.
 function StationChallengeResults({ station }) {
@@ -637,6 +663,8 @@ function StationStageScreen({
           {station.station_location}
         </p>
       )}
+
+      {state?.session?.status === 'active' && <StayStatus session={state.session} now={now} />}
 
       {station?.submission_brief && (
         <div className={`${STATION_CARD} mt-4 overflow-hidden px-5 py-6 sm:px-7 sm:py-7`}>

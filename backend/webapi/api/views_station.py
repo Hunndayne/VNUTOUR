@@ -14,7 +14,7 @@ from api.services.station_service import (
     get_stations_for_event, get_occupancy, get_station_sessions as get_sessions_history,
     enter_station, exit_station, list_recent_sessions, set_session_score,
     set_submission_score, _lock_attempt_scope,
-    challenge_breakdown, uses_challenge_scoring,
+    challenge_breakdown, uses_challenge_scoring, skip_challenge,
 )
 from api.services.submission_storage_service import presigned_url, STORAGE_R2
 from api.services.submission_config_service import has_challenges, normalize_config, public_config
@@ -102,7 +102,26 @@ def _station_scoring_dict(s: Station) -> dict:
         "pass_points": s.pass_points,
         "max_attempts": s.max_attempts,
         "show_score_to_participants": s.show_score_to_participants,
+        "max_stay_minutes": s.max_stay_minutes,
     }
+
+
+def _clean_max_stay(data: dict) -> tuple[dict, str | None]:
+    """Optional stay limit in minutes; empty/null clears it."""
+    if "max_stay_minutes" not in data:
+        return {}, None
+    value = data.get("max_stay_minutes")
+    if value in (None, ""):
+        return {"max_stay_minutes": None}, None
+    if isinstance(value, bool):
+        return {}, "invalid_max_stay_minutes"
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return {}, "invalid_max_stay_minutes"
+    if parsed < 1 or parsed > 24 * 60:
+        return {}, "invalid_max_stay_minutes"
+    return {"max_stay_minutes": parsed}, None
 
 
 def _clean_max_attempts(data: dict, required: bool = False):
@@ -199,6 +218,62 @@ def station_session_score_view(request: HttpRequest, session_id: int):
     })
 
 
+@csrf_exempt
+def station_session_challenge_skip_view(request: HttpRequest, session_id: int):
+    """POST {"challenge_id", "undo"?}: mark a challenge skipped during a visit.
+
+    Scores it 0 and holds the team's checkout until the skip penalty ends
+    (allotted time + 15 minutes); `undo` reverses a mis-tap.
+    """
+    acc, err = _require_role(request, Account.ROLE_ADMIN, Account.ROLE_COLLAB)
+    if err:
+        return err
+    if request.method != "POST":
+        return JsonResponse({"error": "method_not_allowed"}, status=405)
+    data = _json_body(request)
+    if data is None:
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    challenge_id = str(data.get("challenge_id") or "").strip()
+    if not challenge_id:
+        return JsonResponse({"error": "missing_challenge_id"}, status=400)
+
+    session = StationSession.objects.select_related("station").filter(id=session_id).first()
+    if not session:
+        return JsonResponse({"error": "session_not_found"}, status=404)
+    if acc.role == Account.ROLE_COLLAB and not StationAssignment.objects.filter(
+        collab=acc, station=session.station, active=True,
+    ).exists():
+        return JsonResponse({"error": "not_assigned_to_station"}, status=403)
+
+    undo = data.get("undo") is True
+    updated, err = skip_challenge(session_id, challenge_id, acc, undo=undo)
+    if err:
+        status = {
+            "session_not_found": 404, "challenge_not_found": 404,
+            "session_not_active": 409, "results_locked": 409,
+        }.get(err, 400)
+        return JsonResponse({"error": err}, status=status)
+
+    record_audit(
+        actor=acc,
+        action="station.challenge_unskip" if undo else "station.challenge_skip",
+        summary=(
+            f"{'Hoàn tác bỏ' if undo else 'Đội bỏ'} thử thách {challenge_id} "
+            f"của đội {updated.team.code} tại trạm {updated.station.code}"
+        ),
+        target_type="StationSession",
+        target_id=updated.id,
+        after_data={"penalty_until": updated.penalty_until.isoformat() if updated.penalty_until else None},
+        reversible=False,
+    )
+    return JsonResponse({
+        "id": updated.id,
+        "score": updated.score,
+        "challenge_scores": updated.challenge_scores or {},
+        **_session_timing(updated),
+    })
+
+
 # =====================================================================
 # Station submissions (view + grade)
 # =====================================================================
@@ -269,6 +344,25 @@ def station_submissions_view(request: HttpRequest, station_id: int):
         "station_name": station.name,
         "submissions": [_serialize_submission(sub) for sub in submissions],
     })
+
+
+def _penalty_response(session: StationSession) -> JsonResponse:
+    """Checkout refused: the team is still serving a skipped-challenge penalty."""
+    return JsonResponse({
+        "error": "penalty_active",
+        "team_code": session.team.code,
+        "team_name": session.team.name,
+        "penalty_until": session.penalty_until.isoformat() if session.penalty_until else None,
+    }, status=409)
+
+
+def _session_timing(session: StationSession) -> dict:
+    """Stay limit + skip penalty state of a visit, for coop and team screens."""
+    return {
+        "max_stay_minutes": session.station.max_stay_minutes,
+        "penalty_until": session.penalty_until.isoformat() if session.penalty_until else None,
+        "challenge_skips": session.challenge_skips or {},
+    }
 
 
 def _checkout_submission(session):
@@ -443,6 +537,10 @@ def station_create_view(request: HttpRequest, event_id: int):
     visibility_kwargs, err = _clean_score_visibility(data)
     if err:
         return JsonResponse({"error": err}, status=400)
+    stay_kwargs, err = _clean_max_stay(data)
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    visibility_kwargs.update(stay_kwargs)
 
     cfg = _stored_submission_config(data.get("submission_config"))
     sub_event = SubEvent.objects.filter(id=event_id).first()
@@ -533,6 +631,10 @@ def station_detail_view(request: HttpRequest, station_id: int):
         if err:
             return JsonResponse({"error": err}, status=400)
         kwargs.update(visibility_kwargs)
+        stay_kwargs, err = _clean_max_stay(data)
+        if err:
+            return JsonResponse({"error": err}, status=400)
+        kwargs.update(stay_kwargs)
         current = Station.objects.select_related("sub_event").filter(id=station_id).first()
         if current is None:
             return JsonResponse({"error": "station_not_found"}, status=404)
@@ -675,6 +777,8 @@ def station_exit_view(request: HttpRequest):
         score=data.get("score"),
         note=data.get("note"),
     )
+    if err == "penalty_active":
+        return _penalty_response(session)
     if err:
         status_map = {
             "team_not_found": 404, "qr_already_used": 409,
@@ -872,6 +976,8 @@ def station_scan_view(request: HttpRequest):
             event_id=station.sub_event_id,
             operator=acc,
         )
+    if err == "penalty_active":
+        return _penalty_response(session)
     if err:
         status_map = {
             "team_not_found": 404, "qr_already_used": 409, "station_not_found": 404,

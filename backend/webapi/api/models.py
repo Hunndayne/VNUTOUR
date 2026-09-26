@@ -518,6 +518,9 @@ class Station(models.Model):
     # Off keeps this station's points out of every participant-facing payload;
     # they still count towards the team total and the leaderboard.
     show_score_to_participants = models.BooleanField(default=True)
+    # Longest a team may stay at this station (minutes); null = no limit.
+    # Advisory: coop screens flag overstays, nothing is closed automatically.
+    max_stay_minutes = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -701,6 +704,11 @@ class StationSession(models.Model):
     form_score = models.IntegerField(null=True, blank=True)
     # {challenge item id: points} for the station's offline challenges.
     challenge_scores = models.JSONField(default=dict, blank=True)
+    # {challenge item id: {"at": iso time, "minutes": penalty}} for challenges
+    # the team skipped; each skip scores 0 and adds a time penalty.
+    challenge_skips = models.JSONField(default=dict, blank=True)
+    # The team cannot be checked out before this moment (skip penalties).
+    penalty_until = models.DateTimeField(null=True, blank=True)
     outcome = models.CharField(
         max_length=10, choices=OUTCOME_CHOICES, default=OUTCOME_PENDING,
     )

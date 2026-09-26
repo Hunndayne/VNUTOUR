@@ -5,7 +5,7 @@ part plus every challenge. Participants only ever see "Thử thách N".
 """
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from django.utils import timezone
@@ -243,6 +243,33 @@ class ChallengeStationConfigTests(ChallengeApiTestBase):
 
 
 class ChallengeParticipantTests(ChallengeApiTestBase):
+    def setUp(self):
+        super().setUp()
+        # Most tests here check what a team sees once scores are allowed out.
+        self.set_site_scores(True)
+
+    def set_site_scores(self, visible):
+        response = self.request_as("put", "/api/admin/site-config",
+                                   {"participant_scores_visible": visible}, self.master)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["participant_scores_visible"], visible)
+
+    def test_site_switch_is_off_by_default_and_hides_every_score(self):
+        SystemSetting.objects.filter(key="participant_scores_visible").delete()
+        self.graded_visit()
+        station = self.journey_station()
+        self.assertIsNone(station["best_score"])
+        self.assertFalse(station["show_score"])
+        self.assertEqual([c["points"] for c in station["challenges"]], [None, None])
+        state = self.request_as("get", f"/api/my-team/station-state?station_id={self.station.id}").json()
+        self.assertIsNone(state["submission"]["score"])
+        self.assertIsNone(state["submission"]["quiz_result"])
+        attempt = self.request_as("get", "/api/my-team/question-history").json()["attempts"][0]
+        self.assertIsNone(attempt["score"])
+        # Turning the site switch on is what lets the station's own switch count.
+        self.set_site_scores(True)
+        self.assertEqual(self.journey_station()["best_score"], 25)
+
     def graded_visit(self):
         submit = self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}],
                                                     "form": [{"id": "q2", "value": "x"}]}})
@@ -305,3 +332,92 @@ class ChallengeParticipantTests(ChallengeApiTestBase):
         coop_view = self.request_as("get", f"/api/stations/{self.station.id}/submissions", actor=self.coop).json()
         self.assertEqual(coop_view["submissions"][0]["score"], 3)
         self.assertEqual([c["points"] for c in coop_view["submissions"][0]["challenges"]], [7, 15])
+
+
+class ChallengeSkipPenaltyTests(ChallengeApiTestBase):
+    def setUp(self):
+        super().setUp()
+        config = _config()
+        config["items"][1]["durationMinutes"] = 20  # c1
+        self.station.submission_config = config
+        self.station.save()
+
+    def skip(self, challenge_id, undo=False, actor=None):
+        return self.request_as(
+            "post", f"/api/station-sessions/{self.session.id}/challenge-skip",
+            {"challenge_id": challenge_id, "undo": undo}, actor or self.coop,
+        )
+
+    def test_skip_scores_zero_and_holds_checkout_for_duration_plus_15(self):
+        before = timezone.now()
+        response = self.skip("c1")
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertEqual(data["challenge_scores"], {"c1": 0})
+        self.assertIn("c1", data["challenge_skips"])
+        until = datetime.fromisoformat(data["penalty_until"])
+        self.assertAlmostEqual((until - before).total_seconds(), 35 * 60, delta=5)
+
+        blocked = self.request_as(
+            "post", "/api/station-scan",
+            {"code": f"t:{self.team.qr_token}|s:{self.station.id}|d:out"}, self.coop,
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["error"], "penalty_active")
+        self.assertEqual(blocked.json()["penalty_until"], data["penalty_until"])
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.status, StationSession.STATUS_ACTIVE)
+
+        # Once the penalty is over the same QR checks the team out.
+        StationSession.objects.filter(id=self.session.id).update(
+            penalty_until=timezone.now() - timedelta(seconds=1),
+        )
+        data = self.checkout()
+        self.assertEqual(data["challenges"][0]["skipped"], True)
+        self.assertEqual(data["challenges"][0]["points"], 0)
+        self.assertEqual(data["challenges"][0]["skipPenaltyMinutes"], 35)
+
+    def test_undo_clears_skip_and_penalty(self):
+        self.skip("c1")
+        response = self.skip("c1", undo=True)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["challenge_skips"], {})
+        self.assertIsNone(response.json()["penalty_until"])
+        self.assertEqual(response.json()["challenge_scores"], {})
+        self.checkout()
+
+    def test_penalties_queue_one_after_another(self):
+        from api.services.station_service import _penalty_until
+        start = timezone.now()
+        until = _penalty_until({
+            "c1": {"at": start.isoformat(), "minutes": 35},
+            "c2": {"at": (start + timedelta(minutes=5)).isoformat(), "minutes": 15},
+        })
+        self.assertEqual(until, start + timedelta(minutes=50))
+
+    def test_skip_needs_an_active_visit_and_a_real_challenge(self):
+        self.assertEqual(self.skip("zz").status_code, 404)
+        self.checkout()
+        self.assertEqual(self.skip("c1").status_code, 409)
+
+    def test_other_coop_cannot_skip(self):
+        stranger = Account.objects.create(username="other", email="o@example.com", role="collab")
+        self.assertEqual(self.skip("c1", actor=stranger).status_code, 403)
+
+    def test_team_sees_penalty_and_stay_limit_but_no_points(self):
+        self.station.max_stay_minutes = 90
+        self.station.save()
+        self.skip("c1")
+        state = self.request_as("get", f"/api/my-team/station-state?station_id={self.station.id}").json()
+        self.assertEqual(state["session"]["max_stay_minutes"], 90)
+        self.assertIsNotNone(state["session"]["penalty_until"])
+        self.assertNotIn("challenge_scores", json.dumps(state))
+
+    def test_stay_limit_is_saved_and_cleared(self):
+        url = f"/api/stations/{self.station.id}"
+        response = self.request_as("patch", url, {"max_stay_minutes": 90}, self.master)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["max_stay_minutes"], 90)
+        self.assertEqual(self.request_as("patch", url, {"max_stay_minutes": 0}, self.master).status_code, 400)
+        response = self.request_as("patch", url, {"max_stay_minutes": None}, self.master)
+        self.assertIsNone(response.json()["max_stay_minutes"])

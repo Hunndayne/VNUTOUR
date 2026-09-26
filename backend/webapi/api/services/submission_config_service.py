@@ -65,6 +65,8 @@ ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT, TYPE_RATING, TYPE_CHALLENGE
 FORM_ITEM_TYPES = (TYPE_TEXT, TYPE_QUIZ, TYPE_ATTACHMENT, TYPE_RATING)
 
 CHALLENGE_DEFAULT_MAX_POINTS = 10
+# Thể lệ: skipping a challenge costs its allotted time + 15 minutes.
+CHALLENGE_SKIP_EXTRA_MINUTES = 15
 
 # A rating item is a star scale 1..scale — survey feedback, never graded.
 RATING_MIN_SCALE = 2
@@ -174,6 +176,9 @@ def _challenge_item(raw: dict, index: int) -> dict:
         "title": _clean_str(raw.get("title") or raw.get("question")),
         "description": _clean_str(raw.get("description")),
         "maxPoints": _positive_int(raw.get("maxPoints"), CHALLENGE_DEFAULT_MAX_POINTS),
+        # Time allotted to the challenge; skipping it costs this plus
+        # CHALLENGE_SKIP_EXTRA_MINUTES before the team may check out.
+        "durationMinutes": _positive_int(raw.get("durationMinutes"), 0, minimum=0),
     }
 
 
