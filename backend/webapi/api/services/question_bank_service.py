@@ -1,6 +1,7 @@
 from typing import Any
 from django.db import transaction
 from api.models import QuestionBankItem, Station
+from api.services.read_mostly_cache import schedule_station_config_invalidation
 
 @transaction.atomic
 def import_questions(sub_event_id: int, items: list[dict[str, Any]], replace=False) -> dict[str, int]:
@@ -64,6 +65,10 @@ def import_questions(sub_event_id: int, items: list[dict[str, Any]], replace=Fal
         clear_questions(sub_event_id)
     if to_create:
         QuestionBankItem.objects.bulk_create(to_create)
+    # Question-bank writes are invalidated explicitly: bulk_create emits no
+    # signals, while a replace/delete can affect many rows and must not enqueue
+    # one Redis callback per question.
+    schedule_station_config_invalidation(sub_event_id)
 
     return {"imported": len(to_create)}
 
@@ -80,6 +85,7 @@ def clear_questions(sub_event_id: int) -> None:
             config["bank"]["itemIds"] = []
             station.submission_config = config
             station.save(update_fields=["submission_config"])
+    schedule_station_config_invalidation(sub_event_id)
 
 def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionBankItem:
     """Update one question bank item. Raises QuestionBankItem.DoesNotExist if not
@@ -136,6 +142,7 @@ def update_question(sub_event_id: int, item_id: int, **fields: Any) -> QuestionB
             raise ValueError("correct_option_out_of_range")
 
     item.save()
+    schedule_station_config_invalidation(sub_event_id)
     return item
 
 
@@ -144,6 +151,7 @@ def delete_question(sub_event_id: int, item_id: int) -> None:
     found or not belonging to sub_event_id."""
     item = QuestionBankItem.objects.get(id=item_id, sub_event_id=sub_event_id)
     item.delete()
+    schedule_station_config_invalidation(sub_event_id)
 
 
 def effective_quiz_items(station: Station) -> list[dict[str, Any]]:

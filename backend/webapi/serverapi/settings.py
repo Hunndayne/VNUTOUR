@@ -255,6 +255,30 @@ COOP_REALTIME_CACHE_TTL_MAX_SECONDS = int(
     os.getenv("COOP_REALTIME_CACHE_TTL_MAX_SECONDS", "5")
 )
 
+# Read-mostly configuration payloads use the same shared Redis backend but a
+# separate, versioned key namespace.  These entries are disposable: every read
+# falls back to PostgreSQL when Redis is unavailable, and successful database
+# writes evict affected keys after commit.
+READ_MOSTLY_CACHE_ENABLED = os.getenv("READ_MOSTLY_CACHE_ENABLED", "1") == "1"
+SITE_CONFIG_CACHE_TTL_SECONDS = int(
+    os.getenv("SITE_CONFIG_CACHE_TTL_SECONDS", "30")
+)
+PROGRAM_CACHE_TTL_SECONDS = int(
+    os.getenv("PROGRAM_CACHE_TTL_SECONDS", "300")
+)
+STATION_CONFIG_CACHE_TTL_SECONDS = int(
+    os.getenv("STATION_CONFIG_CACHE_TTL_SECONDS", "300")
+)
+READ_MOSTLY_CACHE_TTL_JITTER_PERCENT = int(
+    os.getenv("READ_MOSTLY_CACHE_TTL_JITTER_PERCENT", "10")
+)
+READ_MOSTLY_CACHE_LOCK_SECONDS = float(
+    os.getenv("READ_MOSTLY_CACHE_LOCK_SECONDS", "5")
+)
+READ_MOSTLY_CACHE_LOCK_WAIT_SECONDS = float(
+    os.getenv("READ_MOSTLY_CACHE_LOCK_WAIT_SECONDS", "0.1")
+)
+
 # Production transport/browser security
 SECURE_SSL_REDIRECT = os.getenv(
     "DJANGO_SECURE_SSL_REDIRECT",

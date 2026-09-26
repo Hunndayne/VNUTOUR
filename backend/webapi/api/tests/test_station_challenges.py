@@ -8,6 +8,8 @@ import json
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+from django.core.cache import cache
+from django.test import override_settings
 from django.utils import timezone
 
 from api.models import (
@@ -229,6 +231,34 @@ class ChallengeStationConfigTests(ChallengeApiTestBase):
         self.assertEqual(station["challenges"][0]["title"], SECRET_TITLE)
         self.assertNotIn(SECRET_TITLE, json.dumps(station["submission_config"], ensure_ascii=False))
         self.assertTrue(station["show_score_to_participants"])
+
+    @override_settings(CACHES={"default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "station-challenge-cache-tests",
+    }})
+    def test_coop_station_list_cache_follows_challenge_and_score_edits(self):
+        cache.clear()
+        url = f"/api/program/phases/{self.phase.key}/sub-events/{self.event.id}/stations"
+
+        def coop_station():
+            response = self.request_as("get", url, actor=self.coop)
+            return next(s for s in response.json()["stations"] if s["id"] == self.station.id)
+
+        self.assertEqual(coop_station()["challenges"][0]["title"], SECRET_TITLE)
+
+        renamed = _config()
+        renamed["items"][1]["title"] = "Nhảy dây tập thể"
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.request_as("patch", f"/api/stations/{self.station.id}", {
+                "submission_config": renamed,
+                "show_score_to_participants": False,
+            }, self.master)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        station = coop_station()
+        self.assertEqual(station["challenges"][0]["title"], "Nhảy dây tập thể")
+        self.assertFalse(station["show_score_to_participants"])
+        cache.clear()
 
     def test_show_score_switch_is_saved(self):
         response = self.request_as("patch", f"/api/stations/{self.station.id}",
