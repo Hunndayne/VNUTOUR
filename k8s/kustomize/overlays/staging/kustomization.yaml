@@ -29,50 +29,18 @@ components:
 #
 # PHOTO_DRIVE_SERVICE_EMAIL is the key's client_email, not a secret: admins see
 # it on the album form so they know which address to share a Drive folder with.
+#
+# PHOTO_SEARCH_RATE_LIMIT / PHOTO_SEARCH_PAGE_RATE_LIMIT: staging is for testing
+# the feature, not for defending it, so the component's 10-per-10-minutes limit
+# is lifted here. Prod keeps the real limits.
+#
+# Redis: staging stays minimal and runs no Redis pod. The base Service,
+# Deployment and NetworkPolicy are deleted, and REDIS_HOST is removed from
+# backend-config so settings.py falls back to the PostgreSQL DatabaseCache for
+# both the login rate limiter and the Coop realtime cache.
+#
 # Keep comments OUT of the patch bodies below — `kustomize edit` (CI tag bumps)
 # hoists them to the top of the file and duplicates them on every run.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
 patches:
 - path: photo-ai-staging.yaml
   target:
@@ -89,9 +57,6 @@ patches:
     - op: add
       path: /data/PHOTO_DRIVE_SERVICE_EMAIL
       value: vnutour@dotted-guru-459523-v9.iam.gserviceaccount.com
-    # Staging is for testing the feature, not for defending it: the search
-    # rate limit (10 per 10 minutes per IP in the component) gets in the way.
-    # Prod keeps the real limits.
     - op: add
       path: /data/PHOTO_SEARCH_RATE_LIMIT
       value: "100000"
@@ -101,6 +66,8 @@ patches:
     - op: add
       path: /data/GOOGLE_CLIENT_ID
       value: 447318360733-3il6f01373ee9gk6mkge6mhcl49uhb0d.apps.googleusercontent.com
+    - op: remove
+      path: /data/REDIS_HOST
   target:
     kind: ConfigMap
     name: backend-config
@@ -114,6 +81,27 @@ patches:
   target:
     kind: ConfigMap
     name: photo-ai-config
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: redis
+      namespace: vnutour-staging
+- patch: |-
+    $patch: delete
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: redis
+      namespace: vnutour-staging
+- patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: redis
+      namespace: vnutour-staging
 
 # Image tags are updated automatically by the CI pipeline after a successful
 # image push to GHCR. Do NOT edit newTag manually.

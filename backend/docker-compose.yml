@@ -13,7 +13,7 @@ x-backend-common: &backend-common
     DB_HOST: postgres
     DB_PORT: "5432"
     REDIS_HOST: redis
-    REDIS_PORT: "6379"
+    REDIS_TCP_PORT: "6379"
     REDIS_DB: "0"
     FFMPEG_EXE: ffmpeg
   init: true

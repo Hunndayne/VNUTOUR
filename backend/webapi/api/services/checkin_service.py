@@ -17,6 +17,11 @@ from api.models import (
 from api.services.attendance_service import recorded_checkins, resolve_personal_qr, team_eligible_for_event
 from api.services.program_service import get_current_sub_event
 from api.services import scan_token_service
+from api.services.coop_realtime_cache import (
+    checkin_stats_key,
+    get_or_load,
+    schedule_checkin_invalidation,
+)
 
 
 
@@ -86,6 +91,7 @@ def scan_event_checkin(
             existing.created_at = datetime.now(timezone.utc)
             existing.save(update_fields=["meta", "scanner", "created_at", "updated_at"])
             scan_token_service.consume(qr_token, team)
+            schedule_checkin_invalidation(sub_event.id, phase.key)
             return existing, None
         try:
             with transaction.atomic():
@@ -94,6 +100,7 @@ def scan_event_checkin(
                     status=EventCheckIn.STATUS_ACTIVE, ip=ip, user_agent=user_agent,
                 )
                 scan_token_service.consume(qr_token, team)
+                schedule_checkin_invalidation(sub_event.id, phase.key)
                 return checkin, None
         except IntegrityError:
             return None, "already_checked_in"
@@ -117,6 +124,7 @@ def scan_event_checkin(
             attendance = EventAttendance.objects.create(
                 checkin=checkin, participant=membership.participant, scanner=scanner,
             )
+            schedule_checkin_invalidation(sub_event.id, phase.key)
             return attendance, None
     except IntegrityError:
         return None, "already_checked_in"
@@ -187,6 +195,12 @@ def list_event_checkins(
 
 
 def get_checkin_stats(event_id: int | None = None, phase_key: str | None = None) -> dict:
+    """Get short-lived shared check-in stats for the Coop dashboard."""
+    key = checkin_stats_key(event_id, phase_key)
+    return get_or_load(key, lambda: _load_checkin_stats(event_id, phase_key))
+
+
+def _load_checkin_stats(event_id: int | None = None, phase_key: str | None = None) -> dict:
     """Get check-in stats for an event or globally."""
     phase = None
     if phase_key:
@@ -260,12 +274,19 @@ def get_checkin_stats(event_id: int | None = None, phase_key: str | None = None)
 
 def reset_checkin(checkin_id: int) -> bool:
     """Revert a check-in record."""
+    target = EventCheckIn.objects.filter(
+        id=checkin_id, status=EventCheckIn.STATUS_ACTIVE,
+    ).values("sub_event_id", "phase__key").first()
+    if target is None:
+        return False
     updated = EventCheckIn.objects.filter(
         id=checkin_id, status=EventCheckIn.STATUS_ACTIVE,
     ).update(
         status=EventCheckIn.STATUS_REVERTED,
         updated_at=datetime.now(timezone.utc),
     )
+    if updated:
+        schedule_checkin_invalidation(target["sub_event_id"], target["phase__key"])
     return updated > 0
 
 
@@ -320,17 +341,27 @@ def checkout_event(
         checkin.checkout_station = station
         checkin.save(update_fields=["checked_out_at", "checked_out_by", "checkout_station", "updated_at"])
         scan_token_service.consume(qr_token, team)
+        schedule_checkin_invalidation(sub_event.id, phase.key)
     return checkin, None
 
 
 def undo_checkout(checkin_id: int) -> bool:
     """Clear a mistaken checkout; the team may play again."""
+    target = EventCheckIn.objects.filter(
+        id=checkin_id,
+        status=EventCheckIn.STATUS_ACTIVE,
+        checked_out_at__isnull=False,
+    ).values("sub_event_id", "phase__key").first()
+    if target is None:
+        return False
     updated = EventCheckIn.objects.filter(
         id=checkin_id, status=EventCheckIn.STATUS_ACTIVE, checked_out_at__isnull=False,
     ).update(
         checked_out_at=None, checked_out_by=None, checkout_station=None,
         updated_at=datetime.now(timezone.utc),
     )
+    if updated:
+        schedule_checkin_invalidation(target["sub_event_id"], target["phase__key"])
     return updated > 0
 
 

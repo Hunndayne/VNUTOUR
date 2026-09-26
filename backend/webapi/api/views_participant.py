@@ -23,6 +23,7 @@ from api.services.registration_service import (
 from api.services.program_service import get_current_sub_event
 from api.services.submission_review_service import marked_quiz_result
 from api.services.checkin_qr_service import team_qr_visible
+from api.services.coop_realtime_cache import schedule_station_invalidation
 
 from api.services.station_service import (
     get_event_replay_state, set_session_score, set_submission_score,
@@ -2113,6 +2114,7 @@ def my_team_form_submit_view(request: HttpRequest, station_id: int):
             exited_at=timezone.now(),
             exited_by=acc,
         )
+        schedule_station_invalidation(station.sub_event_id, station.id)
 
     return JsonResponse({
         "id": submission.id,

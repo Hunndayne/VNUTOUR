@@ -92,7 +92,9 @@ patches:
   # asks for 2 CPU). The default 25% surge needs room for a 4th backend pod
   # (250m) that the node cannot schedule, and 25% unavailable rounds down to 0
   # with 3 replicas, so every image bump deadlocked with mixed versions
-  # running. Replace pods one at a time instead of surging.
+  # running. Replace pods one at a time instead of surging, and run 2 serving
+  # replicas instead of prod-config's 3: the standby carries no traffic until
+  # a failover, and 250m back on this node leaves headroom for everything else.
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -100,6 +102,7 @@ patches:
         name: backend
         namespace: vnutour-staging
       spec:
+        replicas: 2
         strategy:
           type: RollingUpdate
           rollingUpdate:

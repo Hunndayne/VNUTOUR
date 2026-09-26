@@ -165,9 +165,20 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security tab
         if: always() # upload the report even if the scan above failed the job
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results-vnutour-backend-${{ steps.meta.outputs.sha }}.sarif
+
+      # Keep the raw report downloadable from the workflow run, independently
+      # of GitHub Code Scanning permissions and branch filters.
+      - name: Upload raw Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-backend-sarif-${{ steps.meta.outputs.sha }}
+          path: trivy-results-vnutour-backend-${{ steps.meta.outputs.sha }}.sarif
+          if-no-files-found: error
+          retention-days: 3
 
       # Only runs if the scan step above passed - a failed scan stops the job here and this step (and everything after it) is skipped.
       - name: Push image
@@ -240,10 +251,19 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results-vnutour-photo-ai-${{ steps.meta.outputs.sha }}.sarif
           category: photo-ai
+
+      - name: Upload raw Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-photo-ai-sarif-${{ steps.meta.outputs.sha }}
+          path: trivy-results-vnutour-photo-ai-${{ steps.meta.outputs.sha }}.sarif
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Push image
         uses: docker/build-push-action@v6

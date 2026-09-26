@@ -99,8 +99,7 @@ spec:
               drop: ["ALL"]
 
 ---
-# Only the application backend may reach Redis. The Service remains ClusterIP,
-# and no Redis port is exposed through Ingress or a node port.
+# Only the application backend may reach Redis. The Service remains ClusterIP, and no Redis port is exposed through Ingress or a node port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
