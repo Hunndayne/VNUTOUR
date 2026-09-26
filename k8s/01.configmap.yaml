@@ -30,7 +30,7 @@ data:
   # Shared cache for login/register rate-limit counters. REDIS_PASSWORD is
   # supplied by backend-secret.
   REDIS_HOST: "redis"
-  REDIS_PORT: "6379"
+  REDIS_TCP_PORT: "6379"
   REDIS_DB: "0"
   REDIS_CONNECT_TIMEOUT_SECONDS: "0.5"
   REDIS_TIMEOUT_SECONDS: "0.5"

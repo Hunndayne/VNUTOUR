@@ -199,7 +199,10 @@ TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "0") == "1"
 # the existing database cache so they do not require a Redis process.
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
 REDIS_HOST = os.getenv("REDIS_HOST", "").strip()
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+# Do not use REDIS_PORT for application configuration. Kubernetes reserves that
+# name for the Service link URI (for example tcp://10.43.0.10:6379), which is
+# not an integer. REDIS_TCP_PORT remains stable across Docker and Kubernetes.
+REDIS_PORT = int(os.getenv("REDIS_TCP_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 
