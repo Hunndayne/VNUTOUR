@@ -9,6 +9,8 @@ import StationAssignmentsPanel from './StationAssignmentsPanel.jsx'
 import CheckinQrToggle from './CheckinQrToggle.jsx'
 import { AnswerReview } from './QuestionReview.jsx'
 import { useItemMarks } from './itemMarks.js'
+import ChallengeScores from './ChallengeScores.jsx'
+import { challengeInitialValues, challengePayload, challengeSum, challengeValuesValid } from './challengeScores.js'
 
 const LEGACY_STATIONS_STORAGE_KEY = 'vnutour:admin:stations-by-phase'
 
@@ -3225,8 +3227,57 @@ function StationSubmissionDetailView({ submission, onGrade, busy }) {
   )
 }
 
+// Một lượt tại trạm chỉ có điểm thử thách (không có bài nộp form): xem và sửa
+// điểm từng thử thách qua cùng API chấm lượt của coop.
+function ChallengeVisitDetailView({ visit, onSave, busy }) {
+  const challenges = visit.challenges || []
+  const [values, setValues] = useState(() => challengeInitialValues(challenges))
+  const valid = challengeValuesValid(challenges, values)
+  const total = (visit.form_score || 0) + challengeSum(challenges, values)
+
+  return (
+    <div className={`${CARD} px-5 py-5`}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge {...challengeVisitStatus(visit)} />
+      </div>
+      <p className="mt-3 text-sm text-ink/50">
+        Vào trạm: {visit.entered_at ? formatDateTime(visit.entered_at) : '—'}
+        {' · '}Rời trạm: {visit.exited_at ? formatDateTime(visit.exited_at) : 'Chưa rời trạm'}
+        {visit.exited_by ? ` · Coop: ${visit.exited_by}` : ''}
+      </p>
+
+      <div className="mt-6 space-y-2 border-t border-stone/40 pt-4">
+        <p className="font-mono text-xs uppercase tracking-[0.2em] text-ink/40">Thử thách (coop chấm)</p>
+        <ChallengeScores challenges={challenges} values={values} onChange={setValues} disabled={busy} />
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+          <p className="text-sm text-ink/60">
+            Điểm trạm: <span className="font-mono font-semibold text-ink">{total}</span>
+            {visit.form_score ? <span className="text-ink/45"> (gồm {visit.form_score} điểm bài làm)</span> : null}
+          </p>
+          <button
+            type="button"
+            onClick={() => onSave(visit.session_id, { challenges: challengePayload(challenges, values) })}
+            disabled={busy || !valid}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone bg-white px-4 py-2 text-sm font-semibold text-ink/70 transition hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Lưu điểm thử thách
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function challengeVisitStatus(visit) {
+  if (visit.graded) return { label: 'Đã chấm', cls: 'bg-trail/12 text-trail' }
+  if (visit.status === 'active') return { label: 'Đang ở trạm', cls: 'bg-gold/15 text-[#9A6B12]' }
+  return { label: 'Chưa chấm đủ', cls: 'bg-gold/15 text-[#9A6B12]' }
+}
+
 function StationSubmissionsView({ stationId, stationName, stationKind, eventId, onBack }) {
   const [submissions, setSubmissions] = useState([])
+  const [challengeVisits, setChallengeVisits] = useState([])
+  const [selectedVisitId, setSelectedVisitId] = useState(null)
   const [stationLabel, setStationLabel] = useState(stationName || '')
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState('')
@@ -3240,6 +3291,7 @@ function StationSubmissionsView({ stationId, stationName, stationKind, eventId, 
       setApiError('')
       const payload = await apiRequest(`/stations/${stationId}/submissions`)
       setSubmissions(payload.submissions || [])
+      setChallengeVisits(payload.challenge_visits || [])
       setStationLabel(payload.station_name || stationName || '')
     } catch (error) {
       if (error?.status === 401) {
@@ -3293,7 +3345,53 @@ function StationSubmissionsView({ stationId, stationName, stationKind, eventId, 
     }
   }
 
+  const handleSaveVisit = async (sessionId, body) => {
+    const key = `visit-${sessionId}`
+    try {
+      setBusyId(key)
+      setApiError('')
+      await apiRequest(`/station-sessions/${sessionId}/score`, { method: 'PATCH', body })
+      await load()
+    } catch (error) {
+      if (error?.status === 401) {
+        logoutAndRedirect('/')
+        return
+      }
+      setApiError(explainApiError(error))
+    } finally {
+      setBusyId('')
+    }
+  }
+
   const selectedSubmission = submissions.find(s => s.id === selectedSubmissionId)
+  const selectedVisit = challengeVisits.find(v => v.session_id === selectedVisitId)
+
+  if (selectedVisit) {
+    return (
+      <div className="space-y-4">
+        <StationErrorBanner message={apiError} />
+        <div className={`${CARD} px-5 py-4`}>
+          <button
+            type="button"
+            onClick={() => setSelectedVisitId(null)}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/50 transition hover:text-ink"
+          >
+            <Icon name="chevronR" className="h-3.5 w-3.5 rotate-180" />
+            Danh sách bài nộp
+          </button>
+          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">{stationLabel}</p>
+          <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{selectedVisit.team_name}</h2>
+          <p className="mt-1 text-sm text-ink/45">Mã đội: {selectedVisit.team_code}</p>
+        </div>
+        <ChallengeVisitDetailView
+          key={`${selectedVisit.session_id}-${JSON.stringify(selectedVisit.challenges.map(c => c.points))}`}
+          visit={selectedVisit}
+          onSave={handleSaveVisit}
+          busy={busyId === `visit-${selectedVisit.session_id}`}
+        />
+      </div>
+    )
+  }
 
   if (selectedSubmission) {
     return (
@@ -3355,7 +3453,10 @@ function StationSubmissionsView({ stationId, stationName, stationKind, eventId, 
             <StationBackLink onClick={onBack} />
             <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink/40">Bài nộp trạm</p>
             <h2 className="mt-1 truncate font-display text-2xl font-bold text-ink">{stationLabel}</h2>
-            <p className="mt-1 text-sm text-ink/45">{submissions.length} bài nộp</p>
+            <p className="mt-1 text-sm text-ink/45">
+              {submissions.length} bài nộp
+              {challengeVisits.length > 0 ? ` · ${challengeVisits.length} lượt chấm thử thách` : ''}
+            </p>
             {ratingSummary.map(row => (
               <p key={row.id} className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-ink/60">
                 <Icon name="star" className="h-4 w-4 text-gold" />
@@ -3372,8 +3473,36 @@ function StationSubmissionsView({ stationId, stationName, stationKind, eventId, 
           <div className={`${CARD} px-4 py-10 text-center text-sm text-ink/40`}>
             Đang tải bài nộp...
           </div>
-        ) : submissions.length > 0 ? (
+        ) : submissions.length > 0 || challengeVisits.length > 0 ? (
           <div className="space-y-3">
+            {challengeVisits.map(visit => {
+              const points = visit.challenges.map(item => item.points)
+              const graded = points.filter(value => value != null).length
+              return (
+                <div
+                  key={`visit-${visit.session_id}`}
+                  className={`${CARD} cursor-pointer px-5 py-4 transition hover:border-stone/80 hover:bg-paper group`}
+                  onClick={() => setSelectedVisitId(visit.session_id)}
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-base font-semibold text-ink">{visit.team_name}</p>
+                        <Badge {...challengeVisitStatus(visit)} />
+                      </div>
+                      <p className="mt-1 text-sm text-ink/50">
+                        {visit.team_code} · {formatDateTime(visit.exited_at || visit.entered_at)}
+                        {` · Thử thách ${graded}/${points.length} · Điểm: ${visit.score}`}
+                        {visit.exited_by ? ` · ${visit.exited_by}` : ''}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-ink/20 transition group-hover:text-ink/60">
+                      <Icon name="chevronR" className="h-5 w-5" />
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
             {submissions.map(submission => {
               const statusMeta = submission.status === 'graded'
                 ? { label: 'Đã chấm', cls: 'bg-trail/12 text-trail' }

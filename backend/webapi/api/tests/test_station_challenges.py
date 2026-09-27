@@ -192,6 +192,30 @@ class ChallengeScoringTests(ChallengeApiTestBase):
         self.assertEqual(response.json()["score"], 15)
         self.assertEqual(self.entry_points(), 15)
 
+    def test_challenge_only_visit_is_listed_for_staff(self):
+        self.station.submission_config = _config(with_quiz=False)
+        self.station.save()
+        self.checkout()
+        self.grade({"challenges": {"c1": 10, "c2": 5}})
+        admin = Account.objects.create(username="admin", email="a@example.com", role="admin")
+        data = self.request_as("get", f"/api/stations/{self.station.id}/submissions", actor=admin).json()
+        self.assertEqual(data["submissions"], [])
+        [visit] = data["challenge_visits"]
+        self.assertEqual(visit["session_id"], self.session.id)
+        self.assertEqual(visit["team_code"], self.team.code)
+        self.assertEqual(visit["score"], 15)
+        self.assertTrue(visit["graded"])
+        self.assertEqual([c["points"] for c in visit["challenges"]], [10, 5])
+
+    def test_visit_with_a_form_is_not_listed_twice(self):
+        submit = self._submit({"response_payload": {"quiz": [{"id": "q1", "selectedOption": 0}],
+                                                    "form": [{"id": "q2", "value": "x"}]}})
+        self.assertEqual(submit.status_code, 201, submit.content)
+        self.checkout()
+        data = self.request_as("get", f"/api/stations/{self.station.id}/submissions", actor=self.coop).json()
+        self.assertEqual(len(data["submissions"]), 1)
+        self.assertEqual(data["challenge_visits"], [])
+
     def test_missing_both_parts_is_rejected(self):
         self.checkout()
         self.assertEqual(self.grade({}).status_code, 400)
