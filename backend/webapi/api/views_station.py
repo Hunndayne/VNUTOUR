@@ -337,15 +337,57 @@ def station_submissions_view(request: HttpRequest, station_id: int):
     ).exists():
         return JsonResponse({"error": "not_assigned_to_station"}, status=403)
 
-    submissions = StationSubmission.objects.select_related("team", "graded_by", "station__sub_event", "participant", "station_session").filter(
+    submissions = list(StationSubmission.objects.select_related("team", "graded_by", "station__sub_event", "participant", "station_session").filter(
         station=station,
-    ).order_by(F("submitted_at").desc(nulls_last=True))
+    ).order_by(F("submitted_at").desc(nulls_last=True)))
 
     return JsonResponse({
         "station_id": station.id,
         "station_name": station.name,
         "submissions": [_serialize_submission(sub) for sub in submissions],
+        "challenge_visits": _challenge_visits(station, submissions),
     })
+
+
+def _challenge_visits(station: Station, submissions: list) -> list[dict]:
+    """Visits whose only record is the coop's challenge grades.
+
+    A challenge-only station (or a team that skipped the form) never writes a
+    StationSubmission, so without this the staff view shows nothing even
+    though the visit was scored. Visits that do carry a form submission are
+    left out: their challenges already ride along on that submission.
+    """
+    if not has_challenges(station.submission_config):
+        return []
+    with_form = {
+        sub.station_session_id for sub in submissions
+        if sub.station_session_id and sub.status in (StationSubmission.STATUS_SUBMITTED, StationSubmission.STATUS_GRADED)
+    }
+    sessions = (
+        StationSession.objects.select_related("team", "exited_by")
+        .filter(station=station)
+        .exclude(status=StationSession.STATUS_CANCELLED)
+        .exclude(id__in=with_form)
+        .order_by("-entered_at")
+    )
+    visits = []
+    for session in sessions:
+        challenges = challenge_breakdown(session, station)
+        visits.append({
+            "session_id": session.id,
+            "team_code": session.team.code,
+            "team_name": session.team.name,
+            "status": session.status,
+            "outcome": session.outcome,
+            "score": session.score,
+            "form_score": session.form_score,
+            "entered_at": session.entered_at.isoformat() if session.entered_at else None,
+            "exited_at": session.exited_at.isoformat() if session.exited_at else None,
+            "exited_by": session.exited_by.username if session.exited_by else None,
+            "graded": bool(challenges) and all(item["points"] is not None for item in challenges),
+            "challenges": challenges,
+        })
+    return visits
 
 
 def _penalty_response(session: StationSession) -> JsonResponse:
