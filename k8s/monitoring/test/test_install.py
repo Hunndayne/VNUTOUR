@@ -196,6 +196,10 @@ esac
             self.assertIn('prometheus.io/scrape: "true"', manifest)
             self.assertIn('prometheus.io/port: "8000"', manifest)
             self.assertIn("prometheus.io/path: /metrics", manifest)
+            self.assertRegex(
+                manifest,
+                r"name: DJANGO_POD_IP\s+valueFrom:\s+fieldRef:\s+fieldPath: status\.podIP",
+            )
 
         frontend = deployment("frontend")
         self.assertIn('prometheus.io/port: "9113"', frontend)
@@ -220,6 +224,12 @@ esac
             expressions = " ".join(target["expr"] for target in panel["targets"])
             for metric in metrics:
                 self.assertIn(metric, expressions)
+        replicas = next(
+            panel for panel in dashboard["panels"]
+            if panel.get("title") == "Replicas: desired vs available"
+        )
+        for target in replicas["targets"]:
+            self.assertIn('exported_namespace="vnutour"', target["expr"])
 
         kube_state = (root / "k8s" / "12.kube-state-metrics.yaml").read_text()
         self.assertIn('prometheus.io/port: "8080"', kube_state)
