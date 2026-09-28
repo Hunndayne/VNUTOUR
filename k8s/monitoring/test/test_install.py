@@ -1,10 +1,12 @@
 """Safety tests for monitoring install decisions; no cluster or network is used."""
 import json
 import os
-from pathlib import Path
+import re
+import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 
 INSTALL = Path(__file__).resolve().parents[1] / "install" / "monitoring-install.sh"
@@ -144,7 +146,6 @@ esac
             "Replicas: desired vs available",
             "CPU cores per pod",
             "Memory working set per pod",
-            "Postgres connections by state",
             "Nginx requests/sec (edge)",
         }
 
@@ -152,7 +153,8 @@ esac
         self.assertEqual(homelab["uid"], "k3s-homelab")
         self.assertTrue(vps_titles.issubset(homelab_titles))
         self.assertTrue(workload_titles.issubset(homelab_titles))
-        self.assertEqual(len(homelab["panels"]), len(vps["panels"]) + 9)
+        self.assertNotIn("Postgres connections by state", homelab_titles)
+        self.assertEqual(len(homelab["panels"]), len(vps["panels"]) + 8)
         for panel in homelab["panels"]:
             if panel.get("type") != "row":
                 self.assertEqual(panel.get("datasource"), "${DS_PROMETHEUS}")
@@ -164,6 +166,70 @@ esac
         self.assertIn("uid: prometheus-homelab", values)
         self.assertIn("url: http://192.168.1.110:30900", values)
         self.assertIn("isDefault: false", values)
+
+    def test_homelab_prod_renders_workload_metric_producers(self):
+        root = INSTALL_DIR.parents[2]
+        kustomize = shutil.which("kustomize")
+        command = [kustomize, "build"] if kustomize else ["kubectl", "kustomize"]
+
+        def render(overlay):
+            path = root / "k8s" / "kustomize" / "overlays" / overlay
+            return subprocess.run(
+                [*command, str(path)], check=True, capture_output=True, text=True
+            ).stdout
+
+        prod = render("prod")
+        documents = prod.split("\n---\n")
+
+        def deployment(name):
+            return next(
+                document for document in documents
+                if re.search(r"(?m)^kind: Deployment$", document)
+                and re.search(
+                    rf"(?m)^  name: {re.escape(name)}$",
+                    document.split("\nspec:", 1)[0],
+                )
+            )
+
+        for name in ("backend", "backend-ops"):
+            manifest = deployment(name)
+            self.assertIn('prometheus.io/scrape: "true"', manifest)
+            self.assertIn('prometheus.io/port: "8000"', manifest)
+            self.assertIn("prometheus.io/path: /metrics", manifest)
+
+        frontend = deployment("frontend")
+        self.assertIn('prometheus.io/port: "9113"', frontend)
+        self.assertIn("image: nginx/nginx-prometheus-exporter:1.5.3", frontend)
+        self.assertIn("--nginx.scrape-uri=http://127.0.0.1/nginx_status", frontend)
+        self.assertNotIn("postgres-exporter", prod)
+
+        dashboard = json.loads(
+            (root / "k8s" / "monitoring" / "dashboard" / "homelab_k3s_dashboard.json").read_text()
+        )
+        metric_contract = {
+            "API requests/sec by view": ("django_http_requests_total_by_view_transport_method_total",),
+            "API latency p95 / p50": ("django_http_requests_latency_seconds_by_view_method_bucket",),
+            "Responses by status": ("django_http_responses_total_by_status_total",),
+            "Replicas: desired vs available": (
+                "kube_deployment_spec_replicas", "kube_deployment_status_replicas_available",
+            ),
+            "Nginx requests/sec (edge)": ("nginx_http_requests_total",),
+        }
+        for title, metrics in metric_contract.items():
+            panel = next(panel for panel in dashboard["panels"] if panel.get("title") == title)
+            expressions = " ".join(target["expr"] for target in panel["targets"])
+            for metric in metrics:
+                self.assertIn(metric, expressions)
+
+        kube_state = (root / "k8s" / "12.kube-state-metrics.yaml").read_text()
+        self.assertIn('prometheus.io/port: "8080"', kube_state)
+        self.assertIn('prometheus.io/scrape: "true"', kube_state)
+
+        for overlay in ("staging", "prod-standby"):
+            rendered = render(overlay)
+            self.assertNotIn("postgres-exporter", rendered)
+            self.assertNotIn("nginx-exporter", rendered)
+            self.assertNotIn("prometheus.io/scrape", rendered)
 
 if __name__ == "__main__":
     unittest.main()
