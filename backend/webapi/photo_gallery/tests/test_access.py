@@ -108,3 +108,39 @@ def test_collaborator_can_view_but_cannot_manage_albums():
     assert browser.get("/api/admin/photo-albums").status_code == 403
     assert browser.post(f"/api/admin/photo-albums/{album.pk}/import-drive", "{}", content_type="application/json").status_code == 403
     assert browser.get(f"/api/photo-albums/{album.pk}/photos").status_code == 404
+
+
+def hidden_album_with_match():
+    from photo_gallery.constants import MODEL_VERSION
+    from photo_gallery.models import Face, Photo
+    album = Album.objects.create(title="Hidden", status="hidden", folder_id="folder_123457")
+    photo = Photo.objects.create(album=album, drive_file_id="file_hidden_01", filename="a.png", source_revision="1:", status="ready", model_version=MODEL_VERSION)
+    Face.objects.create(photo=photo, ordinal=0, bbox=[0, 0, 1, 1], embedding=[1.0] + [0.0] * 127, model_version=MODEL_VERSION)
+    return album, photo
+
+
+@pytest.mark.parametrize("role, approval, sees_hidden", [
+    ("admin", None, True),
+    ("master_admin", None, True),
+    ("collab", None, True),
+    ("participant", "approved", False),
+])
+def test_hidden_albums_are_visible_to_staff_only(role, approval, sees_hidden):
+    cache.clear()
+    album, photo = hidden_album_with_match()
+    draft = Album.objects.create(title="Draft", status="draft", folder_id="folder_123458")
+    browser = Client(HTTP_AUTHORIZATION="Bearer " + generate_session(make_account(role, approval)))
+    listed = [a["id"] for a in browser.get("/api/photo-albums").json()["albums"]]
+    assert listed == ([album.pk] if sees_hidden else [])
+    assert browser.get(f"/api/photo-albums/{album.pk}/photos").status_code == (200 if sees_hidden else 404)
+    assert browser.get(f"/api/photo-albums/{draft.pk}/photos").status_code == 404
+    with patch("photo_gallery.views.embed_reference", return_value=[1.] + [0.] * 127):
+        search = browser.post("/api/photo-search", {"image": SimpleUploadedFile("face.png", b"reference", content_type="image/png")})
+    assert [p["id"] for p in search.json()["photos"]] == ([photo.pk] if sees_hidden else [])
+
+
+def test_staff_search_token_shows_participant_only_published_photos():
+    _album, photo = hidden_album_with_match()
+    result = SearchResult.objects.create(photo_ids=[photo.pk], expires_at=timezone.now() + timedelta(minutes=10))
+    browser = Client(HTTP_AUTHORIZATION="Bearer " + generate_session(make_account(approval="approved")))
+    assert browser.get(f"/api/photo-search/{result.token}").json()["photos"] == []

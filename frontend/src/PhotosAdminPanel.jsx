@@ -1060,7 +1060,7 @@ export default function PhotosAdminPanel() {
                 >
                   <option value="draft">Bản nháp (draft) — chỉ BTC thấy</option>
                   <option value="published">Đã xuất bản (published) — công khai trên gallery</option>
-                  <option value="hidden">Đang ẩn (hidden) — tạm ngưng hiển thị công khai</option>
+                  <option value="hidden">Đang ẩn (hidden) — chỉ admin và cộng tác viên thấy</option>
                 </select>
                 <p className="mt-1 text-[11px] text-ink/50">
                   Lưu ý: Hệ thống không tự động xuất bản sau khi import; BTC toàn quyền chọn thời điểm xuất bản.

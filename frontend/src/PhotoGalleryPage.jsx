@@ -608,6 +608,7 @@ export default function PhotoGalleryPage() {
                           }`}
                         >
                           {alb.title}
+                          {alb.status === 'hidden' && <span className={isSelected ? 'text-white/60' : 'text-ink/40'}> · Đang ẩn</span>}
                           {alb.counts?.total ? <span className={isSelected ? 'text-white/60' : 'text-ink/40'}> {alb.counts.total}</span> : null}
                         </button>
                       )
@@ -618,6 +619,11 @@ export default function PhotoGalleryPage() {
                 {currentAlbum && (
                   <>
                     <h2 className="font-display text-xl font-bold">{currentAlbum.title}</h2>
+                    {currentAlbum.status === 'hidden' && (
+                      <p className="mt-1 inline-block rounded bg-gold/15 px-2 py-0.5 text-xs font-semibold text-[#9A6B12]">
+                        Đang ẩn — chỉ admin và cộng tác viên thấy album này
+                      </p>
+                    )}
                     {currentAlbum.description && (
                       <p className="mt-1 text-sm text-ink/70">{currentAlbum.description}</p>
                     )}
