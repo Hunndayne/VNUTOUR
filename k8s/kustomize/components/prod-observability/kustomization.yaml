@@ -1,0 +1,56 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      kind: Deployment
+      name: backend|backend-ops
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          metadata:
+            annotations:
+              prometheus.io/scrape: "true"
+              prometheus.io/port: "8000"
+              prometheus.io/path: /metrics
+
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: frontend
+      spec:
+        template:
+          metadata:
+            annotations:
+              prometheus.io/scrape: "true"
+              prometheus.io/port: "9113"
+              prometheus.io/path: /metrics
+          spec:
+            containers:
+              - name: nginx-exporter
+                image: nginx/nginx-prometheus-exporter:1.5.3
+                args:
+                  - --nginx.scrape-uri=http://127.0.0.1/nginx_status
+                ports:
+                  - name: metrics
+                    containerPort: 9113
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 16Mi
+                  limits:
+                    cpu: 100m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop: [ALL]
