@@ -20,6 +20,44 @@ patches:
 
   - target:
       kind: Deployment
+      name: backend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backend
+                env:
+                  - name: DJANGO_POD_IP
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: status.podIP
+
+  - target:
+      kind: Deployment
+      name: backend-ops
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend-ops
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backend-ops
+                env:
+                  - name: DJANGO_POD_IP
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: status.podIP
+
+  - target:
+      kind: Deployment
       name: frontend
     patch: |-
       apiVersion: apps/v1

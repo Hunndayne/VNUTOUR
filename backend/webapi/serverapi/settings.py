@@ -1,4 +1,5 @@
 from pathlib import Path
+import ipaddress
 import os
 import sys
 from urllib.parse import quote
@@ -27,6 +28,10 @@ _allowed_hosts = os.getenv("DJANGO_ALLOWED_HOSTS", "" if IS_PRODUCTION else "*")
 ALLOWED_HOSTS = [host.strip() for host in _allowed_hosts.split(",") if host.strip()]
 if IS_PRODUCTION and not ALLOWED_HOSTS:
     raise RuntimeError("DJANGO_ALLOWED_HOSTS is required in production")
+_pod_ip = os.getenv("DJANGO_POD_IP")
+if _pod_ip:
+    # Prometheus scrapes each pod by IP; trust only this pod's validated address.
+    ALLOWED_HOSTS.append(str(ipaddress.ip_address(_pod_ip)))
 
 INSTALLED_APPS = [
     "django.contrib.admin",
