@@ -15,7 +15,7 @@ from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .drive import Drive, ID, MIMES, revision, safe_drive_link
+from .drive import Drive, FOLDER_MIME, ID, MIMES, revision, safe_drive_link
 from .constants import DB_ALIAS, MODEL_VERSION
 from .errors import GalleryError, LeaseLost, WorkerStopping
 from .imaging import read_image, preview
@@ -49,6 +49,7 @@ def queue_import(album_id):
     if album.import_status not in {"queued", "scanning"}:
         album.import_status, album.import_error = "queued", ""
         album.scan_id, album.page_token = uuid.uuid4(), ""
+        album.scan_folders, album.scan_folder_index = [], 0
         album.attempts, album.next_attempt = 0, None
         album.lease_token, album.lease_until = None, None
         album.save()
@@ -114,9 +115,16 @@ def claim_album():
 
 
 def scan_page(album, drive, *, heartbeat=None):
+    """List one page of one folder; subfolders join the queue breadth-first.
+
+    The album is complete only after every page of every queued folder."""
+    # An empty queue means a fresh scan: start from the album root.
+    folders = [list(f) for f in album.scan_folders] or [[album.folder_id, album.resource_key]]
+    index = min(album.scan_folder_index, len(folders) - 1)
+    folder_id, folder_key = folders[index]
     if heartbeat:
         heartbeat(force=True)
-    page = drive.list_page(album.folder_id, album.resource_key, album.page_token)
+    page = drive.list_page(folder_id, folder_key, album.page_token)
     if heartbeat:
         heartbeat(force=True)
     with transaction.atomic(using=DB_ALIAS):
@@ -127,7 +135,15 @@ def scan_page(album, drive, *, heartbeat=None):
             or current.lease_until < timezone.now()
         ):
             raise LeaseLost
+        known = {f[0] for f in folders}
         for item in page.get("files", []):
+            if item.get("mimeType") == FOLDER_MIME:
+                child, key = str(item.get("id") or ""), str(item.get("resourceKey") or "")
+                # `known` also stops a folder being walked twice.
+                if ID.fullmatch(child) and child not in known:
+                    folders.append([child, key if ID.fullmatch(key) else ""])
+                    known.add(child)
+                continue
             if item.get("mimeType") not in MIMES or not ID.fullmatch(str(item.get("id") or "")):
                 continue
             photo, created = Photo.objects.select_for_update().get_or_create(
@@ -144,6 +160,7 @@ def scan_page(album, drive, *, heartbeat=None):
                 invalidate(photo)
                 photo.status, photo.error, photo.attempts, photo.next_attempt = "pending", "", 0, None
             photo.source_revision = revision(item)
+            photo.folder_id = folder_id
             photo.source_checksum = item.get("md5Checksum", "")
             photo.resource_key = item.get("resourceKey", "")
             photo.filename = item.get("name", "")[:500]
@@ -156,12 +173,16 @@ def scan_page(album, drive, *, heartbeat=None):
             photo.save()
         current.page_token = page.get("nextPageToken", "")
         if not current.page_token:
+            index += 1
+        current.scan_folders, current.scan_folder_index = folders, index
+        if index >= len(folders):
             # Only a complete successful listing may remove missing sources.
             for photo in Photo.objects.select_for_update().filter(album=current).exclude(seen_scan_id=current.scan_id).exclude(status="removed"):
                 invalidate(photo)
                 photo.status, photo.error, photo.next_attempt = "failed", "source_unavailable", None
                 photo.save()
             current.import_status = "complete"
+            current.scan_folders, current.scan_folder_index = [], 0
         current.import_error = ""
         current.attempts = 0
         current.lease_token, current.lease_until, current.next_attempt = None, None, None

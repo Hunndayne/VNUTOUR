@@ -11,11 +11,15 @@ from .errors import GalleryError
 
 MAX_FACES = 256
 MAX_CANDIDATES = 2048
-# A reference photo must show one unmistakable face, so it keeps the strict
-# score. Album photos are indexed at the tunable, more sensitive threshold:
-# at 0.9 YuNet missed people who look down or stand at an angle — exactly the
-# candid shots an event album is full of.
-REFERENCE_SCORE = 0.9
+# Album photos and reference photos are detected at the same tunable
+# threshold: at 0.9 YuNet missed people who look down or turn their head, and
+# a reference stricter than the album rejected the very selfies whose faces
+# the album had indexed. Construction still needs a score; setScoreThreshold
+# replaces it before every detection.
+INITIAL_SCORE = 0.9
+# The lower threshold also finds bystanders behind a selfie. A reference stays
+# "one person" when its largest face is this many times the area of the next.
+REFERENCE_DOMINANCE = 4.0
 # Two tiles (or a tile and the whole-frame pass) can return boxes for the same
 # face that overlap too little for IoU-based NMS: a face cut by a tile edge
 # yields an offset partial box. Treat a box as a duplicate when its centre sits
@@ -46,7 +50,7 @@ class FaceEngine:
             cv2.setNumThreads(max(1, min(32, int(settings.PHOTO_AI_THREADS))))
             self.album_score = min(0.99, max(0.05, float(settings.PHOTO_DETECT_THRESHOLD)))
             self.detector = cv2.FaceDetectorYN.create(
-                str(root / DETECTOR_NAME), "", (320, 320), REFERENCE_SCORE, 0.3, MAX_CANDIDATES,
+                str(root / DETECTOR_NAME), "", (320, 320), INITIAL_SCORE, 0.3, MAX_CANDIDATES,
             )
             self.recognizer = cv2.FaceRecognizerSF.create(str(root / RECOGNIZER_NAME), "")
             # Fail readiness if the recognizer artifact does not match the DB
@@ -80,7 +84,7 @@ class FaceEngine:
 
     def _extract(self, image, *, reference, heartbeat):
         cv, np = self.cv, self.np
-        score = REFERENCE_SCORE if reference else self.album_score
+        score = self.album_score
         self.detector.setScoreThreshold(score)
         resized = image.copy()
         edge = 1600 if reference else 4096
@@ -123,8 +127,8 @@ class FaceEngine:
             return []
         keep = cv.dnn.NMSBoxes([f[:4].tolist() for f in candidates], [float(f[-1]) for f in candidates], score, 0.3)
         selected = _drop_duplicates([candidates[int(i)] for i in np.asarray(keep).flatten()])
-        if reference and len(selected) != 1:
-            raise GalleryError("multiple_faces")
+        if reference:
+            selected = [_reference_face(selected)]
         if len(selected) > MAX_FACES:
             raise GalleryError("too_many_faces")
         result = []
@@ -167,6 +171,17 @@ def _drop_duplicates(faces):
         if not duplicate:
             kept.append(face)
     return kept
+
+
+def _reference_face(faces):
+    """Return the one person a reference shows, or refuse an ambiguous photo."""
+    if len(faces) == 1:
+        return faces[0]
+    ordered = sorted(faces, key=lambda face: float(face[2]) * float(face[3]), reverse=True)
+    largest, runner_up = (float(face[2]) * float(face[3]) for face in ordered[:2])
+    if largest < REFERENCE_DOMINANCE * max(1.0, runner_up):
+        raise GalleryError("multiple_faces")
+    return ordered[0]
 
 
 @lru_cache(maxsize=1)

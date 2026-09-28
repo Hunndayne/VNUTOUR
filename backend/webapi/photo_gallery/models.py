@@ -35,6 +35,10 @@ class Album(models.Model):
     import_error = models.CharField(max_length=80, blank=True)
     scan_id = models.UUIDField(default=uuid.uuid4)
     page_token = models.TextField(blank=True)
+    # Breadth-first walk of the Drive tree for the running scan: every folder
+    # found so far as [folder_id, resource_key], and the one being listed.
+    scan_folders = models.JSONField(default=list, blank=True)
+    scan_folder_index = models.PositiveIntegerField(default=0)
     lease_token = models.UUIDField(null=True)
     lease_until = models.DateTimeField(null=True)
     attempts = models.PositiveIntegerField(default=0)
@@ -55,6 +59,8 @@ class Photo(models.Model):
     ]
     album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="photos")
     drive_file_id = models.CharField(max_length=200)
+    # Drive parent seen at scan time; the album root or one of its subfolders.
+    folder_id = models.CharField(max_length=200, blank=True)
     resource_key = models.CharField(max_length=200, blank=True)
     source_revision = models.CharField(max_length=200)
     source_checksum = models.CharField(max_length=128, blank=True)

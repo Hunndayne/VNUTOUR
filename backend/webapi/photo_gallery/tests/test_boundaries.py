@@ -65,7 +65,7 @@ def test_search_rejects_incompatible_or_invalid_vectors(settings, payload):
 
 def source():
     meta = {"id": "photo_123456", "parents": ["folder_123456"], "mimeType": "image/png", "size": 3, "version": "1", "capabilities": {"canDownload": True}}
-    photo = SimpleNamespace(drive_file_id=meta["id"], resource_key="", album=SimpleNamespace(folder_id="folder_123456"), source_revision=revision(meta))
+    photo = SimpleNamespace(drive_file_id=meta["id"], resource_key="", folder_id="", album=SimpleNamespace(folder_id="folder_123456"), source_revision=revision(meta))
     drive = object.__new__(Drive)
     drive.get = Mock(return_value=meta)
     response = Mock()
@@ -141,3 +141,40 @@ def test_duplicate_boxes_from_overlapping_tiles_are_merged():
     neighbour = box(340, 100, 200, 200, 0.9)  # a different person, kept
     kept = _drop_duplicates([partial, strong, neighbour])
     assert [round(float(face[-1]), 2) for face in kept] == [0.95, 0.9]
+
+
+def test_download_accepts_photo_in_recorded_subfolder():
+    drive, photo, meta, _ = source()
+    meta["parents"] = ["subfolder_123456"]
+    photo.folder_id = "subfolder_123456"
+    output = io.BytesIO()
+    drive.download(photo, output)
+    assert output.read() == b"abc"
+
+
+def test_download_rejects_photo_moved_out_of_recorded_subfolder():
+    drive, photo, meta, _ = source()
+    meta["parents"] = ["elsewhere_123456"]
+    photo.folder_id = "subfolder_123456"
+    with pytest.raises(GalleryError, match="source_unavailable"):
+        drive.download(photo, io.BytesIO())
+
+
+def _face_box(x, y, w, h, score=0.8):
+    import numpy as np
+    face = np.zeros(15, dtype=np.float32)
+    face[:4] = (x, y, w, h)
+    face[-1] = score
+    return face
+
+
+def test_reference_keeps_selfie_face_over_small_bystander():
+    from photo_gallery.engine import _reference_face
+    selfie, bystander = _face_box(100, 100, 400, 400), _face_box(700, 50, 120, 120, 0.95)
+    assert _reference_face([bystander, selfie]) is selfie
+
+
+def test_reference_refuses_two_similar_sized_faces():
+    from photo_gallery.engine import _reference_face
+    with pytest.raises(GalleryError, match="multiple_faces"):
+        _reference_face([_face_box(0, 0, 300, 300), _face_box(400, 0, 250, 250)])
