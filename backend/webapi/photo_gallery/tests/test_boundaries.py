@@ -65,7 +65,7 @@ def test_search_rejects_incompatible_or_invalid_vectors(settings, payload):
 
 def source():
     meta = {"id": "photo_123456", "parents": ["folder_123456"], "mimeType": "image/png", "size": 3, "version": "1", "capabilities": {"canDownload": True}}
-    photo = SimpleNamespace(drive_file_id=meta["id"], resource_key="", album=SimpleNamespace(folder_id="folder_123456"), source_revision=revision(meta))
+    photo = SimpleNamespace(drive_file_id=meta["id"], resource_key="", folder_id="", album=SimpleNamespace(folder_id="folder_123456"), source_revision=revision(meta))
     drive = object.__new__(Drive)
     drive.get = Mock(return_value=meta)
     response = Mock()
@@ -141,3 +141,20 @@ def test_duplicate_boxes_from_overlapping_tiles_are_merged():
     neighbour = box(340, 100, 200, 200, 0.9)  # a different person, kept
     kept = _drop_duplicates([partial, strong, neighbour])
     assert [round(float(face[-1]), 2) for face in kept] == [0.95, 0.9]
+
+
+def test_download_accepts_photo_in_recorded_subfolder():
+    drive, photo, meta, _ = source()
+    meta["parents"] = ["subfolder_123456"]
+    photo.folder_id = "subfolder_123456"
+    output = io.BytesIO()
+    drive.download(photo, output)
+    assert output.read() == b"abc"
+
+
+def test_download_rejects_photo_moved_out_of_recorded_subfolder():
+    drive, photo, meta, _ = source()
+    meta["parents"] = ["elsewhere_123456"]
+    photo.folder_id = "subfolder_123456"
+    with pytest.raises(GalleryError, match="source_unavailable"):
+        drive.download(photo, io.BytesIO())

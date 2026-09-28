@@ -15,6 +15,7 @@ from .errors import GalleryError
 ID = re.compile(r"^[A-Za-z0-9_-]{10,200}$")
 FIELDS = "id,name,mimeType,size,version,modifiedTime,md5Checksum,resourceKey,webViewLink,webContentLink,trashed,parents,capabilities(canDownload)"
 MIMES = {"image/jpeg", "image/png", "image/webp"}
+FOLDER_MIME = "application/vnd.google-apps.folder"
 
 
 def parse_folder(value):
@@ -120,7 +121,7 @@ class Drive:
 
     def list_page(self, folder_id, resource_key="", page_token=""):
         folder = self.get(folder_id, resource_key)
-        if folder.get("trashed") or folder.get("mimeType") != "application/vnd.google-apps.folder":
+        if folder.get("trashed") or folder.get("mimeType") != FOLDER_MIME:
             raise GalleryError("invalid_drive_folder")
         params = {
             "q": f"'{folder_id}' in parents and trashed = false",
@@ -140,8 +141,11 @@ class Drive:
     def download(self, photo, output, *, heartbeat=None):
         if heartbeat:
             heartbeat()
+        # The scan records which album folder (root or subfolder) held the file;
+        # rows scanned before subfolder support only know the root.
+        parent = photo.folder_id or photo.album.folder_id
         before = self.get(photo.drive_file_id, photo.resource_key)
-        if before.get("trashed") or photo.album.folder_id not in before.get("parents", []):
+        if before.get("trashed") or parent not in before.get("parents", []):
             raise GalleryError("source_unavailable")
         if before.get("mimeType") not in MIMES or not before.get("capabilities", {}).get("canDownload", False):
             raise GalleryError("drive_permission_denied")
@@ -174,7 +178,7 @@ class Drive:
         if heartbeat:
             heartbeat(force=True)
         after = self.get(photo.drive_file_id, photo.resource_key)
-        if revision(after) != photo.source_revision or after.get("trashed") or photo.album.folder_id not in after.get("parents", []):
+        if revision(after) != photo.source_revision or after.get("trashed") or parent not in after.get("parents", []):
             raise GalleryError("source_changed")
         if total != declared_size or (before.get("md5Checksum") and digest.hexdigest() != before["md5Checksum"]):
             raise GalleryError("source_changed")

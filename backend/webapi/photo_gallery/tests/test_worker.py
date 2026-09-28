@@ -211,3 +211,66 @@ def test_heartbeat_cannot_revive_expired_lease(album):
     Photo.objects.filter(pk=claim.pk).update(lease_until=timezone.now() - timedelta(seconds=1))
     with pytest.raises(LeaseLost):
         jobs._lease_heartbeat(claim)(force=True)
+
+
+def folder(file_id, resource_key=""):
+    return {"id": file_id, "name": file_id, "mimeType": "application/vnd.google-apps.folder", "resourceKey": resource_key}
+
+
+def tree_drive(tree):
+    """tree: {folder_id: [page, ...]}; pages chain through nextPageToken."""
+    drive = fake_drive()
+
+    def list_page(folder_id, resource_key="", page_token=""):
+        pages = tree[folder_id]
+        index = int(page_token or 0)
+        page = {"files": pages[index]}
+        if index + 1 < len(pages):
+            page["nextPageToken"] = str(index + 1)
+        return page
+
+    drive.list_page.side_effect = list_page
+    return drive
+
+
+def scan_until_complete(album, drive, limit=20):
+    for _ in range(limit):
+        complete_scan(drive)
+        album.refresh_from_db()
+        if album.import_status == "complete":
+            return
+    raise AssertionError("scan did not complete")
+
+
+def test_scan_walks_nested_subfolders(album):
+    drive = tree_drive({
+        "folder_123456": [[metadata("photo_root_1"), folder("sub_folder_1", "key_sub_0001")], [folder("sub_folder_2")]],
+        "sub_folder_1": [[metadata("photo_sub_01"), folder("nested_fold")]],
+        # A link back to an already queued folder must not be walked twice.
+        "nested_fold": [[metadata("photo_nest_1"), folder("folder_123456")]],
+        "sub_folder_2": [[]],
+    })
+    scan_until_complete(album, drive)
+    listed = [(c.args[0], c.args[1]) for c in drive.list_page.call_args_list]
+    assert listed == [("folder_123456", ""), ("folder_123456", ""), ("sub_folder_1", "key_sub_0001"),
+                      ("sub_folder_2", ""), ("nested_fold", "")]
+    assert dict(Photo.objects.values_list("drive_file_id", "folder_id")) == {
+        "photo_root_1": "folder_123456", "photo_sub_01": "sub_folder_1", "photo_nest_1": "nested_fold",
+    }
+    assert set(Photo.objects.values_list("status", flat=True)) == {"pending"}
+    assert album.scan_folders == [] and album.scan_folder_index == 0 and album.page_token == ""
+
+
+def test_photo_missing_from_subfolder_fails_only_after_whole_tree(album):
+    tree = {"folder_123456": [[folder("sub_folder_1")]], "sub_folder_1": [[metadata("photo_sub_01")]]}
+    drive = tree_drive(tree)
+    scan_until_complete(album, drive)
+    Photo.objects.update(status="ready")
+    tree["sub_folder_1"] = [[]]
+    jobs.queue_import(album.pk)
+    complete_scan(drive)  # root only; the subfolder is still queued
+    album.refresh_from_db()
+    assert album.import_status == "scanning" and album.scan_folder_index == 1
+    assert Photo.objects.get().status == "ready"
+    complete_scan(drive)
+    assert Photo.objects.get().error == "source_unavailable"

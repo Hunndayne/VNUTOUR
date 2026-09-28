@@ -961,7 +961,7 @@ export default function PhotosAdminPanel() {
                   <div className="mt-2 rounded-lg border border-stone bg-paper/60 p-2.5 text-[11px] text-ink/70">
                     <p>
                       Trên Google Drive, chia sẻ thư mục (quyền <strong>Người xem</strong>) cho email hệ thống bên dưới.
-                      Thư mục chỉ nên chứa ảnh JPEG, PNG hoặc WebP; ảnh RAW và thư mục con sẽ bị bỏ qua.
+                      Hệ thống quét cả các thư mục con; chỉ nhận ảnh JPEG, PNG hoặc WebP, ảnh RAW sẽ bị bỏ qua.
                     </p>
                     <div className="mt-1.5 flex items-center gap-2">
                       <code className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1 font-mono text-[11px] text-ink">
