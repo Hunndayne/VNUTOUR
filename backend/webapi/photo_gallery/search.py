@@ -55,10 +55,10 @@ def embed_reference(image_bytes: bytes) -> list[float]:
     return vector
 
 
-def _base_faces(*, album_id: int | None):
+def _base_faces(*, album_id: int | None, statuses):
     query = Face.objects.filter(
         photo__status="ready",
-        photo__album__status="published",
+        photo__album__status__in=statuses,
         photo__model_version=MODEL_VERSION,
         model_version=MODEL_VERSION,
     )
@@ -67,10 +67,10 @@ def _base_faces(*, album_id: int | None):
     return query
 
 
-def _sqlite_results(vector: list[float], *, album_id: int | None, maximum: int):
+def _sqlite_results(vector: list[float], *, album_id: int | None, statuses, maximum: int):
     """Portable exact fallback used only by SQLite tests and local checks."""
     best = defaultdict(lambda: float("inf"))
-    for face in _base_faces(album_id=album_id).only("photo_id", "embedding"):
+    for face in _base_faces(album_id=album_id, statuses=statuses).only("photo_id", "embedding"):
         try:
             values = [float(value) for value in face.embedding]
         except (TypeError, ValueError):
@@ -84,7 +84,7 @@ def _sqlite_results(vector: list[float], *, album_id: int | None, maximum: int):
     return [photo_id for _distance, photo_id in pairs[:maximum]], len(pairs) > maximum
 
 
-def matching_photo_ids(vector: list[float], *, album_id: int | None) -> tuple[list[int], bool]:
+def matching_photo_ids(vector: list[float], *, album_id: int | None, statuses) -> tuple[list[int], bool]:
     """Return at most 500 ranked IDs, aggregating every face before limiting.
 
     PostgreSQL keeps this entirely in SQL: Min(CosineDistance) groups all faces
@@ -92,12 +92,12 @@ def matching_photo_ids(vector: list[float], *, album_id: int | None) -> tuple[li
     """
     maximum = 500
     if connections[DB_ALIAS].vendor != "postgresql":
-        return _sqlite_results(vector, album_id=album_id, maximum=maximum)
+        return _sqlite_results(vector, album_id=album_id, statuses=statuses, maximum=maximum)
     from pgvector.django import CosineDistance
 
     cutoff = 1.0 - settings.PHOTO_SEARCH_THRESHOLD
     rows = (
-        _base_faces(album_id=album_id)
+        _base_faces(album_id=album_id, statuses=statuses)
         .values("photo_id")
         .annotate(distance=Min(CosineDistance("embedding", vector)))
         .filter(distance__lte=cutoff)

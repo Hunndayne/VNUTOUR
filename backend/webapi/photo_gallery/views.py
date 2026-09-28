@@ -97,10 +97,11 @@ def _id_page(request, queryset, *, default: int, maximum: int):
     return rows[:limit], next_cursor, None
 
 
-def _album_or_404(album_id: int, *, public: bool, admin: bool = False):
+def _album_or_404(album_id: int, *, statuses=None):
+    """statuses=None is the admin view (any status); viewers pass theirs."""
     query = Album.objects.filter(pk=album_id)
-    if public:
-        query = query.filter(status="published")
+    if statuses is not None:
+        query = query.filter(status__in=statuses)
     album = with_counts(query).first()
     return album
 
@@ -120,11 +121,11 @@ def public_albums_view(request):
     disabled = _gallery_enabled()
     if disabled:
         return disabled
-    access_error = require_gallery_access(request)
+    statuses, access_error = require_gallery_access(request)
     if access_error:
         return access_error
     albums, next_cursor, error = _id_page(
-        request, with_counts(Album.objects.filter(status="published")), default=24, maximum=48,
+        request, with_counts(Album.objects.filter(status__in=statuses)), default=24, maximum=48,
     )
     if error:
         return error
@@ -139,10 +140,10 @@ def public_photos_view(request, album_id: int):
     disabled = _gallery_enabled()
     if disabled:
         return disabled
-    access_error = require_gallery_access(request)
+    statuses, access_error = require_gallery_access(request)
     if access_error:
         return access_error
-    album = _album_or_404(album_id, public=True)
+    album = _album_or_404(album_id, statuses=statuses)
     if album is None:
         return _error("not_found", 404)
     photos, next_cursor, error = _id_page(
@@ -168,7 +169,7 @@ def search_create_view(request):
     disabled = _gallery_enabled()
     if disabled or not settings.PHOTO_SEARCH_ENABLED:
         return disabled or _error("gallery_disabled", 404)
-    access_error = require_gallery_access(request)
+    statuses, access_error = require_gallery_access(request)
     if access_error:
         return access_error
     limited, _key = _consume_rate_limit(
@@ -206,11 +207,11 @@ def search_create_view(request):
             return _error("not_found", 404)
         if not 1 <= album_id <= 9_223_372_036_854_775_807:
             return _error("not_found", 404)
-        if _album_or_404(album_id, public=True) is None:
+        if _album_or_404(album_id, statuses=statuses) is None:
             return _error("not_found", 404)
     try:
         embedding = embed_reference(image_bytes)
-        photo_ids, truncated = matching_photo_ids(embedding, album_id=album_id)
+        photo_ids, truncated = matching_photo_ids(embedding, album_id=album_id, statuses=statuses)
     except GalleryError as exc:
         return _gallery_exception(exc)
     result = SearchResult.objects.create(
@@ -218,7 +219,7 @@ def search_create_view(request):
         truncated=truncated,
         expires_at=timezone.now() + timedelta(minutes=10),
     )
-    photos, _next_cursor, _total = _live_search_page(photo_ids, offset=0, limit=48)
+    photos, _next_cursor, _total = _live_search_page(photo_ids, statuses=statuses, offset=0, limit=48)
     payload, error = _photo_response(photos)
     if error:
         return error
@@ -228,8 +229,11 @@ def search_create_view(request):
     })
 
 
-def _live_search_page(photo_ids: list[int], *, offset: int, limit: int):
-    """Reapply public visibility before every page; preserve stored rank."""
+def _live_search_page(photo_ids: list[int], *, statuses, offset: int, limit: int):
+    """Reapply the caller's visibility before every page; preserve stored rank.
+
+    A result token is not bound to an account, so a staff search that matched
+    hidden albums still shows a participant only the published photos."""
     if not photo_ids:
         return [], None, 0
     ordering = Case(
@@ -239,7 +243,7 @@ def _live_search_page(photo_ids: list[int], *, offset: int, limit: int):
     by_id = {
         photo.id: photo
         for photo in Photo.objects.filter(
-            pk__in=photo_ids, status="ready", album__status="published",
+            pk__in=photo_ids, status="ready", album__status__in=statuses,
         ).order_by(ordering)
     }
     live_ids = [photo_id for photo_id in photo_ids if photo_id in by_id]
@@ -260,7 +264,7 @@ def search_page_view(request, token):
     disabled = _gallery_enabled()
     if disabled or not settings.PHOTO_SEARCH_ENABLED:
         return disabled or _error("gallery_disabled", 404)
-    access_error = require_gallery_access(request)
+    statuses, access_error = require_gallery_access(request)
     if access_error:
         return access_error
     limited, _key = _consume_rate_limit(
@@ -283,7 +287,7 @@ def search_page_view(request, token):
     limit, error = _bounded_int(request, "limit", default=48, maximum=96)
     if error:
         return error
-    photos, next_cursor, total = _live_search_page(result.photo_ids, offset=offset, limit=limit)
+    photos, next_cursor, total = _live_search_page(result.photo_ids, statuses=statuses, offset=offset, limit=limit)
     payload, error = _photo_response(photos)
     if error:
         return error
@@ -334,7 +338,7 @@ def admin_albums_view(request):
     # The durable queue state is written before returning.  A separate worker
     # claims it later, so closing the admin page cannot lose this import.
     album = queue_import(album.id)
-    album = _album_or_404(album.id, public=False)
+    album = _album_or_404(album.id)
     return JsonResponse({"album": album_payload(album, admin=True)}, status=201)
 
 
@@ -384,7 +388,7 @@ def admin_album_detail_view(request, album_id: int):
     if updates:
         updates.append("updated_at")
         album.save(update_fields=updates)
-    album = _album_or_404(album.id, public=False)
+    album = _album_or_404(album.id)
     return JsonResponse({"album": album_payload(album, admin=True)})
 
 
@@ -404,7 +408,7 @@ def admin_import_view(request, album_id: int):
     if not Album.objects.filter(pk=album_id).exists():
         return _error("not_found", 404)
     queue_import(album_id)
-    album = _album_or_404(album_id, public=False)
+    album = _album_or_404(album_id)
     return JsonResponse({"album": album_payload(album, admin=True)}, status=202)
 
 
@@ -418,7 +422,7 @@ def admin_photos_view(request, album_id: int):
         return error
     if request.method != "GET":
         return _error("method_not_allowed", 405)
-    album = _album_or_404(album_id, public=False)
+    album = _album_or_404(album_id)
     if album is None:
         return _error("not_found", 404)
     photos, next_cursor, error = _id_page(request, Photo.objects.filter(album_id=album.id), default=48, maximum=96)
