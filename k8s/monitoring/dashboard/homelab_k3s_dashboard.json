@@ -2154,12 +2154,12 @@
       },
       "targets": [
         {
-          "expr": "kube_deployment_spec_replicas{namespace=\"vnutour\"}",
+          "expr": "kube_deployment_spec_replicas{exported_namespace=\"vnutour\"}",
           "legendFormat": "{{deployment}} desired",
           "datasource": "${DS_PROMETHEUS}"
         },
         {
-          "expr": "kube_deployment_status_replicas_available{namespace=\"vnutour\"}",
+          "expr": "kube_deployment_status_replicas_available{exported_namespace=\"vnutour\"}",
           "legendFormat": "{{deployment}} available",
           "datasource": "${DS_PROMETHEUS}"
         }
