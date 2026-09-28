@@ -30,6 +30,8 @@ components:
   # instead of showing a broken page. Needs the out-of-band photo-ai-secret
   # (present in both zones, identical) and R2 in backend-secret.
   - ../../components/photo-ai
+  # Homelab Prometheus discovers annotated app pods; staging/standby opt out.
+  - ../../components/prod-observability
   # Set image tags after all workloads are added, including bot and email-worker.
   - ../../components/images
 
